@@ -938,6 +938,7 @@ export const ar = {
       cancel: "إلغاء",
       submit: "إرسال",
       notAvailable: "غير متاح",
+      notSpecified: "غير محدد",
       imageLoadFailed: "تعذر تحميل الصورة.",
       vehicleTypes: {
         car: "سيارة",
@@ -996,6 +997,8 @@ export const ar = {
         category: "الفئة",
         urgency: "الأولوية",
         description: "وصف المشكلة",
+        meetingWith: "المقابلة مع",
+        managerStatus: "حالة المسؤول",
         subject: "الموضوع",
         preferredDate: "التاريخ المفضل",
         preferredTime: "الوقت المفضل",

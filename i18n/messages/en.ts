@@ -945,6 +945,7 @@ export const en = {
       cancel: "Cancel",
       submit: "Submit",
       notAvailable: "Not available",
+      notSpecified: "Not specified",
       vehicleTypes: {
         car: "Car",
         motorcycle: "Motorcycle",
@@ -1002,6 +1003,8 @@ export const en = {
         category: "Category",
         urgency: "Urgency",
         description: "Problem Description",
+        meetingWith: "Meeting With",
+        managerStatus: "Manager Status",
         subject: "Subject",
         preferredDate: "Preferred Date",
         preferredTime: "Preferred Time",
