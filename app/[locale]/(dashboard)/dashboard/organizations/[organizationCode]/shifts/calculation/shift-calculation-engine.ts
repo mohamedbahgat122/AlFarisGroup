@@ -413,14 +413,18 @@ export function calculateShiftScenarios(
   const scenarios = [...candidates.values()]
     .sort((a, b) => compareScenarios(a, b, enabledShifts))
     .slice(0, maxResults)
-    .map((scenario, index) => ({
-      ...scenario,
-      id: `scenario-${index + 1}`,
-      rank: index + 1,
-      isRecommended: index === 0,
-      recommendationCode:
-        index === 0 ? scenario.totalShortage === 0 ? "complete" : "shortage" : null,
-    }));
+    .map((scenario, index) => {
+      const recommendationCode: ScenarioResult["recommendationCode"] =
+        index === 0 ? scenario.totalShortage === 0 ? "complete" : "shortage" : null;
+
+      return {
+        ...scenario,
+        id: `scenario-${index + 1}`,
+        rank: index + 1,
+        isRecommended: index === 0,
+        recommendationCode,
+      };
+    });
 
   return {
     scenarios,
