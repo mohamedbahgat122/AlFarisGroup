@@ -976,6 +976,10 @@ export const en = {
         approved: "Approved",
         rejected: "Rejected",
       },
+      accountStatuses: {
+        active: "Active",
+        suspended: "Suspended",
+      },
       requestTypes: {
         leave: "Leave",
         maintenance: "Maintenance",

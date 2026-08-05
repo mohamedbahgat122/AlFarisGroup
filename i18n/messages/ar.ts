@@ -970,6 +970,10 @@ export const ar = {
         approved: "\u0645\u0639\u062a\u0645\u062f",
         rejected: "\u0645\u0631\u0641\u0648\u0636",
       },
+      accountStatuses: {
+        active: "\u0646\u0634\u0637",
+        suspended: "\u0645\u0648\u0642\u0648\u0641",
+      },
       requestTypes: {
         leave: "إجازة",
         maintenance: "صيانة",
