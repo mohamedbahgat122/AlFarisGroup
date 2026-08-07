@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
-import { getDriverFuelMetricsForReport } from "@/features/driver-reports/fuel-metrics";
+import { getDriverFuelMetricsForReport, getMonthToDateRange } from "@/features/driver-reports/fuel-metrics";
 import type {
   DriverReport,
   DriverReportDriverExpiries,
@@ -61,13 +61,47 @@ export async function getDriverReportsForOrganization({
     };
   }
 
-  const { data: dateRows, error: datesError } = await admin.supabase
+  const datesPromise = admin.supabase
     .from("driver_daily_reports")
     .select("report_date, imported_at, imported_by_user_id")
     .eq("organization_id", organizationId)
     .order("report_date", { ascending: false });
 
-  if (datesError) {
+  let reportQuery = admin.supabase
+    .from("driver_daily_reports")
+    .select(
+      `
+      id,
+      organization_id,
+      report_date,
+      imported_at,
+      imported_by_user_id,
+      registered_active_drivers,
+      present_drivers,
+      absent_drivers,
+      matched_ranking_rows,
+      unmatched_performance_ids,
+      unmatched_ranking_ids,
+      drivers_missing_keeta_id
+    `,
+    )
+    .eq("organization_id", organizationId);
+
+  if (selectedDate) {
+    reportQuery = reportQuery.eq("report_date", selectedDate);
+  } else {
+    reportQuery = reportQuery.order("report_date", { ascending: false }).limit(1);
+  }
+
+  const [
+    { data: dateRows, error: datesError },
+    { data: report, error: reportError },
+  ] = await Promise.all([
+    datesPromise,
+    reportQuery.maybeSingle(),
+  ]);
+
+  if (datesError || reportError) {
     return {
       status: "load_error",
       report: null,
@@ -75,46 +109,14 @@ export async function getDriverReportsForOrganization({
     };
   }
 
-  const importedByNames = await getProfileNamesByIds(
-    (dateRows ?? []).map((row) => row.imported_by_user_id),
-    admin.supabase,
-  );
   const dates = (dateRows ?? []).map((row) => ({
     reportDate: row.report_date,
     importedAt: row.imported_at,
-    importedByName: row.imported_by_user_id
-      ? (importedByNames.get(row.imported_by_user_id) ?? null)
-      : null,
+    importedByName: null,
   }));
   const selectedDateAvailable = selectedDate
     ? dates.some((date) => date.reportDate === selectedDate)
     : true;
-  const reportDate =
-    selectedDate && selectedDateAvailable ? selectedDate : dates[0]?.reportDate;
-
-  if (!reportDate) {
-    return {
-      status: "success",
-      report: null,
-      dates,
-      selectedDateUnavailable: false,
-    };
-  }
-
-  const { data: report, error: reportError } = await admin.supabase
-    .from("driver_daily_reports")
-    .select("*")
-    .eq("organization_id", organizationId)
-    .eq("report_date", reportDate)
-    .maybeSingle();
-
-  if (reportError) {
-    return {
-      status: "load_error",
-      report: null,
-      dates: [],
-    };
-  }
 
   if (!report) {
     return {
@@ -127,7 +129,32 @@ export async function getDriverReportsForOrganization({
 
   const { data: rows, error: rowsError } = await admin.supabase
     .from("driver_daily_report_rows")
-    .select("*")
+    .select(
+      `
+      id,
+      driver_id,
+      driver_full_name,
+      keeta_driver_id,
+      attendance_status,
+      accepted_tasks,
+      delivered_tasks,
+      rejected_tasks,
+      valid_online_seconds,
+      delivery_rate,
+      level,
+      city_ranking,
+      ranking_percentage,
+      mandatory_assignment_score,
+      estimated_reward_amount,
+      evaluation_on_time_rate,
+      evaluation_completion_rate,
+      not_early_delivery_confirmation_rate,
+      evaluation_total_orders,
+      on_time_rate,
+      incomplete_orders,
+      eligibility_status
+    `,
+    )
     .eq("report_id", report.id)
     .order("driver_full_name", { ascending: true });
 
@@ -139,24 +166,45 @@ export async function getDriverReportsForOrganization({
     };
   }
 
-  const driverExpiries = await getDriverExpiriesById({
-    organizationId,
-    driverIds: (rows ?? []).map((row) => row.driver_id),
-    supabase: admin.supabase,
-  });
-  const fuelMetrics = await getDriverFuelMetricsForReport({
-    organizationId,
-    reportDate: report.report_date,
-    driverIds: (rows ?? []).map((row) => row.driver_id),
-    supabase: admin.supabase,
-  });
-  const monthlyMetrics = await getMonthlyMetricsByDriverId({
-    organizationId,
-    driverIds: (rows ?? []).map((row) => row.driver_id),
-    fromDate: fuelMetrics.monthlyRange.fromDate,
-    toDate: fuelMetrics.monthlyRange.toDate,
+  const driverIds = (rows ?? []).map((row) => row.driver_id);
+  const monthlyRange = getMonthToDateRange(report.report_date);
+
+  const [
+    driverExpiries,
+    fuelMetrics,
+    monthlyMetricsResponse,
+    importedByFullName,
+  ] = await Promise.all([
+    getDriverExpiriesById({
+      organizationId,
+      driverIds,
+      supabase: admin.supabase,
+    }),
+    getDriverFuelMetricsForReport({
+      organizationId,
+      reportDate: report.report_date,
+      driverIds,
+      supabase: admin.supabase,
+    }),
+    admin.supabase
+      .from("driver_daily_report_rows")
+      .select(
+        "driver_id, report_date, attendance_status, delivered_tasks, valid_online_seconds",
+      )
+      .eq("organization_id", organizationId)
+      .in("driver_id", driverIds)
+      .gte("report_date", monthlyRange.fromDate)
+      .lte("report_date", monthlyRange.toDate),
+    getImportedByName(report.imported_by_user_id, admin.supabase),
+  ]);
+
+  const monthlyMetrics = processMonthlyMetrics({
+    driverIds,
+    fromDate: monthlyRange.fromDate,
+    toDate: monthlyRange.toDate,
     fuelMetricsByDriverId: fuelMetrics.metricsByDriverId,
-    supabase: admin.supabase,
+    rows: monthlyMetricsResponse.data as unknown as MonthlyReportMetricRow[] | null,
+    error: monthlyMetricsResponse.error,
   });
 
   if (!monthlyMetrics.available) {
@@ -167,16 +215,11 @@ export async function getDriverReportsForOrganization({
     };
   }
 
-  const importedByFullName = await getImportedByName(
-    report.imported_by_user_id,
-    admin.supabase,
-  );
-
   return {
     status: "success",
     report: mapReport(
-      report,
-      rows ?? [],
+      report as unknown as ReportRow,
+      (rows ?? []) as unknown as ReportMetricRow[],
       importedByFullName,
       driverExpiries,
       fuelMetrics.available,
@@ -188,34 +231,7 @@ export async function getDriverReportsForOrganization({
   };
 }
 
-async function getProfileNamesByIds(
-  profileIds: Array<string | null>,
-  supabase: Awaited<ReturnType<typeof getAuthenticatedAdmin>>["supabase"],
-) {
-  const uniqueProfileIds = Array.from(
-    new Set(profileIds.filter((id): id is string => Boolean(id))),
-  );
-  const names = new Map<string, string>();
 
-  if (uniqueProfileIds.length === 0) {
-    return names;
-  }
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name")
-    .in("id", uniqueProfileIds);
-
-  if (error) {
-    return names;
-  }
-
-  for (const profile of (data ?? []) as ProfileRow[]) {
-    names.set(profile.id, profile.full_name);
-  }
-
-  return names;
-}
 
 async function getDriverExpiriesById({
   organizationId,
@@ -293,24 +309,24 @@ async function getImportedByName(
   return profile.full_name;
 }
 
-async function getMonthlyMetricsByDriverId({
-  organizationId,
+function processMonthlyMetrics({
   driverIds,
   fromDate,
   toDate,
   fuelMetricsByDriverId,
-  supabase,
+  rows,
+  error,
 }: {
-  organizationId: string;
   driverIds: string[];
   fromDate: string;
   toDate: string;
   fuelMetricsByDriverId: Map<string, DriverFuelMetricSelection>;
-  supabase: Awaited<ReturnType<typeof getAuthenticatedAdmin>>["supabase"];
-}): Promise<{
+  rows: MonthlyReportMetricRow[] | null;
+  error: unknown;
+}): {
   available: boolean;
   metricsByDriverId: Map<string, DriverMonthlyReportMetrics>;
-}> {
+} {
   const uniqueDriverIds = Array.from(new Set(driverIds));
   const elapsedCalendarDays = countInclusiveDays(fromDate, toDate);
   const metricsByDriverId = new Map<string, DriverMonthlyReportMetrics>();
@@ -332,27 +348,12 @@ async function getMonthlyMetricsByDriverId({
     return { available: true, metricsByDriverId };
   }
 
-  const { data, error } = await supabase
-    .from("driver_daily_report_rows")
-    .select(
-      [
-        "driver_id",
-        "report_date",
-        "attendance_status",
-        "delivered_tasks",
-        "valid_online_seconds",
-      ].join(", "),
-    )
-    .eq("organization_id", organizationId)
-    .in("driver_id", uniqueDriverIds)
-    .gte("report_date", fromDate)
-    .lte("report_date", toDate);
-
   if (error) {
     if (process.env.NODE_ENV !== "production") {
+      const e = error as Record<string, unknown>;
       console.error("[driver-reports:monthly-metrics:load-failed]", {
-        code: error.code,
-        message: error.message,
+        code: e?.code,
+        message: e?.message,
       });
     }
 
@@ -361,7 +362,7 @@ async function getMonthlyMetricsByDriverId({
 
   const absenceDatesByDriverId = new Map<string, Set<string>>();
 
-  for (const row of (data ?? []) as unknown as MonthlyReportMetricRow[]) {
+  for (const row of (rows ?? [])) {
     const metric = metricsByDriverId.get(row.driver_id);
 
     if (!metric) {

@@ -23,7 +23,7 @@ export type DriverFuelMetricsResult =
       metricsByDriverId: Map<string, DriverFuelMetric>;
     };
 
-type FuelPeriod = {
+export type FuelPeriod = {
   fromDate: string;
   toDate: string;
 };
@@ -103,7 +103,7 @@ function createEmptyMetrics(driverIds: string[]) {
   return metrics;
 }
 
-function getMonthToDateRange(date: string): FuelPeriod {
+export function getMonthToDateRange(date: string): FuelPeriod {
   const [year, month] = date.split("-");
   const selectedMonth = `${year}-${month}`;
   const currentDate = getCurrentRiyadhDate();

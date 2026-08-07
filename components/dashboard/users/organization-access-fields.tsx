@@ -16,6 +16,7 @@ type OrganizationAccessFieldsProps = {
   dictionary: Dictionary["dashboard"]["userManagement"];
   organizations: ActiveOrganizationOption[];
   homeOrganizationId: string;
+  includeHomeOrganization?: boolean;
   values: Record<string, OrganizationPermissionKey[]>;
   onChange: (
     organizationId: string,
@@ -27,12 +28,13 @@ export function OrganizationAccessFields({
   dictionary,
   organizations,
   homeOrganizationId,
+  includeHomeOrganization = false,
   values,
   onChange,
 }: OrganizationAccessFieldsProps) {
-  const availableOrganizations = organizations.filter(
-    (organization) => organization.id !== homeOrganizationId,
-  );
+  const availableOrganizations = includeHomeOrganization
+    ? organizations
+    : organizations.filter((organization) => organization.id !== homeOrganizationId);
 
   return (
     <fieldset className="space-y-3">

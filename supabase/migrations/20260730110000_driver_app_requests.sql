@@ -34,7 +34,16 @@ alter table public.organization_user_permissions
       'fuel.increase.review',
       'app_requests.view',
       'app_requests.review',
-      'odometer.manage'
+      'odometer.manage',
+      'notifications.view',
+      'driver_warnings.view',
+      'driver_warnings.issue',
+      'driver_warnings.revoke',
+      'shifts.view',
+      'shifts.create',
+      'shifts.update',
+      'shifts.assign',
+      'shifts.archive'
     )
   );
 

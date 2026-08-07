@@ -1,5 +1,4 @@
-import "server-only";
-
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
@@ -33,11 +32,12 @@ export async function getOrganizationPermissionsForCurrentUser(
   return getOrganizationPermissions(admin.supabase, admin.profile, organizationId);
 }
 
-export async function getOrganizationPermissions(
-  supabase: SupabaseClient<Database>,
-  profile: Profile,
-  organizationId: string,
-): Promise<Set<OrganizationPermissionKey>> {
+export const getOrganizationPermissions = cache(
+  async (
+    supabase: SupabaseClient<Database>,
+    profile: Profile,
+    organizationId: string,
+  ): Promise<Set<OrganizationPermissionKey>> => {
   if (profile.role === "system_owner") {
     const { organizationPermissionKeys } = await import("@/features/permissions/registry");
     return new Set(organizationPermissionKeys);
@@ -56,7 +56,7 @@ export async function getOrganizationPermissions(
   return new Set(
     (data ?? []).map((row) => row.permission_key as OrganizationPermissionKey),
   );
-}
+});
 
 export async function hasOrganizationPermission({
   organizationId,

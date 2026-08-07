@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrandIdentity } from "@/components/brand/brand-identity";
@@ -16,6 +16,8 @@ type DashboardSidebarProps = {
   organizations: AccessibleOrganization[];
   collapsed: boolean;
   mobileOpen: boolean;
+  pendingHref: string | null;
+  onSidebarLinkClick: (href: string | null, event: React.MouseEvent) => void;
   onToggleCollapsed: () => void;
   onCloseMobile: () => void;
 };
@@ -27,10 +29,24 @@ export function DashboardSidebar({
   organizations,
   collapsed,
   mobileOpen,
+  pendingHref,
+  onSidebarLinkClick,
   onToggleCollapsed,
   onCloseMobile,
 }: DashboardSidebarProps) {
   const pathname = usePathname();
+
+  const checkActive = useCallback((routeHref: string | null, exact = false) => {
+    if (!routeHref) return false;
+    const isCurrent = exact ? pathname === routeHref : (pathname === routeHref || pathname.startsWith(routeHref + "/"));
+    const isPending = pendingHref ? (exact ? pendingHref === routeHref : (pendingHref === routeHref || pendingHref.startsWith(routeHref + "/"))) : false;
+    return isCurrent || isPending;
+  }, [pathname, pendingHref]);
+
+  const handleLinkClick = useCallback((href: string | null, event: React.MouseEvent) => {
+    onSidebarLinkClick(href, event);
+  }, [onSidebarLinkClick]);
+
   const dashboardHref = `/${locale}/dashboard`;
   const organizationsHref = `/${locale}/dashboard/organizations`;
   const usersHref = `/${locale}/dashboard/users`;
@@ -109,72 +125,77 @@ export function DashboardSidebar({
   const organizationDriverWarningsHref = currentOrganizationCode
     ? `${organizationsHref}/${currentOrganizationCode}/driver-warnings`
     : null;
-  const isUsersActive = pathname === usersHref;
-  const isOrganizationsActive =
-    pathname === organizationsHref ||
-    pathname.startsWith(`${organizationsHref}/`);
+  const isUsersActive = checkActive(usersHref, true);
+  const isOrganizationsActive = checkActive(organizationsHref);
   const isOrganizationHomeActive =
-    Boolean(organizationHomeHref) && pathname === organizationHomeHref;
+    Boolean(organizationHomeHref) && checkActive(organizationHomeHref, true);
   const isOrganizationDriversActive =
-    Boolean(organizationDriversHref) &&
-    (pathname === organizationDriversHref ||
-      pathname.startsWith(`${organizationDriversHref}/`));
+    Boolean(organizationDriversHref) && checkActive(organizationDriversHref);
   const isOrganizationDriversDataActive =
-    Boolean(organizationDriversHref) && pathname === organizationDriversHref;
+    Boolean(organizationDriversHref) && checkActive(organizationDriversHref, true);
   const isOrganizationDriversReportsActive =
-    Boolean(organizationDriversReportsHref) &&
-    (pathname === organizationDriversReportsHref ||
-      pathname.startsWith(`${organizationDriversReportsHref}/`));
+    Boolean(organizationDriversReportsHref) && checkActive(organizationDriversReportsHref);
   const isOrganizationFleetActive =
-    Boolean(organizationFleetHref) &&
-    (pathname === organizationFleetHref ||
-      pathname.startsWith(`${organizationFleetHref}/`));
+    Boolean(organizationFleetHref) && checkActive(organizationFleetHref);
   const isOrganizationFleetCarsActive =
-    Boolean(organizationFleetCarsHref) && pathname === organizationFleetCarsHref;
+    Boolean(organizationFleetCarsHref) && checkActive(organizationFleetCarsHref, true);
   const isOrganizationFleetMotorcyclesActive =
     Boolean(organizationFleetMotorcyclesHref) &&
-    pathname === organizationFleetMotorcyclesHref;
+    checkActive(organizationFleetMotorcyclesHref, true);
   const isOrganizationFuelActive =
-    Boolean(organizationFuelHref) &&
-    (pathname === organizationFuelHref ||
-      pathname.startsWith(`${organizationFuelHref}/`));
+    Boolean(organizationFuelHref) && checkActive(organizationFuelHref);
   const isOrganizationFuelManagementActive =
     Boolean(organizationFuelManagementHref) &&
-    pathname === organizationFuelManagementHref;
+    checkActive(organizationFuelManagementHref, true);
   const isOrganizationFuelReportsActive =
-    Boolean(organizationFuelReportsHref) && pathname === organizationFuelReportsHref;
+    Boolean(organizationFuelReportsHref) && checkActive(organizationFuelReportsHref, true);
   const isOrganizationAppRequestsActive =
-    Boolean(organizationAppRequestsHref) &&
-    (pathname === organizationAppRequestsHref ||
-      pathname.startsWith(`${organizationAppRequestsHref}/`));
+    Boolean(organizationAppRequestsHref) && checkActive(organizationAppRequestsHref);
   const isOrganizationOdometerActive =
-    Boolean(organizationOdometerHref) && pathname === organizationOdometerHref;
+    Boolean(organizationOdometerHref) && checkActive(organizationOdometerHref, true);
   const isOrganizationLeaveRequestsActive =
     Boolean(organizationLeaveRequestsHref) &&
-    pathname === organizationLeaveRequestsHref;
+    checkActive(organizationLeaveRequestsHref, true);
   const isOrganizationMaintenanceRequestsActive =
     Boolean(organizationMaintenanceRequestsHref) &&
-    pathname === organizationMaintenanceRequestsHref;
+    checkActive(organizationMaintenanceRequestsHref, true);
   const isOrganizationMeetingRequestsActive =
     Boolean(organizationMeetingRequestsHref) &&
-    pathname === organizationMeetingRequestsHref;
+    checkActive(organizationMeetingRequestsHref, true);
   const isOrganizationOilChangeRequestsActive =
     Boolean(organizationOilChangeRequestsHref) &&
-    pathname === organizationOilChangeRequestsHref;
+    checkActive(organizationOilChangeRequestsHref, true);
   const isOrganizationShiftsActive =
-    Boolean(organizationShiftsHref) &&
-    (pathname === organizationShiftsHref ||
-      pathname.startsWith(`${organizationShiftsHref}/`));
+    Boolean(organizationShiftsHref) && checkActive(organizationShiftsHref);
   const isOrganizationShiftsManagementActive =
     Boolean(organizationShiftsManagementHref) &&
-    pathname === organizationShiftsManagementHref;
+    checkActive(organizationShiftsManagementHref, true);
   const isOrganizationShiftCalculationActive =
     Boolean(organizationShiftCalculationHref) &&
-    pathname === organizationShiftCalculationHref;
+    checkActive(organizationShiftCalculationHref, true);
   const isOrganizationDriverWarningsActive =
     Boolean(organizationDriverWarningsHref) &&
-    pathname === organizationDriverWarningsHref;
-  const isDashboardActive = pathname === dashboardHref;
+    checkActive(organizationDriverWarningsHref, true);
+  const isDashboardActive = checkActive(dashboardHref, true);
+
+  const isDashboardPending = pendingHref === dashboardHref;
+  const isOrganizationsPending = pendingHref === organizationsHref;
+  const isOrganizationHomePending = pendingHref === organizationHomeHref;
+  const isOrganizationDriversPending = pendingHref === organizationDriversHref;
+  const isOrganizationDriversReportsPending = pendingHref === organizationDriversReportsHref;
+  const isOrganizationFleetCarsPending = pendingHref === organizationFleetCarsHref;
+  const isOrganizationFleetMotorcyclesPending = pendingHref === organizationFleetMotorcyclesHref;
+  const isOrganizationFuelManagementPending = pendingHref === organizationFuelManagementHref;
+  const isOrganizationFuelReportsPending = pendingHref === organizationFuelReportsHref;
+  const isOrganizationOdometerPending = pendingHref === organizationOdometerHref;
+  const isOrganizationLeaveRequestsPending = pendingHref === organizationLeaveRequestsHref;
+  const isOrganizationMaintenanceRequestsPending = pendingHref === organizationMaintenanceRequestsHref;
+  const isOrganizationMeetingRequestsPending = pendingHref === organizationMeetingRequestsHref;
+  const isOrganizationOilChangeRequestsPending = pendingHref === organizationOilChangeRequestsHref;
+  const isOrganizationShiftsManagementPending = pendingHref === organizationShiftsManagementHref;
+  const isOrganizationShiftCalculationPending = pendingHref === organizationShiftCalculationHref;
+  const isOrganizationDriverWarningsPending = pendingHref === organizationDriverWarningsHref;
+  const isUsersPending = pendingHref === usersHref;
   const canSeeOrganizations = userRole !== "driver";
   const canSeeUserManagement = userRole === "system_owner";
   const [manualDriversGroupOpen, setManualDriversGroupOpen] = useState(false);
@@ -259,7 +280,7 @@ export function DashboardSidebar({
 
   return (
     <aside
-      className={`fixed inset-y-0 z-40 flex h-dvh w-[292px] flex-col overflow-hidden border-border bg-surface shadow-[0_22px_70px_rgba(16,35,63,0.16)] transition-[transform,width] duration-300 [border-inline-end-width:1px] [inset-inline-start:0] lg:sticky lg:top-0 lg:w-[var(--sidebar-width)] lg:transform-none lg:shadow-none lg:[inset-inline-start:auto] ${
+      className={`fixed inset-y-0 z-40 flex h-dvh w-73 flex-col overflow-hidden border-border bg-surface shadow-[0_22px_70px_rgba(16,35,63,0.16)] transition-[transform,width] duration-300 [border-inline-end-width:1px] inset-s-0 lg:sticky lg:top-0 lg:w-(--sidebar-width) lg:transform-none lg:shadow-none lg:[inset-inline-start:auto] ${
         mobileOpen
           ? "max-lg:translate-x-0"
           : "max-lg:ltr:-translate-x-full max-lg:rtl:translate-x-full"
@@ -288,7 +309,7 @@ export function DashboardSidebar({
             collapsed ? dictionary.expandSidebar : dictionary.collapseSidebar
           }
           aria-pressed={collapsed}
-          className="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-transparent text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary lg:flex"
+          className="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-transparent text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary lg:flex"
         >
           <SidebarPanelToggleIcon
             collapsed={collapsed}
@@ -299,7 +320,7 @@ export function DashboardSidebar({
           type="button"
           onClick={onCloseMobile}
           aria-label={dictionary.closeSidebar}
-          className="flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary lg:hidden"
+          className="flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary lg:hidden"
         >
           <CloseIcon />
         </button>
@@ -315,10 +336,11 @@ export function DashboardSidebar({
             href={dashboardHref}
             aria-current={isDashboardActive ? "page" : undefined}
             title={collapsed ? dictionary.navLabel : undefined}
-            className={navItemClassName(isDashboardActive, collapsed)}
+            onClick={(e) => handleLinkClick(dashboardHref, e)}
+            className={`${navItemClassName(isDashboardActive, collapsed)} ${isDashboardPending ? "pointer-events-none cursor-wait" : ""}`}
           >
             <span className={navIconClassName(isDashboardActive)}>
-              <DashboardIcon />
+              {isDashboardPending ? <SidebarSpinnerActive /> : <DashboardIcon />}
             </span>
             <span className={collapsed ? "lg:hidden" : ""}>
               {dictionary.navLabel}
@@ -330,10 +352,11 @@ export function DashboardSidebar({
                 href={organizationsHref}
                 aria-current={isOrganizationsActive ? "page" : undefined}
                 title={collapsed ? dictionary.organizations.navLabel : undefined}
-                className={navItemClassName(isOrganizationsActive, collapsed)}
+                onClick={(e) => handleLinkClick(organizationsHref, e)}
+                className={`${navItemClassName(isOrganizationsActive, collapsed)} ${isOrganizationsPending ? "pointer-events-none cursor-wait" : ""}`}
               >
                 <span className={navIconClassName(isOrganizationsActive)}>
-                  <OrganizationsIcon />
+                  {isOrganizationsPending ? <SidebarSpinnerActive /> : <OrganizationsIcon />}
                 </span>
                 <span className={collapsed ? "lg:hidden" : ""}>
                   {dictionary.organizations.navLabel}
@@ -345,9 +368,14 @@ export function DashboardSidebar({
                     <Link
                       href={organizationHomeHref}
                       aria-current={isOrganizationHomeActive ? "page" : undefined}
-                      className={subNavItemClassName(isOrganizationHomeActive)}
+                      onClick={(e) => handleLinkClick(organizationHomeHref, e)}
+                      className={`${subNavItemClassName(isOrganizationHomeActive)} ${isOrganizationHomePending ? "pointer-events-none cursor-wait" : ""}`}
                     >
-                      <span className={subNavDotClassName(isOrganizationHomeActive)} />
+                      {isOrganizationHomePending ? (
+                        <SidebarSpinnerActive className="size-3" />
+                      ) : (
+                        <span className={subNavDotClassName(isOrganizationHomeActive)} />
+                      )}
                       <span>{dictionary.organizations.organizationHome}</span>
                     </Link>
                   ) : null}
@@ -383,19 +411,24 @@ export function DashboardSidebar({
                     <div id={driversGroupId} className="space-y-1 ps-9">
                       {navigation.drivers ? (
                         <Link
-                        href={organizationDriversHref}
-                        aria-current={
-                          isOrganizationDriversDataActive ? "page" : undefined
-                        }
-                        className={subNavItemClassName(
-                          isOrganizationDriversDataActive,
-                        )}
-                        >
-                        <span
-                          className={subNavDotClassName(
+                          href={organizationDriversHref}
+                          aria-current={
+                            isOrganizationDriversDataActive ? "page" : undefined
+                          }
+                          onClick={(e) => handleLinkClick(organizationDriversHref, e)}
+                          className={`${subNavItemClassName(
                             isOrganizationDriversDataActive,
+                          )} ${isOrganizationDriversPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationDriversPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationDriversDataActive,
+                              )}
+                            />
                           )}
-                        />
                           <span>{dictionary.drivers.dataNavLabel}</span>
                         </Link>
                       ) : null}
@@ -407,15 +440,20 @@ export function DashboardSidebar({
                               ? "page"
                               : undefined
                           }
-                          className={subNavItemClassName(
+                          onClick={(e) => handleLinkClick(organizationDriversReportsHref, e)}
+                          className={`${subNavItemClassName(
                             isOrganizationDriversReportsActive,
-                          )}
+                          )} ${isOrganizationDriversReportsPending ? "pointer-events-none cursor-wait" : ""}`}
                         >
-                          <span
-                            className={subNavDotClassName(
-                              isOrganizationDriversReportsActive,
-                            )}
-                          />
+                          {isOrganizationDriversReportsPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationDriversReportsActive,
+                              )}
+                            />
+                          )}
                           <span>{dictionary.drivers.reportsNavLabel}</span>
                         </Link>
                       ) : null}
@@ -455,39 +493,49 @@ export function DashboardSidebar({
                         <div id={fleetGroupId} className="space-y-1 ps-9">
                           {navigation.fleetCars ? (
                             <Link
-                            href={organizationFleetCarsHref}
-                            aria-current={
-                              isOrganizationFleetCarsActive ? "page" : undefined
-                            }
-                            className={subNavItemClassName(
-                              isOrganizationFleetCarsActive,
-                            )}
-                            >
-                            <span
-                              className={subNavDotClassName(
+                              href={organizationFleetCarsHref}
+                              aria-current={
+                                isOrganizationFleetCarsActive ? "page" : undefined
+                              }
+                              onClick={(e) => handleLinkClick(organizationFleetCarsHref, e)}
+                              className={`${subNavItemClassName(
                                 isOrganizationFleetCarsActive,
+                              )} ${isOrganizationFleetCarsPending ? "pointer-events-none cursor-wait" : ""}`}
+                            >
+                              {isOrganizationFleetCarsPending ? (
+                                <SidebarSpinnerActive className="size-3" />
+                              ) : (
+                                <span
+                                  className={subNavDotClassName(
+                                    isOrganizationFleetCarsActive,
+                                  )}
+                                />
                               )}
-                            />
                               <span>{dictionary.fleet.carsNavLabel}</span>
                             </Link>
                           ) : null}
                           {navigation.fleetMotorcycles ? (
                             <Link
-                            href={organizationFleetMotorcyclesHref}
-                            aria-current={
-                              isOrganizationFleetMotorcyclesActive
-                                ? "page"
-                                : undefined
-                            }
-                            className={subNavItemClassName(
-                              isOrganizationFleetMotorcyclesActive,
-                            )}
-                            >
-                            <span
-                              className={subNavDotClassName(
+                              href={organizationFleetMotorcyclesHref}
+                              aria-current={
+                                isOrganizationFleetMotorcyclesActive
+                                  ? "page"
+                                  : undefined
+                              }
+                              onClick={(e) => handleLinkClick(organizationFleetMotorcyclesHref, e)}
+                              className={`${subNavItemClassName(
                                 isOrganizationFleetMotorcyclesActive,
+                              )} ${isOrganizationFleetMotorcyclesPending ? "pointer-events-none cursor-wait" : ""}`}
+                            >
+                              {isOrganizationFleetMotorcyclesPending ? (
+                                <SidebarSpinnerActive className="size-3" />
+                              ) : (
+                                <span
+                                  className={subNavDotClassName(
+                                    isOrganizationFleetMotorcyclesActive,
+                                  )}
+                                />
                               )}
-                            />
                               <span>{dictionary.fleet.motorcyclesNavLabel}</span>
                             </Link>
                           ) : null}
@@ -531,15 +579,20 @@ export function DashboardSidebar({
                                   ? "page"
                                   : undefined
                               }
-                              className={subNavItemClassName(
+                              onClick={(e) => handleLinkClick(organizationFuelManagementHref, e)}
+                              className={`${subNavItemClassName(
                                 isOrganizationFuelManagementActive,
-                              )}
+                              )} ${isOrganizationFuelManagementPending ? "pointer-events-none cursor-wait" : ""}`}
                             >
-                              <span
-                                className={subNavDotClassName(
-                                  isOrganizationFuelManagementActive,
-                                )}
-                              />
+                              {isOrganizationFuelManagementPending ? (
+                                <SidebarSpinnerActive className="size-3" />
+                              ) : (
+                                <span
+                                  className={subNavDotClassName(
+                                    isOrganizationFuelManagementActive,
+                                  )}
+                                />
+                              )}
                               <span>{dictionary.fuel.managementNavLabel}</span>
                             </Link>
                           ) : null}
@@ -551,15 +604,20 @@ export function DashboardSidebar({
                                   ? "page"
                                   : undefined
                               }
-                              className={subNavItemClassName(
+                              onClick={(e) => handleLinkClick(organizationFuelReportsHref, e)}
+                              className={`${subNavItemClassName(
                                 isOrganizationFuelReportsActive,
-                              )}
+                              )} ${isOrganizationFuelReportsPending ? "pointer-events-none cursor-wait" : ""}`}
                             >
-                              <span
-                                className={subNavDotClassName(
-                                  isOrganizationFuelReportsActive,
-                                )}
-                              />
+                              {isOrganizationFuelReportsPending ? (
+                                <SidebarSpinnerActive className="size-3" />
+                              ) : (
+                                <span
+                                  className={subNavDotClassName(
+                                    isOrganizationFuelReportsActive,
+                                  )}
+                                />
+                              )}
                               <span>{dictionary.fuel.reportsNavLabel}</span>
                             </Link>
                           ) : null}
@@ -612,15 +670,20 @@ export function DashboardSidebar({
                                   ? "page"
                                   : undefined
                               }
-                              className={subNavItemClassName(
+                              onClick={(e) => handleLinkClick(organizationOdometerHref, e)}
+                              className={`${subNavItemClassName(
                                 isOrganizationOdometerActive,
-                              )}
+                              )} ${isOrganizationOdometerPending ? "pointer-events-none cursor-wait" : ""}`}
                             >
-                              <span
-                                className={subNavDotClassName(
-                                  isOrganizationOdometerActive,
-                                )}
-                              />
+                              {isOrganizationOdometerPending ? (
+                                <SidebarSpinnerActive className="size-3" />
+                              ) : (
+                                <span
+                                  className={subNavDotClassName(
+                                    isOrganizationOdometerActive,
+                                  )}
+                                />
+                              )}
                               <span>{dictionary.appRequests.odometerNavLabel}</span>
                             </Link>
                           ) : null}
@@ -633,15 +696,20 @@ export function DashboardSidebar({
                                     ? "page"
                                     : undefined
                                 }
-                                className={subNavItemClassName(
+                                onClick={(e) => handleLinkClick(organizationLeaveRequestsHref, e)}
+                                className={`${subNavItemClassName(
                                   isOrganizationLeaveRequestsActive,
-                                )}
+                                )} ${isOrganizationLeaveRequestsPending ? "pointer-events-none cursor-wait" : ""}`}
                               >
-                                <span
-                                  className={subNavDotClassName(
-                                    isOrganizationLeaveRequestsActive,
-                                  )}
-                                />
+                                {isOrganizationLeaveRequestsPending ? (
+                                  <SidebarSpinnerActive className="size-3" />
+                                ) : (
+                                  <span
+                                    className={subNavDotClassName(
+                                      isOrganizationLeaveRequestsActive,
+                                    )}
+                                  />
+                                )}
                                 <span>{dictionary.appRequests.leaveNavLabel}</span>
                               </Link>
                               <Link
@@ -651,15 +719,20 @@ export function DashboardSidebar({
                                     ? "page"
                                     : undefined
                                 }
-                                className={subNavItemClassName(
+                                onClick={(e) => handleLinkClick(organizationMaintenanceRequestsHref, e)}
+                                className={`${subNavItemClassName(
                                   isOrganizationMaintenanceRequestsActive,
-                                )}
+                                )} ${isOrganizationMaintenanceRequestsPending ? "pointer-events-none cursor-wait" : ""}`}
                               >
-                                <span
-                                  className={subNavDotClassName(
-                                    isOrganizationMaintenanceRequestsActive,
-                                  )}
-                                />
+                                {isOrganizationMaintenanceRequestsPending ? (
+                                  <SidebarSpinnerActive className="size-3" />
+                                ) : (
+                                  <span
+                                    className={subNavDotClassName(
+                                      isOrganizationMaintenanceRequestsActive,
+                                    )}
+                                  />
+                                )}
                                 <span>
                                   {dictionary.appRequests.maintenanceNavLabel}
                                 </span>
@@ -671,15 +744,20 @@ export function DashboardSidebar({
                                     ? "page"
                                     : undefined
                                 }
-                                className={subNavItemClassName(
+                                onClick={(e) => handleLinkClick(organizationMeetingRequestsHref, e)}
+                                className={`${subNavItemClassName(
                                   isOrganizationMeetingRequestsActive,
-                                )}
+                                )} ${isOrganizationMeetingRequestsPending ? "pointer-events-none cursor-wait" : ""}`}
                               >
-                                <span
-                                  className={subNavDotClassName(
-                                    isOrganizationMeetingRequestsActive,
-                                  )}
-                                />
+                                {isOrganizationMeetingRequestsPending ? (
+                                  <SidebarSpinnerActive className="size-3" />
+                                ) : (
+                                  <span
+                                    className={subNavDotClassName(
+                                      isOrganizationMeetingRequestsActive,
+                                    )}
+                                  />
+                                )}
                                 <span>{dictionary.appRequests.meetingsNavLabel}</span>
                               </Link>
                               <Link
@@ -689,15 +767,20 @@ export function DashboardSidebar({
                                     ? "page"
                                     : undefined
                                 }
-                                className={subNavItemClassName(
+                                onClick={(e) => handleLinkClick(organizationOilChangeRequestsHref, e)}
+                                className={`${subNavItemClassName(
                                   isOrganizationOilChangeRequestsActive,
-                                )}
+                                )} ${isOrganizationOilChangeRequestsPending ? "pointer-events-none cursor-wait" : ""}`}
                               >
-                                <span
-                                  className={subNavDotClassName(
-                                    isOrganizationOilChangeRequestsActive,
-                                  )}
-                                />
+                                {isOrganizationOilChangeRequestsPending ? (
+                                  <SidebarSpinnerActive className="size-3" />
+                                ) : (
+                                  <span
+                                    className={subNavDotClassName(
+                                      isOrganizationOilChangeRequestsActive,
+                                    )}
+                                  />
+                                )}
                                 <span>{dictionary.appRequests.oilChangeNavLabel}</span>
                               </Link>
                             </>
@@ -747,15 +830,20 @@ export function DashboardSidebar({
                                 ? "page"
                                 : undefined
                             }
-                            className={subNavItemClassName(
+                            onClick={(e) => handleLinkClick(organizationShiftsManagementHref, e)}
+                            className={`${subNavItemClassName(
                               isOrganizationShiftsManagementActive,
-                            )}
+                            )} ${isOrganizationShiftsManagementPending ? "pointer-events-none cursor-wait" : ""}`}
                           >
-                            <span
-                              className={subNavDotClassName(
-                                isOrganizationShiftsManagementActive,
-                              )}
-                            />
+                            {isOrganizationShiftsManagementPending ? (
+                              <SidebarSpinnerActive className="size-3" />
+                            ) : (
+                              <span
+                                className={subNavDotClassName(
+                                  isOrganizationShiftsManagementActive,
+                                )}
+                              />
+                            )}
                             <span>{dictionary.shifts.managementNavLabel}</span>
                           </Link>
                           <Link
@@ -765,15 +853,20 @@ export function DashboardSidebar({
                                 ? "page"
                                 : undefined
                             }
-                            className={subNavItemClassName(
+                            onClick={(e) => handleLinkClick(organizationShiftCalculationHref, e)}
+                            className={`${subNavItemClassName(
                               isOrganizationShiftCalculationActive,
-                            )}
+                            )} ${isOrganizationShiftCalculationPending ? "pointer-events-none cursor-wait" : ""}`}
                           >
-                            <span
-                              className={subNavDotClassName(
-                                isOrganizationShiftCalculationActive,
-                              )}
-                            />
+                            {isOrganizationShiftCalculationPending ? (
+                              <SidebarSpinnerActive className="size-3" />
+                            ) : (
+                              <span
+                                className={subNavDotClassName(
+                                  isOrganizationShiftCalculationActive,
+                                )}
+                              />
+                            )}
                             <span>{dictionary.shifts.calculationNavLabel}</span>
                           </Link>
                         </div>
@@ -786,16 +879,17 @@ export function DashboardSidebar({
                       aria-current={
                         isOrganizationDriverWarningsActive ? "page" : undefined
                       }
-                      className={subNavItemClassName(
+                      onClick={(e) => handleLinkClick(organizationDriverWarningsHref, e)}
+                      className={`${subNavItemClassName(
                         isOrganizationDriverWarningsActive,
-                      )}
+                      )} ${isOrganizationDriverWarningsPending ? "pointer-events-none cursor-wait" : ""}`}
                     >
                       <span
                         className={subNavIconClassName(
                           isOrganizationDriverWarningsActive,
                         )}
                       >
-                        <WarningIcon />
+                        {isOrganizationDriverWarningsPending ? <SidebarSpinnerActive className="size-3" /> : <WarningIcon />}
                       </span>
                       <span>{dictionary.driverWarnings.navLabel}</span>
                     </Link>
@@ -832,41 +926,55 @@ export function DashboardSidebar({
                       </p>
                       {navigation.drivers ? (
                         <Link
-                        href={organizationDriversHref}
-                        aria-current={
-                          isOrganizationDriversDataActive ? "page" : undefined
-                        }
-                        onClick={() => setDriversFlyoutOpen(false)}
-                        className={subNavItemClassName(
-                          isOrganizationDriversDataActive,
-                        )}
-                        >
-                        <span
-                          className={subNavDotClassName(
+                          href={organizationDriversHref}
+                          aria-current={
+                            isOrganizationDriversDataActive ? "page" : undefined
+                          }
+                          onClick={(e) => {
+                            setDriversFlyoutOpen(false);
+                            handleLinkClick(organizationDriversHref, e);
+                          }}
+                          className={`${subNavItemClassName(
                             isOrganizationDriversDataActive,
+                          )} ${isOrganizationDriversPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationDriversPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationDriversDataActive,
+                              )}
+                            />
                           )}
-                        />
                           <span>{dictionary.drivers.dataNavLabel}</span>
                         </Link>
                       ) : null}
                       {navigation.driverReports ? (
                         <Link
-                        href={organizationDriversReportsHref}
-                        aria-current={
-                          isOrganizationDriversReportsActive
-                            ? "page"
-                            : undefined
-                        }
-                        onClick={() => setDriversFlyoutOpen(false)}
-                        className={subNavItemClassName(
-                          isOrganizationDriversReportsActive,
-                        )}
-                        >
-                        <span
-                          className={subNavDotClassName(
+                          href={organizationDriversReportsHref}
+                          aria-current={
+                            isOrganizationDriversReportsActive
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={(e) => {
+                            setDriversFlyoutOpen(false);
+                            handleLinkClick(organizationDriversReportsHref, e);
+                          }}
+                          className={`${subNavItemClassName(
                             isOrganizationDriversReportsActive,
+                          )} ${isOrganizationDriversReportsPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationDriversReportsPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationDriversReportsActive,
+                              )}
+                            />
                           )}
-                        />
                           <span>{dictionary.drivers.reportsNavLabel}</span>
                         </Link>
                       ) : null}
@@ -884,13 +992,23 @@ export function DashboardSidebar({
                     }
                     aria-current={isOrganizationFleetActive ? "page" : undefined}
                     title={dictionary.fleet.navLabel}
-                    className={navItemClassName(
+                    onClick={(e) => handleLinkClick(
+                      navigation.fleetCars
+                        ? organizationFleetCarsHref
+                        : organizationFleetMotorcyclesHref ?? organizationFleetCarsHref,
+                      e
+                    )}
+                    className={`${navItemClassName(
                       isOrganizationFleetActive,
                       true,
-                    )}
+                    )} ${isOrganizationFleetCarsPending || isOrganizationFleetMotorcyclesPending ? "pointer-events-none cursor-wait" : ""}`}
                   >
                     <span className={navIconClassName(isOrganizationFleetActive)}>
-                      <FleetIcon />
+                      {isOrganizationFleetCarsPending || isOrganizationFleetMotorcyclesPending ? (
+                        <SidebarSpinnerActive />
+                      ) : (
+                        <FleetIcon />
+                      )}
                     </span>
                   </Link>
                 </div>
@@ -905,13 +1023,23 @@ export function DashboardSidebar({
                     }
                     aria-current={isOrganizationFuelActive ? "page" : undefined}
                     title={dictionary.fuel.navLabel}
-                    className={navItemClassName(
+                    onClick={(e) => handleLinkClick(
+                      navigation.fuelManagement
+                        ? organizationFuelManagementHref
+                        : organizationFuelReportsHref ?? organizationFuelManagementHref,
+                      e
+                    )}
+                    className={`${navItemClassName(
                       isOrganizationFuelActive,
                       true,
-                    )}
+                    )} ${isOrganizationFuelManagementPending || isOrganizationFuelReportsPending ? "pointer-events-none cursor-wait" : ""}`}
                   >
                     <span className={navIconClassName(isOrganizationFuelActive)}>
-                      <FuelIcon />
+                      {isOrganizationFuelManagementPending || isOrganizationFuelReportsPending ? (
+                        <SidebarSpinnerActive />
+                      ) : (
+                        <FuelIcon />
+                      )}
                     </span>
                   </Link>
                 </div>
@@ -929,17 +1057,27 @@ export function DashboardSidebar({
                       isOrganizationAppRequestsActive ? "page" : undefined
                     }
                     title={dictionary.appRequests.navLabel}
-                    className={navItemClassName(
+                    onClick={(e) => handleLinkClick(
+                      navigation.odometerManagement
+                        ? organizationOdometerHref
+                        : organizationLeaveRequestsHref ?? organizationOdometerHref,
+                      e
+                    )}
+                    className={`${navItemClassName(
                       isOrganizationAppRequestsActive,
                       true,
-                    )}
+                    )} ${isOrganizationOdometerPending || isOrganizationLeaveRequestsPending || isOrganizationMaintenanceRequestsPending || isOrganizationMeetingRequestsPending || isOrganizationOilChangeRequestsPending ? "pointer-events-none cursor-wait" : ""}`}
                   >
                     <span
                       className={navIconClassName(
                         isOrganizationAppRequestsActive,
                       )}
                     >
-                      <AppRequestsIcon />
+                      {isOrganizationOdometerPending || isOrganizationLeaveRequestsPending || isOrganizationMaintenanceRequestsPending || isOrganizationMeetingRequestsPending || isOrganizationOilChangeRequestsPending ? (
+                        <SidebarSpinnerActive />
+                      ) : (
+                        <AppRequestsIcon />
+                      )}
                     </span>
                   </Link>
                 </div>
@@ -954,17 +1092,22 @@ export function DashboardSidebar({
                       isOrganizationShiftsActive ? "page" : undefined
                     }
                     title={dictionary.shifts.navLabel}
-                    className={navItemClassName(
+                    onClick={(e) => handleLinkClick(organizationShiftsManagementHref, e)}
+                    className={`${navItemClassName(
                       isOrganizationShiftsActive,
                       true,
-                    )}
+                    )} ${isOrganizationShiftsManagementPending || isOrganizationShiftCalculationPending ? "pointer-events-none cursor-wait" : ""}`}
                   >
                     <span
                       className={navIconClassName(
                         isOrganizationShiftsActive,
                       )}
                     >
-                      <ShiftsIcon />
+                      {isOrganizationShiftsManagementPending || isOrganizationShiftCalculationPending ? (
+                        <SidebarSpinnerActive />
+                      ) : (
+                        <ShiftsIcon />
+                      )}
                     </span>
                   </Link>
                 </div>
@@ -977,17 +1120,22 @@ export function DashboardSidebar({
                       isOrganizationDriverWarningsActive ? "page" : undefined
                     }
                     title={dictionary.driverWarnings.navLabel}
-                    className={navItemClassName(
+                    onClick={(e) => handleLinkClick(organizationDriverWarningsHref, e)}
+                    className={`${navItemClassName(
                       isOrganizationDriverWarningsActive,
                       true,
-                    )}
+                    )} ${isOrganizationDriverWarningsPending ? "pointer-events-none cursor-wait" : ""}`}
                   >
                     <span
                       className={navIconClassName(
                         isOrganizationDriverWarningsActive,
                       )}
                     >
-                      <WarningIcon />
+                      {isOrganizationDriverWarningsPending ? (
+                        <SidebarSpinnerActive />
+                      ) : (
+                        <WarningIcon />
+                      )}
                     </span>
                   </Link>
                 </div>
@@ -999,10 +1147,11 @@ export function DashboardSidebar({
               href={usersHref}
               aria-current={isUsersActive ? "page" : undefined}
               title={collapsed ? dictionary.userManagement.navLabel : undefined}
-              className={navItemClassName(isUsersActive, collapsed)}
+              onClick={(e) => handleLinkClick(usersHref, e)}
+              className={`${navItemClassName(isUsersActive, collapsed)} ${isUsersPending ? "pointer-events-none cursor-wait" : ""}`}
             >
               <span className={navIconClassName(isUsersActive)}>
-                <UsersIcon />
+                {isUsersPending ? <SidebarSpinnerActive /> : <UsersIcon />}
               </span>
               <span className={collapsed ? "lg:hidden" : ""}>
                 {dictionary.userManagement.navLabel}
@@ -1277,4 +1426,29 @@ function getPanelIndicatorPoints({
   }
 
   return collapsed ? "M7 10l2 2-2 2" : "M9 10l-2 2 2 2";
+}
+
+function SidebarSpinnerActive({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg
+      className={`animate-spin ${className}`}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
 }

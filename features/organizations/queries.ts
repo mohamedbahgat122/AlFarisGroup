@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import type {
@@ -11,7 +12,11 @@ import {
   getAccessibleOrganizationNavigation,
   getOrganizationPermissions,
 } from "@/features/permissions/server";
-import { organizationPermissionKeys } from "@/features/permissions/registry";
+import {
+  organizationPermissionKeys,
+  viewOnlyOrganizationPermissionKeys,
+} from "@/features/permissions/registry";
+import type { OrganizationPermissionKey } from "@/features/permissions/registry";
 import type { Database } from "@/types/database";
 import type { Profile } from "@/types/profile";
 
@@ -23,6 +28,11 @@ type OrganizationRow = Pick<
 type OrganizationAccessRow = Pick<
   Database["public"]["Tables"]["organization_access"]["Row"],
   "organization_id" | "access_level"
+>;
+
+type OrganizationPermissionRow = Pick<
+  Database["public"]["Tables"]["organization_user_permissions"]["Row"],
+  "organization_id" | "permission_key"
 >;
 
 const ORGANIZATION_CODE_PATTERN = /^[a-z0-9_]{1,80}$/;
@@ -40,23 +50,25 @@ export async function getAccessibleOrganizationsForCurrentUser(): Promise<Access
   return getAccessibleOrganizationsForProfile(admin.supabase, admin.profile);
 }
 
-export async function getAccessibleOrganizationsForProfile(
-  supabase: SupabaseClient<Database>,
-  profile: Profile,
-): Promise<AccessibleOrganizationsResult> {
-  if (profile.role === "system_owner") {
-    return getSystemOwnerOrganizations(supabase, profile.home_organization_id);
-  }
+export const getAccessibleOrganizationsForProfile = cache(
+  async (
+    supabase: SupabaseClient<Database>,
+    profile: Profile,
+  ): Promise<AccessibleOrganizationsResult> => {
+    if (profile.role === "system_owner") {
+      return getSystemOwnerOrganizations(supabase, profile.home_organization_id);
+    }
 
-  if (profile.role !== "manager" && profile.role !== "supervisor") {
-    return {
-      status: "unauthorized",
-      organizations: [],
-    };
-  }
+    if (profile.role !== "manager" && profile.role !== "supervisor") {
+      return {
+        status: "unauthorized",
+        organizations: [],
+      };
+    }
 
-  return getScopedOrganizations(supabase, profile);
-}
+    return getScopedOrganizations(supabase, profile);
+  },
+);
 
 export async function getAccessibleOrganizationByCode(
   organizationCode: string,
@@ -129,26 +141,35 @@ async function getScopedOrganizations(
   supabase: SupabaseClient<Database>,
   profile: Profile,
 ): Promise<AccessibleOrganizationsResult> {
-  const { data: accessRows, error: accessError } = await supabase
-    .from("organization_access")
-    .select("organization_id, access_level")
-    .eq("user_id", profile.id);
+  const [accessResult, permissionResult] = await Promise.all([
+    supabase
+      .from("organization_access")
+      .select("organization_id, access_level")
+      .eq("user_id", profile.id),
+    supabase
+      .from("organization_user_permissions")
+      .select("organization_id, permission_key")
+      .eq("user_id", profile.id),
+  ]);
 
-  if (accessError) {
+  if (accessResult.error || permissionResult.error) {
     return {
       status: "load_error",
       organizations: [],
     };
   }
 
-  const organizationIds = new Set<string>();
+  const accessRows = accessResult.data;
+  const permissionRows = permissionResult.data;
 
-  if (profile.home_organization_id) {
-    organizationIds.add(profile.home_organization_id);
-  }
+  const organizationIds = new Set<string>();
 
   for (const access of accessRows) {
     organizationIds.add(access.organization_id);
+  }
+
+  for (const permission of permissionRows) {
+    organizationIds.add(permission.organization_id);
   }
 
   if (organizationIds.size === 0) {
@@ -179,6 +200,7 @@ async function getScopedOrganizations(
         profile,
         organizations,
         accessRows,
+        permissionRows,
         profile.home_organization_id,
       ),
     ),
@@ -190,6 +212,7 @@ async function mergeOrganizationAccess(
   profile: Profile,
   organizations: OrganizationRow[],
   accessRows: OrganizationAccessRow[],
+  permissionRows: OrganizationPermissionRow[],
   homeOrganizationId: string | null,
 ) {
   const additionalAccessByOrganizationId = new Map<
@@ -201,20 +224,23 @@ async function mergeOrganizationAccess(
       access.access_level,
     ]),
   );
+  const permissionsByOrganizationId = groupPermissionKeysByOrganization(permissionRows);
 
   const mapped: AccessibleOrganization[] = [];
 
   for (const organization of organizations) {
     const isHomeOrganization = organization.id === homeOrganizationId;
-    const permissions = isHomeOrganization
-      ? new Set(organizationPermissionKeys)
-      : await getOrganizationPermissions(supabase, profile, organization.id);
+    const permissionKeys =
+      permissionsByOrganizationId.get(organization.id) ??
+      Array.from(await getOrganizationPermissions(supabase, profile, organization.id));
+    const permissions = new Set(permissionKeys);
+    const accessLevel =
+      additionalAccessByOrganizationId.get(organization.id) ??
+      getAccessLevelFromPermissions(permissionKeys);
 
     mapped.push({
       ...organization,
-      accessLevel: isHomeOrganization
-        ? "manage"
-        : additionalAccessByOrganizationId.get(organization.id) ?? "view",
+      accessLevel,
       isHomeOrganization,
       isSystemOwnerAccess: false,
       permissionKeys: Array.from(permissions),
@@ -223,6 +249,28 @@ async function mergeOrganizationAccess(
   }
 
   return mapped;
+}
+
+function groupPermissionKeysByOrganization(permissionRows: OrganizationPermissionRow[]) {
+  const grouped = new Map<string, OrganizationPermissionKey[]>();
+
+  for (const row of permissionRows) {
+    const permissions = grouped.get(row.organization_id) ?? [];
+    permissions.push(row.permission_key as OrganizationPermissionKey);
+    grouped.set(row.organization_id, permissions);
+  }
+
+  return grouped;
+}
+
+function getAccessLevelFromPermissions(
+  permissionKeys: OrganizationPermissionKey[],
+): OrganizationAccessLevel {
+  return permissionKeys.every((permissionKey) =>
+    (viewOnlyOrganizationPermissionKeys as readonly string[]).includes(permissionKey),
+  )
+    ? "view"
+    : "manage";
 }
 
 function sortOrganizations(organizations: AccessibleOrganization[]) {

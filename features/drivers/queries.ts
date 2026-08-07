@@ -2,10 +2,6 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
-import {
-  createDriverDocumentDownloadSignedUrl,
-  createDriverDocumentSignedUrl,
-} from "@/features/drivers/storage";
 import { getOrganizationPermissions } from "@/features/permissions/server";
 import type {
   DriverActor,
@@ -131,13 +127,11 @@ export async function getDriversForOrganization(
     rows.map((driver) => driver.auth_user_id),
   );
 
-  const drivers = await Promise.all(
-    rows.map(async (driver) =>
-      mapDriver(driver, organizationName, actors, appAccounts, {
-        canViewDocuments,
-        canDownloadDocuments,
-      }),
-    ),
+  const drivers = rows.map((driver) =>
+    mapDriver(driver, organizationName, actors, appAccounts, {
+      canViewDocuments,
+      canDownloadDocuments,
+    }),
   );
 
   return {
@@ -146,7 +140,7 @@ export async function getDriversForOrganization(
   };
 }
 
-async function mapDriver(
+function mapDriver(
   driver: DriverQueryRow,
   organizationName: string,
   actors: Map<string, DriverActor>,
@@ -155,39 +149,42 @@ async function mapDriver(
     canViewDocuments: boolean;
     canDownloadDocuments: boolean;
   },
-): Promise<DriverListItem> {
-  const documents = await Promise.all(
-    documentPermissions.canViewDocuments
-      ? driver.driver_documents.map(async (document) => {
-      const preview = await createDriverFilePreview({
-        path: document.storage_path,
-        fileName: document.original_filename,
-        mimeType: document.mime_type,
-        canDownload: documentPermissions.canDownloadDocuments,
-      });
+): DriverListItem {
+  const documents = documentPermissions.canViewDocuments
+    ? driver.driver_documents.map((document) => {
+        const preview = createDriverFilePreview({
+          driverId: driver.id,
+          type: document.document_type,
+          fileName: document.original_filename,
+          mimeType: document.mime_type,
+          canDownload: documentPermissions.canDownloadDocuments,
+        });
 
-      return {
-        documentType: document.document_type,
-        originalFilename: document.original_filename,
-        mimeType: document.mime_type,
-        sizeBytes: document.size_bytes,
-        signedUrl: preview?.previewUrl ?? null,
-        preview,
-      };
-    })
-      : [],
-  );
+        return {
+          documentType: document.document_type,
+          originalFilename: document.original_filename,
+          mimeType: document.mime_type,
+          sizeBytes: document.size_bytes,
+          signedUrl: preview?.previewUrl ?? null,
+          preview,
+        };
+      })
+    : [];
+
   const profilePhotoPreview = driver.profile_photo_path
-    ? await createDriverFilePreview({
-        path: driver.profile_photo_path,
+    ? createDriverFilePreview({
+        driverId: driver.id,
+        type: "profile-photo",
         fileName: getFileNameFromStoragePath(driver.profile_photo_path),
         mimeType: getMimeTypeFromStoragePath(driver.profile_photo_path),
         canDownload: documentPermissions.canDownloadDocuments,
       })
     : null;
+
   const operatingCardFilePreview = driver.operating_card_file_path
-    ? await createDriverFilePreview({
-        path: driver.operating_card_file_path,
+    ? createDriverFilePreview({
+        driverId: driver.id,
+        type: "operating-card",
         fileName: getFileNameFromStoragePath(driver.operating_card_file_path),
         mimeType: getMimeTypeFromStoragePath(driver.operating_card_file_path),
         canDownload: documentPermissions.canDownloadDocuments,
@@ -328,33 +325,33 @@ function getActor(actors: Map<string, DriverActor>, id: string | null) {
   return id ? actors.get(id) ?? null : null;
 }
 
-async function createDriverFilePreview({
-  path,
+function createDriverFilePreview({
+  driverId,
+  type,
   fileName,
   mimeType,
   canDownload,
 }: {
-  path: string;
+  driverId: string;
+  type: string;
   fileName: string;
   mimeType: string | null;
   canDownload: boolean;
-}): Promise<DriverFilePreview | null> {
-  const [previewUrl, downloadUrl] = await Promise.all([
-    createDriverDocumentSignedUrl(path),
-    canDownload
-      ? createDriverDocumentDownloadSignedUrl(path, fileName)
-      : Promise.resolve(null),
-  ]);
-
-  if (!previewUrl) {
+}): DriverFilePreview | null {
+  if (!driverId || !type) {
     return null;
   }
+
+  const previewUrl = `/api/drivers/document?driverId=${encodeURIComponent(driverId)}&type=${encodeURIComponent(type)}`;
+  const downloadUrl = canDownload
+    ? `/api/drivers/document?driverId=${encodeURIComponent(driverId)}&type=${encodeURIComponent(type)}&download=true`
+    : "";
 
   return {
     fileName,
     mimeType,
     previewUrl,
-    downloadUrl: downloadUrl ?? "",
+    downloadUrl,
     isImage: isImageMimeType(mimeType),
     isPdf: mimeType === "application/pdf" || /\.pdf$/i.test(fileName),
   };

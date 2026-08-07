@@ -7,7 +7,11 @@ import type {
   ManagedUserActivityResult,
   ManagedUsersQueryResult,
 } from "@/features/user-management/types";
-import { normalizePermissionKeys } from "@/features/permissions/registry";
+import {
+  normalizePermissionKeys,
+  viewOnlyOrganizationPermissionKeys,
+} from "@/features/permissions/registry";
+import type { OrganizationPermissionKey } from "@/features/permissions/registry";
 import type { Database } from "@/types/database";
 
 type OrganizationAccessRow =
@@ -107,6 +111,10 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
     organizationIds.add(access.organization_id);
   }
 
+  for (const permission of permissionRows) {
+    organizationIds.add(permission.organization_id);
+  }
+
   const { data: organizations, error: organizationsError } = organizationIds.size
     ? await currentUser.supabase
         .from("organizations")
@@ -126,6 +134,12 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
     organizations.map((organization) => [organization.id, organization]),
   );
   const accessByUserId = groupAccessByUserId(accessRows);
+  const accessByUserAndOrganization = new Map(
+    accessRows.map((access) => [
+      `${access.user_id}:${access.organization_id}`,
+      access,
+    ]),
+  );
   const permissionsByUserAndOrganization =
     groupPermissionKeysByUserAndOrganization(permissionRows);
 
@@ -141,31 +155,54 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
       homeOrganization: profile.home_organization_id
         ? organizationsById.get(profile.home_organization_id) ?? null
         : null,
-      additionalAccess: (accessByUserId.get(profile.id) ?? []).flatMap(
-        (access) => {
-          const organization = organizationsById.get(access.organization_id);
+      additionalAccess: Array.from(
+        new Set([
+          ...(accessByUserId.get(profile.id) ?? []).map(
+            (access) => access.organization_id,
+          ),
+          ...Array.from(permissionsByUserAndOrganization.keys())
+            .filter((key) => key.startsWith(`${profile.id}:`))
+            .map((key) => key.slice(profile.id.length + 1)),
+        ]),
+      ).flatMap((organizationId) => {
+        const organization = organizationsById.get(organizationId);
 
-          if (!organization) {
-            return [];
-          }
+        if (!organization) {
+          return [];
+        }
 
-          return {
-            organizationId: organization.id,
-            organizationName: organization.name,
-            organizationCode: organization.code,
-            accessLevel: access.access_level,
-            permissionKeys: normalizePermissionKeys(
-              permissionsByUserAndOrganization.get(
-                `${access.user_id}:${access.organization_id}`,
-              ) ?? [],
-            ),
-          };
-        },
-      ),
+        const permissionKeys = normalizePermissionKeys(
+          permissionsByUserAndOrganization.get(
+            `${profile.id}:${organizationId}`,
+          ) ?? [],
+        );
+        const access = accessByUserAndOrganization.get(
+          `${profile.id}:${organizationId}`,
+        );
+
+        return {
+          organizationId: organization.id,
+          organizationName: organization.name,
+          organizationCode: organization.code,
+          accessLevel:
+            access?.access_level ?? getAccessLevelFromPermissions(permissionKeys),
+          permissionKeys,
+        };
+      }),
       createdAt: profile.created_at,
       isSystemOwner: profile.role === "system_owner",
     })),
   };
+}
+
+function getAccessLevelFromPermissions(
+  permissionKeys: OrganizationPermissionKey[],
+): Database["public"]["Enums"]["organization_access_level"] {
+  return permissionKeys.every((permissionKey) =>
+    (viewOnlyOrganizationPermissionKeys as readonly string[]).includes(permissionKey),
+  )
+    ? "view"
+    : "manage";
 }
 
 function groupPermissionKeysByUserAndOrganization(

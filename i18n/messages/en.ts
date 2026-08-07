@@ -1418,6 +1418,8 @@ export const en = {
       emailAlreadyExists: "A user with this email already exists.",
       organizationNotFound: "The selected organization could not be found.",
       organizationInactive: "The selected organization is inactive.",
+      additionalOrganizationInvalid:
+        "Additional access must include only active organizations and must not repeat the home organization.",
       unauthorized: "You are not authorized to create users.",
       configurationError: "Server configuration is unavailable.",
       creationFailed: "User creation failed. Please try again.",

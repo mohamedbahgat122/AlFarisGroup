@@ -54,12 +54,7 @@ export function RealtimeRefresh({
       },
     );
 
-    channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        router.refresh();
-        void onRefresh?.();
-      }
-    });
+    channel.subscribe();
 
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -70,7 +65,7 @@ export function RealtimeRefresh({
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-5 end-5 z-[80] rounded-xl border border-primary/20 bg-surface px-4 py-3 text-sm font-bold text-navy shadow-xl">
+    <div className="fixed bottom-5 inset-e-5 z-80 rounded-xl border border-primary/20 bg-surface px-4 py-3 text-sm font-bold text-navy shadow-xl">
       {toast}
     </div>
   );

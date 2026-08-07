@@ -2,7 +2,6 @@ import type {
   CreateManagedUserAccessInput,
   CreateManagedUserInput,
   ManagedUserRole,
-  OrganizationAccessLevel,
   UpdateManagedUserInput,
   UpdateManagedUserPermissionsInput,
 } from "@/features/user-management/types";
@@ -17,8 +16,6 @@ const allowedRoles = new Set<ManagedUserRole>([
   "supervisor",
   "driver",
 ]);
-
-const allowedAccessLevels = new Set<OrganizationAccessLevel>(["view", "manage"]);
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -59,7 +56,7 @@ export function normalizeAndValidateCreateManagedUserInput(
   const homeOrganizationId = input.homeOrganizationId.trim();
   const additionalAccess = input.additionalAccess.map((entry) => ({
     organizationId: entry.organizationId.trim(),
-    accessLevel: entry.accessLevel,
+    permissionKeys: applyPermissionDependencies(entry.permissionKeys),
   }));
 
   if (!isValidEmail(email) || input.password.length < 8) {
@@ -93,11 +90,11 @@ export function normalizeAndValidateCreateManagedUserInput(
       return { valid: false };
     }
 
-    if (!allowedAccessLevels.has(entry.accessLevel)) {
-      return { valid: false };
-    }
-
-    if (entry.organizationId === homeOrganizationId) {
+    if (
+      entry.permissionKeys.some(
+        (permissionKey) => !isOrganizationPermissionKey(permissionKey),
+      )
+    ) {
       return { valid: false };
     }
 
@@ -188,7 +185,11 @@ export function normalizeAndValidatePermissionsInput(
       return { valid: false };
     }
 
-    if (entry.permissionKeys.some((permissionKey) => !isOrganizationPermissionKey(permissionKey))) {
+    if (
+      entry.permissionKeys.some(
+        (permissionKey) => !isOrganizationPermissionKey(permissionKey),
+      )
+    ) {
       return { valid: false };
     }
 
@@ -216,12 +217,6 @@ export function isManagedUserRole(value: string): value is ManagedUserRole {
   return allowedRoles.has(value as ManagedUserRole);
 }
 
-export function isOrganizationAccessLevel(
-  value: string,
-): value is OrganizationAccessLevel {
-  return allowedAccessLevels.has(value as OrganizationAccessLevel);
-}
-
 export function parseAdditionalAccess(value: FormDataEntryValue | null) {
   if (typeof value !== "string" || value.trim() === "") {
     return [] satisfies CreateManagedUserAccessInput[];
@@ -246,23 +241,33 @@ export function parseAdditionalAccess(value: FormDataEntryValue | null) {
       typeof item !== "object" ||
       item === null ||
       !("organizationId" in item) ||
-      !("accessLevel" in item)
+      !("permissionKeys" in item)
     ) {
       return null;
     }
 
     const organizationId = item.organizationId;
-    const accessLevel = item.accessLevel;
+    const permissionKeys = item.permissionKeys;
 
     if (
       typeof organizationId !== "string" ||
-      typeof accessLevel !== "string" ||
-      !isOrganizationAccessLevel(accessLevel)
+      !Array.isArray(permissionKeys) ||
+      !permissionKeys.every(
+        (permissionKey) =>
+          typeof permissionKey === "string" &&
+          isOrganizationPermissionKey(permissionKey),
+      )
     ) {
       return null;
     }
 
-    access.push({ organizationId, accessLevel });
+    const normalizedPermissionKeys = applyPermissionDependencies(
+      normalizePermissionKeys(permissionKeys),
+    );
+
+    if (normalizedPermissionKeys.length > 0) {
+      access.push({ organizationId, permissionKeys: normalizedPermissionKeys });
+    }
   }
 
   return access;

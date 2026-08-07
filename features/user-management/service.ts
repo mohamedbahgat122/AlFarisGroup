@@ -38,7 +38,9 @@ export async function createManagedUser(
   if (!validation.valid) {
     return {
       success: false,
-      code: "validation_error",
+      code: hasPrimaryOrganizationInAdditionalAccess(input)
+        ? "additional_organization_invalid"
+        : "validation_error",
     };
   }
 
@@ -116,28 +118,43 @@ export async function createManagedUser(
     p_job_title: normalizedInput.jobTitle,
     p_home_organization_id: normalizedInput.homeOrganizationId,
     p_additional_access: normalizedInput.additionalAccess.map((access) => ({
-      organization_id: access.organizationId,
-      access_level: access.accessLevel,
+      organizationId: access.organizationId,
+      permissionKeys: access.permissionKeys,
     })),
   });
 
   if (profileError) {
-    console.error("[MANAGED_USER_PROFILE_CREATION_FAILED]");
+    logManagedUserProfileCreationFailure(profileError, normalizedInput);
 
-    const { error: cleanupError } = await admin.auth.admin.updateUserById(
-      newUserId,
-      {
-        ban_duration: longBanDuration,
-      },
-    );
+    const { error: deleteAuthUserError } =
+      await admin.auth.admin.deleteUser(newUserId);
 
-    if (cleanupError) {
-      console.error("[MANAGED_USER_AUTH_BAN_CLEANUP_FAILED]");
+    if (deleteAuthUserError) {
+      console.error("[MANAGED_USER_AUTH_DELETE_CLEANUP_FAILED]", {
+        userIdSuffix: safeSuffix(newUserId),
+        error: getSupabaseErrorDiagnostic(deleteAuthUserError),
+      });
+
+      const { error: banAuthUserError } = await admin.auth.admin.updateUserById(
+        newUserId,
+        {
+          ban_duration: longBanDuration,
+        },
+      );
+
+      if (banAuthUserError) {
+        console.error("[MANAGED_USER_AUTH_BAN_CLEANUP_FAILED]", {
+          userIdSuffix: safeSuffix(newUserId),
+          error: getSupabaseErrorDiagnostic(banAuthUserError),
+        });
+      }
     }
 
     return {
       success: false,
-      code: "creation_failed",
+      code: isAdditionalOrganizationUnavailableError(profileError)
+        ? "additional_organization_invalid"
+        : "creation_failed",
     };
   }
 
@@ -307,20 +324,7 @@ export async function updateManagedUserPermissions(
     return { success: false, code: "validation_error" };
   }
 
-  if (
-    target.profile.home_organization_id &&
-    normalizedInput.additionalAccess.some(
-      (access) => access.organizationId === target.profile.home_organization_id,
-    )
-  ) {
-    logManagedUserPermissionsFailure({
-      stage: "home_organization_selected",
-      targetUserId: normalizedInput.targetUserId,
-      additionalAccess: normalizedInput.additionalAccess,
-      error: null,
-    });
-    return { success: false, code: "validation_error" };
-  }
+
 
   const organizationIds = normalizedInput.additionalAccess.map(
     (access) => access.organizationId,
@@ -628,6 +632,58 @@ function logManagedUserPermissionsFailure({
         }
       : null,
   });
+}
+
+function logManagedUserProfileCreationFailure(
+  error: {
+    code?: string;
+    message?: string;
+    details?: string | null;
+    hint?: string | null;
+  },
+  input: CreateManagedUserInput,
+) {
+  if (process.env.NODE_ENV === "production") {
+    console.error("[MANAGED_USER_PROFILE_CREATION_FAILED]");
+    return;
+  }
+
+  console.error("[MANAGED_USER_PROFILE_CREATION_FAILED]", {
+    homeOrganizationId: input.homeOrganizationId,
+    additionalOrganizationIds: input.additionalAccess.map(
+      (access) => access.organizationId,
+    ),
+    error: getSupabaseErrorDiagnostic(error),
+  });
+}
+
+function hasPrimaryOrganizationInAdditionalAccess(input: CreateManagedUserInput) {
+  const homeOrganizationId = input.homeOrganizationId.trim();
+
+  return input.additionalAccess.some(
+    (access) => access.organizationId.trim() === homeOrganizationId,
+  );
+}
+
+function isAdditionalOrganizationUnavailableError(error: { message?: string }) {
+  return (
+    error.message ===
+    "Managed user profile creation failed: organization is inactive or missing."
+  );
+}
+
+function getSupabaseErrorDiagnostic(error: {
+  code?: string;
+  message?: string;
+  details?: string | null;
+  hint?: string | null;
+}) {
+  return {
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+  };
 }
 
 function findDuplicates(values: string[]) {

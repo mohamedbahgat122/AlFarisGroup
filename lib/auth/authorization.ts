@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/types/database";
@@ -97,37 +98,39 @@ export function validateAdminProfile(profile: Profile | null): ProfileAccessResu
   };
 }
 
-export async function getAuthenticatedAdmin(): Promise<AdminAuthorizationResult> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+export const getAuthenticatedAdmin = cache(
+  async (): Promise<AdminAuthorizationResult> => {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
 
-  if (error || !user) {
+    if (error || !user) {
+      return {
+        status: "unauthenticated",
+        supabase,
+      };
+    }
+
+    const profile = await getProfileForUser(supabase, user.id);
+    const access = validateAdminProfile(profile);
+
+    if (!access.allowed) {
+      return {
+        status: access.reason,
+        supabase,
+      };
+    }
+
     return {
-      status: "unauthenticated",
+      status: "authorized",
+      user,
+      profile: access.profile,
       supabase,
     };
-  }
-
-  const profile = await getProfileForUser(supabase, user.id);
-  const access = validateAdminProfile(profile);
-
-  if (!access.allowed) {
-    return {
-      status: access.reason,
-      supabase,
-    };
-  }
-
-  return {
-    status: "authorized",
-    user,
-    profile: access.profile,
-    supabase,
-  };
-}
+  },
+);
 
 export async function requireSystemOwner() {
   const supabase = await createClient();

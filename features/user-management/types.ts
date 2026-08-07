@@ -11,7 +11,7 @@ export type OrganizationAccessLevel =
 
 export type CreateManagedUserAccessInput = {
   organizationId: string;
-  accessLevel: OrganizationAccessLevel;
+  permissionKeys: OrganizationPermissionKey[];
 };
 
 export type CreateManagedUserInput = {
@@ -113,6 +113,7 @@ export type CreateManagedUserErrorCode =
   | "email_already_exists"
   | "organization_not_found"
   | "organization_inactive"
+  | "additional_organization_invalid"
   | "unauthorized"
   | "configuration_error"
   | "protected_user"

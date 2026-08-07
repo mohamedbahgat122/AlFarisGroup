@@ -2,6 +2,8 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
+import { flushSync } from "react-dom";
+import { usePathname } from "next/navigation";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { RealtimeRefresh } from "@/components/dashboard/realtime-refresh";
 import { DashboardSidebar } from "@/components/dashboard/dashboard-sidebar";
@@ -49,6 +51,101 @@ export function DashboardShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [liveAppNotifications, setLiveAppNotifications] =
     useState<typeof appNotifications | null>(null);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const pathname = usePathname();
+
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (pathname !== prevPathname) {
+    setPrevPathname(pathname);
+    setIsNavigating(false);
+    setPendingHref(null);
+  }
+
+  useEffect(() => {
+    const handlePopState = () => {
+      flushSync(() => {
+        setIsNavigating(true);
+      });
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const handleSidebarLinkClick = useCallback((href: string | null, event: React.MouseEvent) => {
+    if (!href) return;
+    if (event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (event.defaultPrevented) return;
+
+    try {
+      const url = new URL(href, window.location.origin);
+      const currentUrl = new URL(window.location.href);
+      if (
+        url.pathname === currentUrl.pathname &&
+        url.search === currentUrl.search
+      ) {
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    if (href === pendingHref) {
+      event.preventDefault();
+      return;
+    }
+
+    flushSync(() => {
+      setPendingHref(href);
+    });
+  }, [pendingHref]);
+
+  const handleNavClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (event.defaultPrevented) return;
+
+    const anchor = (event.target as HTMLElement).closest("a");
+    if (!anchor) return;
+
+    if (
+      anchor.getAttribute("target") === "_blank" ||
+      anchor.hasAttribute("download") ||
+      anchor.getAttribute("rel") === "external"
+    ) {
+      return;
+    }
+
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+
+    const isHash = href.startsWith("#") || (href.includes("#") && href.split("#")[0] === window.location.pathname);
+    if (isHash) return;
+
+    const isInternal =
+      (href.startsWith("/") && !href.startsWith("//")) ||
+      href.startsWith(window.location.origin);
+    if (!isInternal) return;
+
+    try {
+      const url = new URL(href, window.location.origin);
+      const currentUrl = new URL(window.location.href);
+      if (
+        url.pathname === currentUrl.pathname &&
+        url.search === currentUrl.search
+      ) {
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    flushSync(() => {
+      setIsNavigating(true);
+    });
+  }, []);
+
   const sidebarWidth = collapsed ? "88px" : "292px";
   const displayedAppNotifications = liveAppNotifications ?? appNotifications;
   const canSubscribeToRequestNotifications =
@@ -76,18 +173,6 @@ export function DashboardShell({
     }
   }, []);
 
-  useEffect(() => {
-    if (!canSubscribeToRequestNotifications) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      void refreshAppNotifications();
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
-  }, [canSubscribeToRequestNotifications, refreshAppNotifications]);
-
   return (
     <>
       <div
@@ -96,9 +181,30 @@ export function DashboardShell({
         }`}
         onClick={() => setMobileOpen(false)}
       />
+      {(isNavigating || pendingHref !== null) && (
+        <>
+          <style>{`
+            @keyframes loadingBar {
+              0% { transform: scaleX(0); transform-origin: left; }
+              50% { transform: scaleX(0.4); transform-origin: left; }
+              100% { transform: scaleX(0.85); transform-origin: left; }
+            }
+          `}</style>
+          <div className="fixed top-0 left-0 right-0 z-100 h-0.5 w-full bg-primary-soft">
+            <div 
+              className="h-full bg-primary" 
+              style={{
+                animation: "loadingBar 1.2s infinite ease-in-out",
+                width: "100%"
+              }} 
+            />
+          </div>
+        </>
+      )}
       <div
         className="dashboard-grid min-h-screen w-full overflow-x-hidden bg-background text-navy lg:grid lg:h-screen"
         style={{ "--sidebar-width": sidebarWidth } as CSSProperties}
+        onClick={handleNavClick}
       >
         <DashboardSidebar
           locale={locale}
@@ -107,6 +213,8 @@ export function DashboardShell({
           organizations={organizations}
           collapsed={collapsed}
           mobileOpen={mobileOpen}
+          pendingHref={pendingHref}
+          onSidebarLinkClick={handleSidebarLinkClick}
           onToggleCollapsed={() => setCollapsed((current) => !current)}
           onCloseMobile={() => setMobileOpen(false)}
         />

@@ -1410,6 +1410,8 @@ export const ar = {
       emailAlreadyExists: "يوجد مستخدم بهذا البريد الإلكتروني.",
       organizationNotFound: "تعذر العثور على المؤسسة المحددة.",
       organizationInactive: "المؤسسة المحددة غير نشطة.",
+      additionalOrganizationInvalid:
+        "يجب أن يتضمن الوصول الإضافي مؤسسات نشطة فقط وألا يكرر المؤسسة الأساسية.",
       unauthorized: "ليست لديك صلاحية إنشاء المستخدمين.",
       configurationError: "إعداد الخادم غير متاح.",
       creationFailed: "فشل إنشاء المستخدم. حاول مرة أخرى.",

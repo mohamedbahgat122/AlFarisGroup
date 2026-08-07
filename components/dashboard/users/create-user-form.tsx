@@ -4,14 +4,15 @@ import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
+import { OrganizationAccessFields } from "@/components/dashboard/users/organization-access-fields";
 import { createManagedUserAction } from "@/features/user-management/actions";
 import { initialCreateManagedUserActionState } from "@/features/user-management/action-state";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type {
   ActiveOrganizationOption,
   ManagedUserRole,
-  OrganizationAccessLevel,
 } from "@/features/user-management/types";
+import type { OrganizationPermissionKey } from "@/features/permissions/registry";
 import type { Locale } from "@/types/locale";
 
 type CreateUserFormProps = {
@@ -41,7 +42,7 @@ export function CreateUserForm({
   const [role, setRole] = useState<ManagedUserRole>("manager");
   const [homeOrganizationId, setHomeOrganizationId] = useState("");
   const [accessValues, setAccessValues] = useState<
-    Record<string, OrganizationAccessLevel | "none">
+    Record<string, OrganizationPermissionKey[]>
   >({});
   const [showPassword, setShowPassword] = useState(false);
   const callbacksRef = useRef({ dictionary, onSuccess, onError });
@@ -50,6 +51,11 @@ export function CreateUserForm({
   useEffect(() => {
     callbacksRef.current = { dictionary, onSuccess, onError };
   }, [dictionary, onError, onSuccess]);
+
+  const activeOrganizationIds = useMemo(
+    () => new Set(organizations.map((organization) => organization.id)),
+    [organizations],
+  );
 
   useEffect(() => {
     if (state.status === "idle") {
@@ -67,6 +73,10 @@ export function CreateUserForm({
 
     if (state.status === "success") {
       formRef.current?.reset();
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRole("manager");
+      setHomeOrganizationId("");
+      setAccessValues({});
       callbacksRef.current.onSuccess();
     }
 
@@ -82,12 +92,16 @@ export function CreateUserForm({
       role === "driver"
         ? []
         : Object.entries(accessValues)
-            .filter(([, accessLevel]) => accessLevel !== "none")
-            .map(([organizationId, accessLevel]) => ({
+            .filter(
+              ([organizationId, permissionKeys]) =>
+                activeOrganizationIds.has(organizationId) &&
+                permissionKeys.length > 0,
+            )
+            .map(([organizationId, permissionKeys]) => ({
               organizationId,
-              accessLevel: accessLevel as OrganizationAccessLevel,
+              permissionKeys,
             })),
-    [accessValues, role],
+    [accessValues, activeOrganizationIds, role],
   );
 
   const message = getActionMessage(dictionary, state.code);
@@ -136,7 +150,7 @@ export function CreateUserForm({
                 showPassword ? dictionary.hidePassword : dictionary.showPassword
               }
               onClick={() => setShowPassword((current) => !current)}
-              className="flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              className="flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             >
               <PasswordIcon visible={showPassword} />
             </button>
@@ -219,16 +233,24 @@ export function CreateUserForm({
           {dictionary.driverAccessNote}
         </div>
       ) : (
-        <LegacyOrganizationAccessFields
+        <OrganizationAccessFields
           dictionary={dictionary}
           organizations={organizations}
           homeOrganizationId={homeOrganizationId}
+          includeHomeOrganization={true}
           values={accessValues}
-          onChange={(organizationId, accessLevel) =>
-            setAccessValues((current) => ({
-              ...current,
-              [organizationId]: accessLevel,
-            }))
+          onChange={(organizationId, permissionKeys) =>
+            setAccessValues((current) => {
+              const next = { ...current };
+
+              if (permissionKeys.length === 0) {
+                delete next[organizationId];
+              } else {
+                next[organizationId] = permissionKeys;
+              }
+
+              return next;
+            })
           }
         />
       )}
@@ -241,71 +263,13 @@ export function CreateUserForm({
         <button
           type="button"
           onClick={onCancel}
-          className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {dictionary.cancel}
         </button>
         <SubmitButton dictionary={dictionary} />
       </div>
     </form>
-  );
-}
-
-function LegacyOrganizationAccessFields({
-  dictionary,
-  organizations,
-  homeOrganizationId,
-  values,
-  onChange,
-}: {
-  dictionary: Dictionary["dashboard"]["userManagement"];
-  organizations: ActiveOrganizationOption[];
-  homeOrganizationId: string;
-  values: Record<string, OrganizationAccessLevel | "none">;
-  onChange: (
-    organizationId: string,
-    accessLevel: OrganizationAccessLevel | "none",
-  ) => void;
-}) {
-  const availableOrganizations = organizations.filter(
-    (organization) => organization.id !== homeOrganizationId,
-  );
-
-  return (
-    <fieldset className="space-y-3">
-      <legend className="text-sm font-semibold text-navy">
-        {dictionary.additionalAccess}
-      </legend>
-      <div className="grid gap-3">
-        {availableOrganizations.map((organization) => (
-          <div
-            key={organization.id}
-            className="grid gap-3 rounded-xl border border-border bg-background/60 p-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-navy">
-                {organization.name}
-              </p>
-              <p className="text-xs text-muted">{organization.code}</p>
-            </div>
-            <select
-              value={values[organization.id] ?? "none"}
-              onChange={(event) =>
-                onChange(
-                  organization.id,
-                  event.target.value as OrganizationAccessLevel | "none",
-                )
-              }
-              className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
-            >
-              <option value="none">{dictionary.noAccess}</option>
-              <option value="view">{dictionary.viewOnly}</option>
-              <option value="manage">{dictionary.manage}</option>
-            </select>
-          </div>
-        ))}
-      </div>
-    </fieldset>
   );
 }
 
@@ -338,6 +302,8 @@ function getActionMessage(
       return dictionary.organizationNotFound;
     case "organization_inactive":
       return dictionary.organizationInactive;
+    case "additional_organization_invalid":
+      return dictionary.additionalOrganizationInvalid;
     case "unauthorized":
       return dictionary.unauthorized;
     case "configuration_error":
