@@ -709,6 +709,168 @@ export type Database = {
           },
         ]
       }
+      driver_entitlement_transactions: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string
+          driver_id: string
+          effective_date: string
+          id: string
+          notes: string | null
+          order_count: number | null
+          organization_id: string
+          reason: string | null
+          reversal_reason: string | null
+          reversed_at: string | null
+          reversed_by: string | null
+          transaction_type: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by: string
+          driver_id: string
+          effective_date: string
+          id?: string
+          notes?: string | null
+          order_count?: number | null
+          organization_id: string
+          reason?: string | null
+          reversal_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          transaction_type: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string
+          driver_id?: string
+          effective_date?: string
+          id?: string
+          notes?: string | null
+          order_count?: number | null
+          organization_id?: string
+          reason?: string | null
+          reversal_reason?: string | null
+          reversed_at?: string | null
+          reversed_by?: string | null
+          transaction_type?: string
+        }
+        Relationships: []
+      }
+      driver_entitlement_statements: {
+        Row: {
+          absence_total: number
+          admin_deduction_total: number
+          bonus_total: number
+          created_at: string
+          deduction_total: number
+          driver_id: string
+          id: string
+          keeta_deduction_total: number
+          net_amount: number
+          organization_id: string
+          period_end: string
+          period_start: string
+          published_at: string
+          published_by: string
+          salary_total: number
+          source_revision: string
+          status: string
+          transaction_count: number
+          version: number
+          violation_total: number
+        }
+        Insert: {
+          absence_total?: number
+          admin_deduction_total?: number
+          bonus_total?: number
+          created_at?: string
+          deduction_total?: number
+          driver_id: string
+          id?: string
+          keeta_deduction_total?: number
+          net_amount?: number
+          organization_id: string
+          period_end: string
+          period_start: string
+          published_at?: string
+          published_by: string
+          salary_total?: number
+          source_revision: string
+          status?: string
+          transaction_count?: number
+          version?: number
+          violation_total?: number
+        }
+        Update: {
+          absence_total?: number
+          admin_deduction_total?: number
+          bonus_total?: number
+          created_at?: string
+          deduction_total?: number
+          driver_id?: string
+          id?: string
+          keeta_deduction_total?: number
+          net_amount?: number
+          organization_id?: string
+          period_end?: string
+          period_start?: string
+          published_at?: string
+          published_by?: string
+          salary_total?: number
+          source_revision?: string
+          status?: string
+          transaction_count?: number
+          version?: number
+          violation_total?: number
+        }
+        Relationships: []
+      }
+      driver_entitlement_statement_items: {
+        Row: {
+          amount: number
+          created_at: string
+          effective_date: string
+          financial_effect: number
+          id: string
+          notes: string | null
+          order_count: number | null
+          reason: string | null
+          source_transaction_id: string
+          statement_id: string
+          transaction_type: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          effective_date: string
+          financial_effect: number
+          id?: string
+          notes?: string | null
+          order_count?: number | null
+          reason?: string | null
+          source_transaction_id: string
+          statement_id: string
+          transaction_type: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          effective_date?: string
+          financial_effect?: number
+          id?: string
+          notes?: string | null
+          order_count?: number | null
+          reason?: string | null
+          source_transaction_id?: string
+          statement_id?: string
+          transaction_type?: string
+        }
+        Relationships: []
+      }
       driver_documents: {
         Row: {
           created_at: string
@@ -749,6 +911,83 @@ export type Database = {
             columns: ["driver_id"]
             isOneToOne: false
             referencedRelation: "drivers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      driver_shift_change_requests: {
+        Row: {
+          created_at: string
+          current_shift_id: string
+          driver_id: string
+          driver_note: string | null
+          id: string
+          organization_id: string
+          requested_shift_id: string
+          requested_week_start_date: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_shift_id: string
+          driver_id: string
+          driver_note?: string | null
+          id?: string
+          organization_id: string
+          requested_shift_id: string
+          requested_week_start_date: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_shift_id?: string
+          driver_id?: string
+          driver_note?: string | null
+          id?: string
+          organization_id?: string
+          requested_shift_id?: string
+          requested_week_start_date?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "driver_shift_change_requests_current_shift_id_fkey"
+            columns: ["current_shift_id"]
+            isOneToOne: false
+            referencedRelation: "organization_shift_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "driver_shift_change_requests_driver_id_fkey"
+            columns: ["driver_id"]
+            isOneToOne: false
+            referencedRelation: "drivers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "driver_shift_change_requests_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "driver_shift_change_requests_requested_shift_id_fkey"
+            columns: ["requested_shift_id"]
+            isOneToOne: false
+            referencedRelation: "organization_shift_templates"
             referencedColumns: ["id"]
           },
         ]
@@ -1762,6 +2001,299 @@ export type Database = {
           },
         ]
       }
+      housing_units: {
+        Row: {
+          address: string | null
+          archived_at: string | null
+          archived_by: string | null
+          capacity: number
+          city: string | null
+          code: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          latitude: number | null
+          location_notes: string | null
+          longitude: number | null
+          name: string
+          notes: string | null
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          address?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          capacity: number
+          city?: string | null
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          latitude?: number | null
+          location_notes?: string | null
+          longitude?: number | null
+          name: string
+          notes?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          address?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          capacity?: number
+          city?: string | null
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          latitude?: number | null
+          location_notes?: string | null
+          longitude?: number | null
+          name?: string
+          notes?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "housing_units_archived_by_fkey"
+            columns: ["archived_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_units_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_units_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      housing_rooms: {
+        Row: {
+          archived_at: string | null
+          archived_by: string | null
+          capacity: number
+          code: string | null
+          created_at: string
+          created_by: string | null
+          housing_id: string
+          id: string
+          name: string
+          notes: string | null
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          archived_at?: string | null
+          archived_by?: string | null
+          capacity: number
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          housing_id: string
+          id?: string
+          name: string
+          notes?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          archived_at?: string | null
+          archived_by?: string | null
+          capacity?: number
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          housing_id?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "housing_rooms_archived_by_fkey"
+            columns: ["archived_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_rooms_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_rooms_housing_id_fkey"
+            columns: ["housing_id"]
+            isOneToOne: false
+            referencedRelation: "housing_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_rooms_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      housing_organization_assignments: {
+        Row: {
+          active: boolean
+          assigned_at: string
+          created_by: string | null
+          housing_id: string
+          id: string
+          organization_id: string
+          unassigned_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          active?: boolean
+          assigned_at?: string
+          created_by?: string | null
+          housing_id: string
+          id?: string
+          organization_id: string
+          unassigned_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          active?: boolean
+          assigned_at?: string
+          created_by?: string | null
+          housing_id?: string
+          id?: string
+          organization_id?: string
+          unassigned_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "housing_organization_assignments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_organization_assignments_housing_id_fkey"
+            columns: ["housing_id"]
+            isOneToOne: false
+            referencedRelation: "housing_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_organization_assignments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_organization_assignments_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      housing_driver_assignments: {
+        Row: {
+          assigned_at: string
+          created_by: string | null
+          driver_id: string
+          housing_id: string
+          id: string
+          notes: string | null
+          room_id: string | null
+          unassigned_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          assigned_at?: string
+          created_by?: string | null
+          driver_id: string
+          housing_id: string
+          id?: string
+          notes?: string | null
+          room_id?: string | null
+          unassigned_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          assigned_at?: string
+          created_by?: string | null
+          driver_id?: string
+          housing_id?: string
+          id?: string
+          notes?: string | null
+          room_id?: string | null
+          unassigned_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "housing_driver_assignments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_driver_assignments_driver_id_fkey"
+            columns: ["driver_id"]
+            isOneToOne: false
+            referencedRelation: "drivers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_driver_assignments_housing_id_fkey"
+            columns: ["housing_id"]
+            isOneToOne: false
+            referencedRelation: "housing_units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_driver_assignments_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "housing_rooms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "housing_driver_assignments_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           code: string
@@ -1788,6 +2320,42 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      user_global_permissions: {
+        Row: {
+          created_at: string
+          created_by: string
+          permission_key: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          permission_key: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          permission_key?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_global_permissions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_global_permissions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -1862,6 +2430,14 @@ export type Database = {
         Args: { p_actor_user_id: string; p_target_user_id: string }
         Returns: undefined
       }
+      approve_shift_change_request: {
+        Args: {
+          p_request_id: string
+          p_review_note?: string | null
+          p_user_id: string
+        }
+        Returns: Json
+      }
       assert_driver_manager_actor: {
         Args: { p_actor_user_id: string; p_organization_id: string }
         Returns: undefined
@@ -1869,6 +2445,25 @@ export type Database = {
       assert_managed_user_actor: {
         Args: { p_actor_user_id: string }
         Returns: undefined
+      }
+      assign_driver_to_housing: {
+        Args: {
+          p_actor_user_id: string
+          p_driver_id: string
+          p_housing_id: string
+          p_notes?: string | null
+        }
+        Returns: Json
+      }
+      assign_driver_to_housing_room: {
+        Args: {
+          p_actor_user_id: string
+          p_driver_id: string
+          p_housing_id: string
+          p_notes?: string | null
+          p_room_id: string
+        }
+        Returns: Json
       }
       can_manage_organization: {
         Args: { target_organization_id: string }
@@ -2012,6 +2607,43 @@ export type Database = {
           plate_number: string
           vehicle_id: string
         }[]
+      }
+      publish_driver_entitlement_statement: {
+        Args: {
+          p_absence_total: number
+          p_admin_deduction_total: number
+          p_bonus_total: number
+          p_deduction_total: number
+          p_driver_id: string
+          p_items: Json
+          p_keeta_deduction_total: number
+          p_net_amount: number
+          p_organization_id: string
+          p_period_end: string
+          p_period_start: string
+          p_salary_total: number
+          p_source_revision: string
+          p_transaction_count: number
+          p_violation_total: number
+        }
+        Returns: string
+      }
+      remove_driver_from_housing: {
+        Args: {
+          p_actor_user_id: string
+          p_driver_id: string
+          p_housing_id: string
+        }
+        Returns: Json
+      }
+      set_housing_organization_assignment: {
+        Args: {
+          p_active: boolean
+          p_actor_user_id: string
+          p_housing_id: string
+          p_organization_id: string
+        }
+        Returns: Json
       }
       has_organization_permission: {
         Args: {

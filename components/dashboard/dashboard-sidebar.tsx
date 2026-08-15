@@ -13,6 +13,8 @@ type DashboardSidebarProps = {
   locale: Locale;
   dictionary: Dictionary["dashboard"];
   userRole: ProfileRole;
+  hasGlobalFleetPermission: boolean;
+  hasGlobalHousingPermission: boolean;
   organizations: AccessibleOrganization[];
   collapsed: boolean;
   mobileOpen: boolean;
@@ -26,6 +28,8 @@ export function DashboardSidebar({
   locale,
   dictionary,
   userRole,
+  hasGlobalFleetPermission,
+  hasGlobalHousingPermission,
   organizations,
   collapsed,
   mobileOpen,
@@ -48,6 +52,8 @@ export function DashboardSidebar({
   }, [onSidebarLinkClick]);
 
   const dashboardHref = `/${locale}/dashboard`;
+  const globalFleetHref = `/${locale}/dashboard/fleet/cars`;
+  const globalHousingHref = `/${locale}/dashboard/housing`;
   const organizationsHref = `/${locale}/dashboard/organizations`;
   const usersHref = `/${locale}/dashboard/users`;
   const currentOrganizationCode = getCurrentOrganizationCode(pathname, locale);
@@ -183,8 +189,12 @@ export function DashboardSidebar({
     Boolean(organizationDriverWarningsHref) &&
     checkActive(organizationDriverWarningsHref, true);
   const isDashboardActive = checkActive(dashboardHref, true);
+  const isGlobalFleetActive = checkActive(`/${locale}/dashboard/fleet`);
+  const isGlobalHousingActive = checkActive(globalHousingHref);
 
   const isDashboardPending = pendingHref === dashboardHref;
+  const isGlobalFleetPending = pendingHref === globalFleetHref;
+  const isGlobalHousingPending = pendingHref === globalHousingHref;
   const isOrganizationsPending = pendingHref === organizationsHref;
   const isOrganizationHomePending = pendingHref === organizationHomeHref;
   const isOrganizationDriversPending = pendingHref === organizationDriversHref;
@@ -353,6 +363,38 @@ export function DashboardSidebar({
               {dictionary.navLabel}
             </span>
           </Link>
+          {hasGlobalFleetPermission ? (
+            <Link
+              href={globalFleetHref}
+              aria-current={isGlobalFleetActive ? "page" : undefined}
+              title={collapsed ? dictionary.fleet.navLabel : undefined}
+              onClick={(e) => handleLinkClick(globalFleetHref, e)}
+              className={`${navItemClassName(isGlobalFleetActive, collapsed)} ${isGlobalFleetPending ? "pointer-events-none cursor-wait" : ""}`}
+            >
+              <span className={navIconClassName(isGlobalFleetActive)}>
+                {isGlobalFleetPending ? <SidebarSpinnerActive /> : <FleetIcon />}
+              </span>
+              <span className={collapsed ? "lg:hidden" : ""}>
+                {dictionary.fleet.navLabel}
+              </span>
+            </Link>
+          ) : null}
+          {hasGlobalHousingPermission ? (
+            <Link
+              href={globalHousingHref}
+              aria-current={isGlobalHousingActive ? "page" : undefined}
+              title={collapsed ? dictionary.housing.navLabel : undefined}
+              onClick={(e) => handleLinkClick(globalHousingHref, e)}
+              className={`${navItemClassName(isGlobalHousingActive, collapsed)} ${isGlobalHousingPending ? "pointer-events-none cursor-wait" : ""}`}
+            >
+              <span className={navIconClassName(isGlobalHousingActive)}>
+                {isGlobalHousingPending ? <SidebarSpinnerActive /> : <HousingIcon />}
+              </span>
+              <span className={collapsed ? "lg:hidden" : ""}>
+                {dictionary.housing.navLabel}
+              </span>
+            </Link>
+          ) : null}
           {canSeeOrganizations ? (
             <>
               <Link
@@ -1318,6 +1360,20 @@ function FleetIcon() {
     <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none">
       <path
         d="M4 14h16l-1.6-4.7A2 2 0 0 0 16.5 8h-9a2 2 0 0 0-1.9 1.3L4 14Zm2 0v3m12-3v3M7 17h.1M17 17h.1M8 11h8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function HousingIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none">
+      <path
+        d="M4.5 20.5V10.2L12 4l7.5 6.2v10.3M8.5 20.5v-6h7v6M7 11.5h10"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
