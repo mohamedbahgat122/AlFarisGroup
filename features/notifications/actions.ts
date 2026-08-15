@@ -19,7 +19,8 @@ export async function markNotificationReadAction(formData: FormData) {
     .from("app_notifications")
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq("id", notificationId)
-    .eq("recipient_user_id", admin.profile.id);
+    .eq("recipient_user_id", admin.profile.id)
+    .is("read_at", null);
 
   revalidatePath(pathname);
 }
@@ -61,7 +62,7 @@ export async function markRequestNotificationsReadForCurrentUser({
     .eq("organization_id", organizationId)
     .eq("entity_type", "driver_app_request")
     .eq("entity_id", requestId)
-    .eq("is_read", false);
+    .is("read_at", null);
 }
 
 export async function markAllNotificationsReadAction(formData: FormData) {
@@ -73,7 +74,7 @@ export async function markAllNotificationsReadAction(formData: FormData) {
     .from("app_notifications")
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq("recipient_user_id", admin.profile.id)
-    .eq("is_read", false);
+    .is("read_at", null);
 
   revalidatePath(pathname);
 }
@@ -88,7 +89,7 @@ async function markNotificationRead(
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq("id", notificationId)
     .eq("recipient_user_id", recipientUserId)
-    .eq("is_read", false);
+    .is("read_at", null);
 }
 
 function getSafeDashboardHref(value: string | undefined) {

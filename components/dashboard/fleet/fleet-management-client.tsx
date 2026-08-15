@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState, useTransition } from "react";
+import { useActionState, useMemo, useState, useTransition, type ReactNode } from "react";
 import {
   createFleetVehicleAction,
   getFleetActivityLogsAction,
@@ -19,13 +19,11 @@ import {
   EntityFormBody,
   EntityFormDialog,
   EntityPageHeader,
-  EntityTableContainer,
   FormSection,
   ReadOnlyField,
   RowActionButton,
   SecureFileField,
   SelectField,
-  TableHeader,
   TextAreaField,
 } from "@/components/dashboard/entity-management-ui";
 import { initialFleetActionState } from "@/features/fleet/types";
@@ -40,6 +38,14 @@ import type { Dictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
 
 type FleetDictionary = Dictionary["dashboard"]["fleet"];
+
+type FleetCardFilters = {
+  plate: string;
+  driver: string;
+  authorization: "all" | "authorized" | "missing";
+  linkedDriver: "all" | "linked" | "missing";
+  vehicleType: string;
+};
 
 type FleetManagementClientProps = {
   locale: Locale;
@@ -81,6 +87,23 @@ export function FleetManagementClient({
     activity: permissions.has("fleet.activity.view"),
   };
   const title = category === "car" ? dictionary.carsTitle : dictionary.motorcyclesTitle;
+  const uiText = getFleetCardUiText(locale);
+  const [filters, setFilters] = useState<FleetCardFilters>({
+    plate: "",
+    driver: "",
+    authorization: "all",
+    linkedDriver: "all",
+    vehicleType: "",
+  });
+  const vehicleTypeOptions = useMemo(
+    () => Array.from(new Set(vehicles.map((vehicle) => vehicle.vehicleType).filter(Boolean))).sort(),
+    [vehicles],
+  );
+  const filteredVehicles = useMemo(
+    () => vehicles.filter((vehicle) => matchesFleetCardFilters(vehicle, filters)),
+    [filters, vehicles],
+  );
+  const summary = useMemo(() => getFleetCardSummary(filteredVehicles), [filteredVehicles]);
 
   function openCreate() {
     setEditingVehicle(null);
@@ -133,6 +156,30 @@ export function FleetManagementClient({
       />
 
       <EntityContent>
+        <FleetCardsSummary
+          dictionary={dictionary}
+          summary={summary}
+          total={filteredVehicles.length}
+          uiText={uiText}
+        />
+
+        <FleetCardsFilterBar
+          dictionary={dictionary}
+          filters={filters}
+          vehicleTypeOptions={vehicleTypeOptions}
+          uiText={uiText}
+          onChange={setFilters}
+          onReset={() =>
+            setFilters({
+              plate: "",
+              driver: "",
+              authorization: "all",
+              linkedDriver: "all",
+              vehicleType: "",
+            })
+          }
+        />
+
         {vehicles.length === 0 ? (
           <EntityEmptyState
             icon={<VehicleSectionIcon />}
@@ -147,34 +194,54 @@ export function FleetManagementClient({
               ) : null
             }
           />
+        ) : filteredVehicles.length === 0 ? (
+          <EntityEmptyState
+            icon={<VehicleSectionIcon />}
+            title={uiText.noResultsTitle}
+            description={uiText.noResultsDescription}
+            action={
+              <Button
+                type="button"
+                className="border border-border bg-surface text-navy shadow-none hover:border-primary/35 hover:bg-primary-soft hover:text-primary"
+                onClick={() =>
+                  setFilters({
+                    plate: "",
+                    driver: "",
+                    authorization: "all",
+                    linkedDriver: "all",
+                    vehicleType: "",
+                  })
+                }
+              >
+                {dictionary.resetFilters}
+              </Button>
+            }
+          />
         ) : (
-          <EntityTableContainer>
-            <table className="w-full min-w-[1180px] border-collapse text-start">
-              <thead className="bg-background text-xs font-bold uppercase text-muted">
-                <tr>
-                  {dictionary.columns.map((column) => (
-                    <TableHeader key={column}>{column}</TableHeader>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {vehicles.map((vehicle) => (
-                  <FleetRow
-                    key={vehicle.id}
-                    locale={locale}
-                    dictionary={dictionary}
-                    organization={organization}
-                    vehicle={vehicle}
-                    today={today}
-                    permissions={actionPermissions}
-                    onEdit={openEdit}
-                    onCondition={setConditionVehicle}
-                    onActivity={openActivity}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </EntityTableContainer>
+          <>
+            <p className="mb-3 text-sm font-medium text-muted">
+              {uiText.resultsCount
+                .replace("{shown}", filteredVehicles.length.toLocaleString())
+                .replace("{total}", vehicles.length.toLocaleString())}
+            </p>
+            <div className="grid min-w-0 items-stretch gap-4 xl:grid-cols-2">
+              {filteredVehicles.map((vehicle) => (
+                <FleetVehicleCard
+                  key={vehicle.id}
+                  locale={locale}
+                  dictionary={dictionary}
+                  uiText={uiText}
+                  organization={organization}
+                  vehicle={vehicle}
+                  today={today}
+                  permissions={actionPermissions}
+                  onEdit={openEdit}
+                  onCondition={setConditionVehicle}
+                  onActivity={openActivity}
+                />
+              ))}
+            </div>
+          </>
         )}
       </EntityContent>
 
@@ -214,9 +281,175 @@ export function FleetManagementClient({
   );
 }
 
-function FleetRow({
+function FleetCardsSummary({
+  dictionary,
+  summary,
+  total,
+  uiText,
+}: {
+  dictionary: FleetDictionary;
+  summary: ReturnType<typeof getFleetCardSummary>;
+  total: number;
+  uiText: ReturnType<typeof getFleetCardUiText>;
+}) {
+  const cards = [
+    {
+      label: dictionary.summaryTotal,
+      value: total,
+      description: uiText.activeResultSet,
+      icon: <VehicleSectionIcon />,
+      tone: "border-primary/15 bg-primary-soft text-primary",
+    },
+    {
+      label: uiText.linkedVehicles,
+      value: summary.linked,
+      description: formatPercent(summary.linked, total),
+      icon: <DriverLinkIcon />,
+      tone: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    },
+    {
+      label: uiText.authorizedVehicles,
+      value: summary.authorized,
+      description: formatPercent(summary.authorized, total),
+      icon: <AuthorizedIcon />,
+      tone: "border-sky-200 bg-sky-50 text-sky-700",
+    },
+    {
+      label: uiText.withoutDriver,
+      value: summary.withoutDriver,
+      description: formatPercent(summary.withoutDriver, total),
+      icon: <WarningIcon />,
+      tone: "border-amber-200 bg-amber-50 text-amber-800",
+    },
+    {
+      label: uiText.withoutAuthorized,
+      value: summary.withoutAuthorized,
+      description: formatPercent(summary.withoutAuthorized, total),
+      icon: <AlertIcon />,
+      tone: "border-red-200 bg-red-50 text-red-700",
+    },
+  ];
+
+  return (
+    <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      {cards.map((card) => (
+        <div
+          key={card.label}
+          className="rounded-xl border border-border bg-surface p-4 shadow-[0_14px_35px_rgba(16,35,63,0.04)]"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className={`flex size-12 shrink-0 items-center justify-center rounded-full border ${card.tone}`}>
+              {card.icon}
+            </div>
+            <div className="min-w-0 text-end">
+              <p className="text-sm font-medium leading-6 text-muted">{card.label}</p>
+              <p className="mt-2 text-3xl font-bold leading-none text-navy" dir="ltr">
+                {card.value.toLocaleString()}
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs font-medium leading-5 text-muted">{card.description}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FleetCardsFilterBar({
+  dictionary,
+  filters,
+  vehicleTypeOptions,
+  uiText,
+  onChange,
+  onReset,
+}: {
+  dictionary: FleetDictionary;
+  filters: FleetCardFilters;
+  vehicleTypeOptions: string[];
+  uiText: ReturnType<typeof getFleetCardUiText>;
+  onChange: (filters: FleetCardFilters) => void;
+  onReset: () => void;
+}) {
+  function patch(next: Partial<FleetCardFilters>) {
+    onChange({ ...filters, ...next });
+  }
+
+  return (
+    <section className="mb-5 rounded-xl border border-border bg-surface p-4 shadow-[0_14px_35px_rgba(16,35,63,0.04)]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-base font-bold text-navy">{uiText.searchAndFilters}</h2>
+        <button
+          type="button"
+          onClick={onReset}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border bg-white px-4 text-sm font-semibold text-primary transition hover:border-primary/35 hover:bg-primary-soft focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <ResetIcon />
+          {dictionary.resetFilters}
+        </button>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(240px,1fr)_repeat(3,minmax(170px,210px))]">
+        <FormField
+          id="fleetCardPlateSearch"
+          label={uiText.plateSearch}
+          name="fleetCardPlateSearch"
+          value={filters.plate}
+          onChange={(event) => patch({ plate: event.target.value })}
+          placeholder={uiText.plateSearchPlaceholder}
+          dir="ltr"
+          autoComplete="off"
+        />
+        <FormField
+          id="fleetCardDriverSearch"
+          label={uiText.driverSearch}
+          name="fleetCardDriverSearch"
+          value={filters.driver}
+          onChange={(event) => patch({ driver: event.target.value })}
+          placeholder={uiText.driverSearchPlaceholder}
+          autoComplete="off"
+        />
+        <FilterSelect
+          id="fleetCardAuthorizationFilter"
+          label={uiText.authorizationFilter}
+          value={filters.authorization}
+          onChange={(value) => patch({ authorization: value as FleetCardFilters["authorization"] })}
+        >
+          <option value="all">{dictionary.all}</option>
+          <option value="authorized">{uiText.hasAuthorized}</option>
+          <option value="missing">{uiText.noAuthorized}</option>
+        </FilterSelect>
+        <FilterSelect
+          id="fleetCardLinkedDriverFilter"
+          label={uiText.linkedDriverFilter}
+          value={filters.linkedDriver}
+          onChange={(value) => patch({ linkedDriver: value as FleetCardFilters["linkedDriver"] })}
+        >
+          <option value="all">{dictionary.all}</option>
+          <option value="linked">{uiText.hasLinkedDriver}</option>
+          <option value="missing">{uiText.noLinkedDriver}</option>
+        </FilterSelect>
+        <FilterSelect
+          id="fleetCardVehicleTypeFilter"
+          label={dictionary.vehicleType}
+          value={filters.vehicleType}
+          onChange={(value) => patch({ vehicleType: value })}
+        >
+          <option value="">{dictionary.all}</option>
+          {vehicleTypeOptions.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </FilterSelect>
+      </div>
+    </section>
+  );
+}
+
+function FleetVehicleCard({
   locale,
   dictionary,
+  uiText,
   organization,
   vehicle,
   today,
@@ -227,6 +460,7 @@ function FleetRow({
 }: {
   locale: Locale;
   dictionary: FleetDictionary;
+  uiText: ReturnType<typeof getFleetCardUiText>;
   organization: AccessibleOrganization;
   vehicle: FleetVehicle;
   today: string;
@@ -243,69 +477,346 @@ function FleetRow({
   onActivity: (vehicle: FleetVehicle) => void;
 }) {
   const remaining = getRemainingDays(vehicle.authorizationExpiryDate, today);
-  const rowClassName = getRowClassName(vehicle, remaining);
+  const cardClassName = getCardClassName(vehicle, remaining);
   const owner = vehicle.ownerSource === "organization" ? organization.name : vehicle.ownerName;
+  const authorized = hasAuthorizedPerson(vehicle);
 
   return (
-    <tr className={`align-middle transition hover:bg-primary-soft/35 ${rowClassName}`}>
-      <td className="px-4 py-4 font-bold text-navy">{vehicle.vehicleType}</td>
-      <td className="px-4 py-4 font-medium text-muted" dir="ltr">{vehicle.plateNumber}</td>
-      <td className="px-4 py-4 font-medium text-muted">{owner || dictionary.notAvailable}</td>
-      <td className="px-4 py-4 font-medium text-muted">{vehicle.assignedDriverName ?? dictionary.notAssigned}</td>
-      <td className="px-4 py-4 font-medium text-muted">
-        <div>{vehicle.authorizedPersonName ?? dictionary.notAssigned}</div>
-        <div className="text-xs text-muted" dir="ltr">
-          {vehicle.authorizedPersonIqama ?? ""}
+    <article className={`min-w-0 overflow-hidden rounded-xl border bg-surface shadow-[0_18px_45px_rgba(16,35,63,0.05)] ${cardClassName}`}>
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border bg-white px-5 py-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-muted">{vehicle.vehicleType}</p>
+            {vehicle.archivedAt ? (
+              <StatusBadge label={dictionary.summaryArchived} tone="warning" />
+            ) : (
+              <StatusBadge
+                label={dictionary.technicalStatuses[vehicle.technicalStatus]}
+                tone={vehicle.technicalStatus === "healthy" ? "success" : vehicle.technicalStatus === "fault" ? "warning" : "danger"}
+              />
+            )}
+          </div>
+          <p className="mt-2 text-2xl font-bold leading-none text-navy" dir="ltr">
+            {vehicle.plateNumber}
+          </p>
         </div>
-      </td>
-      <td className="px-4 py-4 font-medium text-muted" dir="ltr">{vehicle.operatingCardNumber}</td>
-      <td className="px-4 py-4 font-medium text-muted">{formatDate(vehicle.operatingCardExpiryDate)}</td>
-      <td className="px-4 py-4">
-        <span className={remainingBadgeClassName(remaining)}>
-          {formatRemainingDays(remaining, dictionary)}
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          <FleetCardActions
+            locale={locale}
+            organizationCode={organization.code}
+            dictionary={dictionary}
+            vehicle={vehicle}
+            permissions={permissions}
+            onEdit={onEdit}
+            onCondition={onCondition}
+            onActivity={onActivity}
+          />
+        </div>
+      </div>
+
+      <div className="min-w-0 overflow-hidden">
+        <div
+          dir={locale === "ar" ? "rtl" : "ltr"}
+          className="overflow-x-auto overscroll-x-contain pb-2 [scrollbar-color:rgba(11,108,251,0.35)_rgba(226,232,240,0.75)] [scrollbar-width:thin]"
+        >
+          <div className="min-w-[1040px]">
+            <div className="grid gap-px bg-border [grid-template-columns:minmax(190px,1.25fr)_minmax(230px,1.55fr)_minmax(210px,1.35fr)_minmax(110px,0.7fr)]">
+              <CardInfoCell label={uiText.primaryAssignedDriver} spacious>
+                <DriverCell
+                  name={vehicle.assignedDriverName ?? dictionary.notAssigned}
+                  iqama={vehicle.assignedDriverIqama}
+                />
+              </CardInfoCell>
+              <CardInfoCell label={uiText.linkedDrivers} spacious>
+                <LinkedDriversBadgeList drivers={vehicle.linkedDrivers} emptyLabel={uiText.noLinkedDriver} />
+              </CardInfoCell>
+              <CardInfoCell label={dictionary.authorizedPersonSection} spacious>
+                {authorized ? (
+                  <div className="space-y-1">
+                    <DriverCell
+                      name={vehicle.authorizedPersonName ?? dictionary.notAssigned}
+                      iqama={vehicle.authorizedPersonIqama}
+                    />
+                    <span className="inline-flex w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                      {uiText.assigned}
+                    </span>
+                  </div>
+                ) : (
+                  <span className="inline-flex w-fit rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800">
+                    {dictionary.notAssigned}
+                  </span>
+                )}
+              </CardInfoCell>
+              <CardInfoCell label={dictionary.vehicleType}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-navy">
+                  <VehicleSectionIcon />
+                  <span className="whitespace-nowrap">{dictionary.categoryLabels[vehicle.category]}</span>
+                </div>
+              </CardInfoCell>
+            </div>
+
+            <div className="grid gap-px bg-border [grid-template-columns:minmax(150px,0.9fr)_minmax(175px,1fr)_minmax(215px,1.25fr)_minmax(120px,0.75fr)_minmax(170px,0.95fr)]">
+              <CardInfoCell label={dictionary.operatingCardNumber} dir="ltr">
+                <span className="whitespace-nowrap">{vehicle.operatingCardNumber || dictionary.notAvailable}</span>
+              </CardInfoCell>
+              <CardInfoCell label={dictionary.operatingCardExpiryDate} compact>
+                <DateLine value={formatDate(vehicle.operatingCardExpiryDate)} />
+              </CardInfoCell>
+              <CardInfoCell label={dictionary.authorizationExpiryDate} compact>
+                <ExpiryValue
+                  date={formatDate(vehicle.authorizationExpiryDate)}
+                  remainingLabel={formatRemainingDays(remaining, dictionary)}
+                  remaining={remaining}
+                />
+              </CardInfoCell>
+              <CardInfoCell label={dictionary.operationalStatusFilter}>
+                <StatusBadge
+                  label={dictionary.operationalStatuses[vehicle.operationalStatus]}
+                  tone={vehicle.operationalStatus === "active" ? "success" : "warning"}
+                />
+              </CardInfoCell>
+              <CardInfoCell label={dictionary.ownerSection}>
+                <span className="whitespace-nowrap" title={owner || dictionary.notAvailable}>{owner || dictionary.notAvailable}</span>
+              </CardInfoCell>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function FilterSelect({
+  id,
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label htmlFor={id} className="space-y-2">
+      <span className="block text-sm font-semibold text-navy">{label}</span>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-h-12 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
+function FleetCardActions({
+  locale,
+  organizationCode,
+  dictionary,
+  vehicle,
+  permissions,
+  onEdit,
+  onCondition,
+  onActivity,
+}: {
+  locale: Locale;
+  organizationCode: string;
+  dictionary: FleetDictionary;
+  vehicle: FleetVehicle;
+  permissions: {
+    update: boolean;
+    technicalStatus: boolean;
+    operationalStatus: boolean;
+    archive: boolean;
+    downloadOperatingCard: boolean;
+    activity: boolean;
+  };
+  onEdit: (vehicle: FleetVehicle) => void;
+  onCondition: (vehicle: FleetVehicle) => void;
+  onActivity: (vehicle: FleetVehicle) => void;
+}) {
+  return (
+    <>
+      {vehicle.operatingCardFilePath && permissions.downloadOperatingCard ? (
+        <DownloadButton
+          dictionary={dictionary}
+          path={vehicle.operatingCardFilePath}
+          fileName={vehicle.operatingCardFileName ?? "operating-card"}
+        />
+      ) : null}
+      {permissions.activity ? (
+        <RowActionButton label={dictionary.activity} onClick={() => onActivity(vehicle)}>
+          <ActivityIcon />
+        </RowActionButton>
+      ) : null}
+      {permissions.update ? (
+        <RowActionButton label={dictionary.edit} onClick={() => onEdit(vehicle)}>
+          <EditIcon />
+        </RowActionButton>
+      ) : null}
+      {permissions.technicalStatus ? (
+        <RowActionButton label={dictionary.condition} onClick={() => onCondition(vehicle)}>
+          <ConditionIcon />
+        </RowActionButton>
+      ) : null}
+      {permissions.operationalStatus || permissions.archive ? (
+        <LifecycleForm
+          locale={locale}
+          organizationCode={organizationCode}
+          vehicle={vehicle}
+          dictionary={dictionary}
+          permissions={permissions}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function CardInfoCell({
+  label,
+  children,
+  dir,
+  compact = false,
+  spacious = false,
+}: {
+  label: string;
+  children: ReactNode;
+  dir?: "ltr" | "rtl";
+  compact?: boolean;
+  spacious?: boolean;
+}) {
+  return (
+    <div
+      className={`min-w-0 bg-surface px-4 py-3.5 ${spacious ? "min-h-[112px]" : "min-h-[92px]"} ${compact ? "py-3" : ""}`}
+      dir={dir}
+    >
+      <p className="mb-2 truncate text-[11px] font-semibold leading-5 text-muted" title={label}>
+        {label}
+      </p>
+      <div className="min-w-0 text-sm font-semibold leading-6 text-navy">{children}</div>
+    </div>
+  );
+}
+
+function DateLine({ value }: { value: string }) {
+  return (
+    <span className="block whitespace-nowrap text-sm font-semibold leading-5 text-navy" dir="ltr">
+      {value}
+    </span>
+  );
+}
+
+function ExpiryValue({
+  date,
+  remainingLabel,
+  remaining,
+}: {
+  date: string;
+  remainingLabel: string;
+  remaining: number | null;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-1">
+      <DateLine value={date} />
+      <span className={remainingBadgeClassName(remaining)}>
+        {remainingLabel}
+      </span>
+    </div>
+  );
+}
+
+function LinkedDriversBadgeList({
+  drivers,
+  emptyLabel,
+}: {
+  drivers: FleetVehicle["linkedDrivers"];
+  emptyLabel: string;
+}) {
+  if (drivers.length === 0) {
+    return (
+      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800">
+        {emptyLabel}
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 flex-wrap gap-2">
+      {drivers.slice(0, 1).map((driver) => (
+        <span
+          key={driver.id}
+          className="inline-flex max-w-full items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold leading-5 text-emerald-700"
+          title={`${driver.fullName}${driver.iqamaNumber ? ` - ${driver.iqamaNumber}` : ""}`}
+        >
+          <span className="whitespace-normal break-words">{driver.fullName}</span>
+          {driver.iqamaNumber ? (
+            <span className="whitespace-nowrap text-emerald-700/75" dir="ltr">
+              {driver.iqamaNumber}
+            </span>
+          ) : null}
         </span>
-      </td>
-      <td className="px-4 py-4">
-        <StatusBadge label={dictionary.operationalStatuses[vehicle.operationalStatus]} tone={vehicle.operationalStatus === "active" ? "success" : "warning"} />
-      </td>
-      <td className="px-4 py-4">
-        <StatusBadge label={dictionary.technicalStatuses[vehicle.technicalStatus]} tone={vehicle.technicalStatus === "healthy" ? "success" : vehicle.technicalStatus === "fault" ? "warning" : "danger"} />
-      </td>
-      <td className="px-4 py-4">
-        <div className="inline-flex items-center justify-center gap-1">
-          {vehicle.operatingCardFilePath && permissions.downloadOperatingCard ? (
-            <DownloadButton
-              dictionary={dictionary}
-              path={vehicle.operatingCardFilePath}
-              fileName={vehicle.operatingCardFileName ?? "operating-card"}
-            />
-          ) : null}
-          {permissions.activity ? (
-            <RowActionButton label={dictionary.activity} onClick={() => onActivity(vehicle)}>
-              <ActivityIcon />
-            </RowActionButton>
-          ) : null}
-          {permissions.update ||
-          permissions.technicalStatus ||
-          permissions.operationalStatus ||
-          permissions.archive ? (
-            <>
-              {permissions.update ? (
-                <RowActionButton label={dictionary.edit} onClick={() => onEdit(vehicle)}>
-                  <EditIcon />
-                </RowActionButton>
-              ) : null}
-              {permissions.technicalStatus ? (
-                <RowActionButton label={dictionary.condition} onClick={() => onCondition(vehicle)}>
-                  <ConditionIcon />
-                </RowActionButton>
-              ) : null}
-              <LifecycleForm locale={locale} organizationCode={organization.code} vehicle={vehicle} dictionary={dictionary} permissions={permissions} />
-            </>
-          ) : null}
+      ))}
+      {drivers.length > 1 ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold leading-5 text-primary"
+          title={drivers.slice(1).map((driver) => driver.fullName).join(", ")}
+        >
+          +{drivers.length - 1}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function DriverCell({ name, iqama }: { name: string; iqama?: string | null }) {
+  return (
+    <div className="min-w-0">
+      <div className="whitespace-normal break-words text-sm font-semibold leading-6 text-navy" title={name}>
+        {name}
+      </div>
+      {iqama ? (
+        <div className="whitespace-nowrap text-xs text-muted" dir="ltr">
+          {iqama}
         </div>
-      </td>
-    </tr>
+      ) : null}
+    </div>
+  );
+}
+
+function LinkedDriversSection({
+  locale,
+  drivers,
+  emptyLabel,
+}: {
+  locale: Locale;
+  drivers: FleetVehicle["linkedDrivers"];
+  emptyLabel: string;
+}) {
+  const title =
+    locale === "ar" ? "المناديب المرتبطون بالمركبة" : "Drivers linked to this vehicle";
+
+  return (
+    <section className="rounded-xl border border-border bg-background p-4">
+      <h3 className="text-sm font-bold text-navy">{title}</h3>
+      {drivers.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {drivers.map((driver) => (
+            <DriverCell
+              key={driver.id}
+              name={driver.fullName}
+              iqama={driver.iqamaNumber}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm font-medium text-muted">{emptyLabel}</p>
+      )}
+    </section>
   );
 }
 
@@ -471,6 +982,14 @@ function VehicleDialog({
                 </>
               ) : null}
             </FormSection>
+
+            {vehicle ? (
+              <LinkedDriversSection
+                locale={locale}
+                drivers={vehicle.linkedDrivers}
+                emptyLabel={dictionary.notAssigned}
+              />
+            ) : null}
 
             <FormSection title={dictionary.authorizedPersonSection}>
               <SelectField
@@ -916,6 +1435,46 @@ function DownloadIcon() {
   );
 }
 
+function DriverLinkIcon() {
+  return (
+    <svg aria-hidden="true" className="size-5" viewBox="0 0 24 24" fill="none">
+      <path d="M7.5 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm9 1a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20a5 5 0 0 1 9 0m1.5-.5a4 4 0 0 1 7.5.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function AuthorizedIcon() {
+  return (
+    <svg aria-hidden="true" className="size-5" viewBox="0 0 24 24" fill="none">
+      <path d="M12 3 5 6v5c0 4.4 2.9 8.4 7 9.8 4.1-1.4 7-5.4 7-9.8V6l-7-3Zm-3 9 2 2 4-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg aria-hidden="true" className="size-5" viewBox="0 0 24 24" fill="none">
+      <path d="M12 9v4m0 4h.01M10.3 4.7 2.8 18a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.7a2 2 0 0 0-3.4 0Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg aria-hidden="true" className="size-5" viewBox="0 0 24 24" fill="none">
+      <path d="M12 8v5m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function ResetIcon() {
+  return (
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none">
+      <path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
 function StatusBadge({ label, tone }: { label: string; tone: "success" | "warning" | "danger" }) {
   const className =
     tone === "success"
@@ -934,13 +1493,13 @@ function getErrorMessage(dictionary: FleetDictionary, code: string | undefined) 
   return dictionary.errors[code as keyof FleetDictionary["errors"]];
 }
 
-function getRowClassName(vehicle: FleetVehicle, remaining: number | null) {
-  if (vehicle.archivedAt) return "bg-slate-50 text-muted";
-  if (vehicle.technicalStatus === "accident") return "bg-red-50/70";
-  if (vehicle.technicalStatus === "fault") return "bg-amber-50/70";
-  if (remaining !== null && remaining < 0) return "bg-red-50/70";
-  if (remaining !== null && remaining <= 10) return "bg-amber-50/70";
-  return "bg-surface";
+function getCardClassName(vehicle: FleetVehicle, remaining: number | null) {
+  if (vehicle.archivedAt) return "border-slate-200";
+  if (vehicle.technicalStatus === "accident") return "border-red-200";
+  if (vehicle.technicalStatus === "fault") return "border-amber-200";
+  if (remaining !== null && remaining < 0) return "border-red-200";
+  if (remaining !== null && remaining <= 10) return "border-amber-200";
+  return "border-border";
 }
 
 function getRemainingDays(expiryDate: string | null, today: string) {
@@ -959,10 +1518,10 @@ function formatRemainingDays(days: number | null, dictionary: FleetDictionary) {
 }
 
 function remainingBadgeClassName(days: number | null) {
-  if (days === null) return "rounded-full border border-border px-2.5 py-1 text-xs font-bold text-muted";
-  if (days < 0) return "rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700";
-  if (days <= 10) return "rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800";
-  return "rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700";
+  if (days === null) return "w-fit whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-[11px] font-bold leading-5 text-muted";
+  if (days < 0) return "w-fit whitespace-nowrap rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold leading-5 text-red-700";
+  if (days <= 10) return "w-fit whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold leading-5 text-amber-800";
+  return "w-fit whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold leading-5 text-emerald-700";
 }
 
 function formatDate(value: string | null) {
@@ -971,4 +1530,111 @@ function formatDate(value: string | null) {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
+}
+
+function getFleetCardSummary(vehicles: FleetVehicle[]) {
+  return vehicles.reduce(
+    (totals, vehicle) => {
+      if (vehicle.linkedDrivers.length > 0) totals.linked += 1;
+      if (hasAuthorizedPerson(vehicle)) totals.authorized += 1;
+      if (vehicle.linkedDrivers.length === 0) totals.withoutDriver += 1;
+      if (!hasAuthorizedPerson(vehicle)) totals.withoutAuthorized += 1;
+      return totals;
+    },
+    { linked: 0, authorized: 0, withoutDriver: 0, withoutAuthorized: 0 },
+  );
+}
+
+function matchesFleetCardFilters(vehicle: FleetVehicle, filters: FleetCardFilters) {
+  const plateQuery = normalizeSearch(filters.plate);
+  const driverQuery = normalizeSearch(filters.driver);
+  const plateMatches =
+    !plateQuery || normalizeSearch(vehicle.plateNumber).includes(plateQuery);
+  const driverMatches =
+    !driverQuery ||
+    vehicle.linkedDrivers.some((driver) =>
+      [driver.fullName, driver.iqamaNumber, driver.mobileNumber]
+        .filter(Boolean)
+        .some((value) => normalizeSearch(value).includes(driverQuery)),
+    );
+  const authorized = hasAuthorizedPerson(vehicle);
+  const authorizationMatches =
+    filters.authorization === "all" ||
+    (filters.authorization === "authorized" && authorized) ||
+    (filters.authorization === "missing" && !authorized);
+  const linked = vehicle.linkedDrivers.length > 0;
+  const linkedMatches =
+    filters.linkedDriver === "all" ||
+    (filters.linkedDriver === "linked" && linked) ||
+    (filters.linkedDriver === "missing" && !linked);
+  const typeMatches = !filters.vehicleType || vehicle.vehicleType === filters.vehicleType;
+
+  return plateMatches && driverMatches && authorizationMatches && linkedMatches && typeMatches;
+}
+
+function hasAuthorizedPerson(vehicle: FleetVehicle) {
+  return Boolean(vehicle.authorizedDriverId || vehicle.authorizedPersonName || vehicle.authorizedManualName);
+}
+
+function normalizeSearch(value: string | null | undefined) {
+  return (value ?? "").replace(/\s+/g, "").toLocaleLowerCase();
+}
+
+function formatPercent(value: number, total: number) {
+  if (total <= 0) return "0%";
+  return `${Math.round((value / total) * 100)}%`;
+}
+
+function getFleetCardUiText(locale: Locale) {
+  if (locale === "ar") {
+    return {
+      activeResultSet: "ضمن النتائج الحالية",
+      linkedVehicles: "مركبات مرتبطة بمناديب",
+      authorizedVehicles: "مركبات لها مفوض فعلي",
+      withoutDriver: "مركبات بدون مندوب",
+      withoutAuthorized: "مركبات بدون مفوض",
+      searchAndFilters: "البحث والفلاتر",
+      plateSearch: "البحث برقم اللوحة",
+      plateSearchPlaceholder: "ابحث برقم اللوحة",
+      driverSearch: "البحث باسم المندوب",
+      driverSearchPlaceholder: "ابحث داخل المناديب المرتبطين",
+      authorizationFilter: "حالة التفويض",
+      linkedDriverFilter: "حالة المندوب المرتبط",
+      hasAuthorized: "يوجد مفوض",
+      noAuthorized: "بدون مفوض",
+      hasLinkedDriver: "مرتبط بمندوب",
+      noLinkedDriver: "بدون مندوب",
+      primaryAssignedDriver: "المندوب المعين / الرئيسي",
+      linkedDrivers: "المناديب المرتبطون",
+      assigned: "معين",
+      resultsCount: "عرض {shown} من {total} مركبة",
+      noResultsTitle: "لا توجد مركبات مطابقة",
+      noResultsDescription: "عدّل البحث أو امسح الفلاتر لعرض المركبات مرة أخرى.",
+    };
+  }
+
+  return {
+    activeResultSet: "In the current results",
+    linkedVehicles: "Vehicles linked to drivers",
+    authorizedVehicles: "Vehicles with authorized person",
+    withoutDriver: "Vehicles without driver",
+    withoutAuthorized: "Vehicles without authorization",
+    searchAndFilters: "Search and filters",
+    plateSearch: "Search by plate",
+    plateSearchPlaceholder: "Search plate number",
+    driverSearch: "Search by driver",
+    driverSearchPlaceholder: "Search linked drivers",
+    authorizationFilter: "Authorization status",
+    linkedDriverFilter: "Linked driver status",
+    hasAuthorized: "Has authorized person",
+    noAuthorized: "No authorized person",
+    hasLinkedDriver: "Linked to driver",
+    noLinkedDriver: "No driver",
+    primaryAssignedDriver: "Assigned / primary driver",
+    linkedDrivers: "Linked drivers",
+    assigned: "Assigned",
+    resultsCount: "Showing {shown} of {total} vehicles",
+    noResultsTitle: "No matching vehicles",
+    noResultsDescription: "Adjust search or reset filters to show vehicles again.",
+  };
 }

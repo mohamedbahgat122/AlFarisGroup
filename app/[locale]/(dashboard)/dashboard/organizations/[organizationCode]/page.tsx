@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { getAccessibleOrganizationByCode } from "@/features/organizations/queries";
+import { notFound, redirect } from "next/navigation";
+import { AccessDenied } from "@/components/dashboard/access-denied";
+import { OrganizationDashboard } from "@/components/dashboard/home/organization-dashboard";
+import { getOrganizationDashboardData } from "@/features/dashboard/queries";
+import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import type { AccessibleOrganization } from "@/features/organizations/types";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isLocale } from "@/types/locale";
@@ -9,6 +12,9 @@ type OrganizationRouteProps = {
   params: Promise<{
     locale: string;
     organizationCode: string;
+  }>;
+  searchParams?: Promise<{
+    range?: string;
   }>;
 };
 
@@ -35,6 +41,7 @@ export async function generateMetadata({
 
 export default async function OrganizationRoute({
   params,
+  searchParams,
 }: OrganizationRouteProps) {
   const { locale, organizationCode } = await params;
 
@@ -43,63 +50,55 @@ export default async function OrganizationRoute({
   }
 
   const dictionary = getDictionary(locale).dashboard.organizations;
-  const organization = await getAccessibleOrganizationByCode(organizationCode);
+  const access = await getOrganizationPageAccessByCode(organizationCode);
 
-  if (!organization) {
+  if (access.status === "unauthenticated") {
+    redirect(`/${locale}/login`);
+  }
+
+  if (access.status === "not_found") {
     notFound();
   }
 
+  if (access.status === "forbidden") {
+    return <AccessDenied locale={locale} />;
+  }
+
+  if (access.status !== "success") {
+    return <AccessDenied locale={locale} />;
+  }
+
+  const organization = access.organization;
+
   if (!organization.navigation.organizationHome) {
-    notFound();
+    return <AccessDenied locale={locale} />;
+  }
+
+  const filters = await searchParams;
+  const dashboardData = await getOrganizationDashboardData({
+    locale,
+    organization,
+    range: filters?.range,
+  });
+
+  if (dashboardData.status !== "success") {
+    return <AccessDenied locale={locale} />;
   }
 
   return (
-    <div className="min-h-full bg-background px-5 py-6 sm:px-7">
-      <div className="max-w-3xl">
-        <div className="mb-5 flex flex-wrap items-center gap-2">
-          <AccessBadge organization={organization} dictionary={dictionary} />
-          {organization.isHomeOrganization ? (
-            <span className="rounded-full border border-primary/20 bg-primary-soft px-3 py-1 text-xs font-bold text-primary">
-              {dictionary.homeOrganization}
-            </span>
-          ) : null}
-        </div>
-        <h1 className="text-2xl font-bold text-navy">{organization.name}</h1>
-        <p className="mt-3 text-sm leading-6 text-muted">
-          {dictionary.landingDescription}
-        </p>
-      </div>
-
-      <div className="mt-7 border border-border bg-surface px-6 py-10 text-center shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
-        <p className="text-sm font-medium leading-6 text-muted">
-          {dictionary.sectionsComingSoon}
-        </p>
-      </div>
-    </div>
+    <OrganizationDashboard
+      data={dashboardData}
+      locale={locale}
+      accessLabel={getAccessLabel(organization, dictionary)}
+    />
   );
 }
 
-function AccessBadge({
-  organization,
-  dictionary,
-}: {
-  organization: AccessibleOrganization;
-  dictionary: ReturnType<typeof getDictionary>["dashboard"]["organizations"];
-}) {
-  const managed = organization.accessLevel === "manage";
-  const label = organization.isSystemOwnerAccess
+function getAccessLabel(
+  organization: AccessibleOrganization,
+  dictionary: ReturnType<typeof getDictionary>["dashboard"]["organizations"],
+) {
+  return organization.isSystemOwnerAccess
     ? dictionary.accessLabels.full
     : dictionary.accessLabels[organization.accessLevel];
-
-  return (
-    <span
-      className={`rounded-full border px-3 py-1 text-xs font-bold ${
-        managed
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-border bg-background text-muted"
-      }`}
-    >
-      {label}
-    </span>
-  );
 }

@@ -14,6 +14,7 @@ import type { Dictionary } from "@/i18n/dictionaries";
 import type {
   ActiveOrganizationOption,
   ManagedUserListItem,
+  ManagedUsersQueryResult,
 } from "@/features/user-management/types";
 import type { Locale } from "@/types/locale";
 import type { ReactNode } from "react";
@@ -23,6 +24,7 @@ type UsersTableProps = {
   locale: Locale;
   dictionary: Dictionary["dashboard"]["userManagement"];
   users: ManagedUserListItem[];
+  pagination: Extract<ManagedUsersQueryResult, { status: "success" }>["pagination"];
   organizations: ActiveOrganizationOption[];
   onToast: (toast: ToastState) => void;
 };
@@ -39,6 +41,7 @@ export function UsersTable({
   locale,
   dictionary,
   users,
+  pagination,
   organizations,
   onToast,
 }: UsersTableProps) {
@@ -190,6 +193,11 @@ export function UsersTable({
           </table>
         </div>
       </div>
+      <PaginationControls
+        locale={locale}
+        dictionary={dictionary}
+        pagination={pagination}
+      />
 
       {dialog?.type === "edit" ? (
         <EditUserDialog
@@ -251,6 +259,71 @@ export function UsersTable({
       ) : null}
     </>
   );
+}
+
+function PaginationControls({
+  locale,
+  dictionary,
+  pagination,
+}: {
+  locale: Locale;
+  dictionary: Dictionary["dashboard"]["userManagement"];
+  pagination: Extract<ManagedUsersQueryResult, { status: "success" }>["pagination"];
+}) {
+  const from = pagination.totalRows === 0
+    ? 0
+    : (pagination.page - 1) * pagination.pageSize + 1;
+  const to = Math.min(pagination.page * pagination.pageSize, pagination.totalRows);
+  const previousHref = buildUsersPageHref(locale, pagination.page - 1, pagination.search);
+  const nextHref = buildUsersPageHref(locale, pagination.page + 1, pagination.search);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 text-sm font-semibold text-muted sm:flex-row sm:items-center sm:justify-between">
+      <p>
+        {dictionary.paginationSummary
+          .replace("{from}", String(from))
+          .replace("{to}", String(to))
+          .replace("{total}", String(pagination.totalRows))}
+      </p>
+      <div className="flex items-center gap-2">
+        {pagination.page > 1 ? (
+          <a
+            href={previousHref}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary"
+          >
+            {dictionary.previousPage}
+          </a>
+        ) : (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
+            {dictionary.previousPage}
+          </span>
+        )}
+        <span className="rounded-lg border border-border bg-surface px-3 py-2">
+          {pagination.page} / {pagination.totalPages}
+        </span>
+        {pagination.page < pagination.totalPages ? (
+          <a
+            href={nextHref}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary"
+          >
+            {dictionary.nextPage}
+          </a>
+        ) : (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
+            {dictionary.nextPage}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function buildUsersPageHref(locale: Locale, page: number, search: string) {
+  const params = new URLSearchParams();
+  if (page > 1) params.set("page", String(page));
+  if (search) params.set("search", search);
+  const query = params.toString();
+  return `/${locale}/dashboard/users${query ? `?${query}` : ""}`;
 }
 
 export function StatePanel({

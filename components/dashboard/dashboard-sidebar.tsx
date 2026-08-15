@@ -113,6 +113,9 @@ export function DashboardSidebar({
   const organizationOilChangeRequestsHref = organizationAppRequestsHref
     ? `${organizationAppRequestsHref}/oil-change`
     : null;
+  const organizationShiftChangeRequestsHref = organizationAppRequestsHref
+    ? `${organizationAppRequestsHref}/shifts`
+    : null;
   const organizationShiftsHref = currentOrganizationCode
     ? `${organizationsHref}/${currentOrganizationCode}/shifts`
     : null;
@@ -165,6 +168,9 @@ export function DashboardSidebar({
   const isOrganizationOilChangeRequestsActive =
     Boolean(organizationOilChangeRequestsHref) &&
     checkActive(organizationOilChangeRequestsHref, true);
+  const isOrganizationShiftChangeRequestsActive =
+    Boolean(organizationShiftChangeRequestsHref) &&
+    checkActive(organizationShiftChangeRequestsHref, true);
   const isOrganizationShiftsActive =
     Boolean(organizationShiftsHref) && checkActive(organizationShiftsHref);
   const isOrganizationShiftsManagementActive =
@@ -192,6 +198,7 @@ export function DashboardSidebar({
   const isOrganizationMaintenanceRequestsPending = pendingHref === organizationMaintenanceRequestsHref;
   const isOrganizationMeetingRequestsPending = pendingHref === organizationMeetingRequestsHref;
   const isOrganizationOilChangeRequestsPending = pendingHref === organizationOilChangeRequestsHref;
+  const isOrganizationShiftChangeRequestsPending = pendingHref === organizationShiftChangeRequestsHref;
   const isOrganizationShiftsManagementPending = pendingHref === organizationShiftsManagementHref;
   const isOrganizationShiftCalculationPending = pendingHref === organizationShiftCalculationHref;
   const isOrganizationDriverWarningsPending = pendingHref === organizationDriverWarningsHref;
@@ -630,7 +637,8 @@ export function DashboardSidebar({
                   organizationLeaveRequestsHref &&
                   organizationMaintenanceRequestsHref &&
                   organizationMeetingRequestsHref &&
-                  organizationOilChangeRequestsHref ? (
+                  organizationOilChangeRequestsHref &&
+                  organizationShiftChangeRequestsHref ? (
                     <>
                       <button
                         type="button"
@@ -782,6 +790,29 @@ export function DashboardSidebar({
                                   />
                                 )}
                                 <span>{dictionary.appRequests.oilChangeNavLabel}</span>
+                              </Link>
+                              <Link
+                                href={organizationShiftChangeRequestsHref}
+                                aria-current={
+                                  isOrganizationShiftChangeRequestsActive
+                                    ? "page"
+                                    : undefined
+                                }
+                                onClick={(e) => handleLinkClick(organizationShiftChangeRequestsHref, e)}
+                                className={`${subNavItemClassName(
+                                  isOrganizationShiftChangeRequestsActive,
+                                )} ${isOrganizationShiftChangeRequestsPending ? "pointer-events-none cursor-wait" : ""}`}
+                              >
+                                {isOrganizationShiftChangeRequestsPending ? (
+                                  <SidebarSpinnerActive className="size-3" />
+                                ) : (
+                                  <span
+                                    className={subNavDotClassName(
+                                      isOrganizationShiftChangeRequestsActive,
+                                    )}
+                                  />
+                                )}
+                                <span>{dictionary.appRequests.shiftChangeNavLabel}</span>
                               </Link>
                             </>
                           ) : null}

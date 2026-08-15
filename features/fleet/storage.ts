@@ -11,6 +11,20 @@ const allowedMimeTypes = new Set([
   "image/webp",
   "application/pdf",
 ]);
+const allowedImageMimeTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+export const fleetBaselinePhotoSlots = [
+  "front",
+  "rear",
+  "right",
+  "left",
+] as const;
+
+export type FleetBaselinePhotoSlot = (typeof fleetBaselinePhotoSlots)[number];
 
 export type FleetFileUploadResult =
   | {
@@ -46,6 +60,7 @@ export async function uploadFleetOperatingCard({
     });
 
     if (error) {
+      logFleetStorageError("operating_card_upload", error);
       return { success: false, code: "upload_failed" };
     }
 
@@ -55,7 +70,46 @@ export async function uploadFleetOperatingCard({
       fileName: getSafeDownloadName(file.name),
       mimeType: file.type,
     };
-  } catch {
+  } catch (error) {
+    logFleetStorageError("operating_card_upload_exception", error);
+    return { success: false, code: "configuration_error" };
+  }
+}
+
+export async function uploadFleetBaselinePhoto({
+  file,
+  vehicleId,
+  slot,
+}: {
+  file: File;
+  vehicleId: string;
+  slot: FleetBaselinePhotoSlot;
+}): Promise<FleetFileUploadResult> {
+  if (!isValidFleetImageFile(file)) {
+    return { success: false, code: "document_invalid" };
+  }
+
+  try {
+    const admin = createAdminClient();
+    const path = buildFleetBaselinePhotoPath({ vehicleId, slot, file });
+    const { error } = await admin.storage.from(bucketName).upload(path, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      logFleetStorageError("baseline_vehicle_photo_upload", error);
+      return { success: false, code: "upload_failed" };
+    }
+
+    return {
+      success: true,
+      path,
+      fileName: getSafeDownloadName(file.name),
+      mimeType: file.type,
+    };
+  } catch (error) {
+    logFleetStorageError("baseline_vehicle_photo_upload_exception", error);
     return { success: false, code: "configuration_error" };
   }
 }
@@ -90,8 +144,26 @@ export async function createFleetFileDownloadSignedUrl(
   }
 }
 
+export async function createFleetFilePreviewSignedUrl(path: string) {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.storage
+      .from(bucketName)
+      .createSignedUrl(path, 300);
+
+    if (error) return null;
+    return data.signedUrl;
+  } catch {
+    return null;
+  }
+}
+
 export function isValidFleetFile(file: File) {
   return file.size > 0 && file.size <= maxFileSize && allowedMimeTypes.has(file.type);
+}
+
+export function isValidFleetImageFile(file: File) {
+  return file.size > 0 && file.size <= maxFileSize && allowedImageMimeTypes.has(file.type);
 }
 
 function buildFleetOperatingCardPath({
@@ -104,6 +176,18 @@ function buildFleetOperatingCardPath({
   file: File;
 }) {
   return `fleet/${organizationId}/${vehicleId}/operating-card/${randomUUID()}${getSafeExtension(file)}`;
+}
+
+function buildFleetBaselinePhotoPath({
+  vehicleId,
+  slot,
+  file,
+}: {
+  vehicleId: string;
+  slot: FleetBaselinePhotoSlot;
+  file: File;
+}) {
+  return `fleet/global/${vehicleId}/baseline/${slot}/${randomUUID()}${getSafeExtension(file)}`;
 }
 
 function getSafeExtension(file: File) {
@@ -124,4 +208,20 @@ function getSafeExtension(file: File) {
 function getSafeDownloadName(fileName: string) {
   const trimmed = fileName.trim();
   return (trimmed || "fleet-file").replace(/[\\/:*?"<>|]+/g, "-");
+}
+
+function logFleetStorageError(stage: string, error: unknown) {
+  const storageError = error as {
+    statusCode?: string;
+    error?: string;
+    message?: string;
+  } | null;
+
+  console.error("[global-fleet:create:storage-error]", {
+    stage,
+    code: storageError?.statusCode ?? storageError?.error,
+    message: storageError?.message,
+    details: null,
+    hint: null,
+  });
 }

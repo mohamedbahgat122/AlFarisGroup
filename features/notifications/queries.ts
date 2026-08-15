@@ -39,6 +39,7 @@ type AppNotificationRow = Pick<
   | "entity_id"
   | "organization_id"
   | "is_read"
+  | "read_at"
   | "created_at"
 >;
 
@@ -144,7 +145,7 @@ export async function getAppNotificationsForCurrentUser({
     supabase
       .from("app_notifications")
       .select(
-        "id, type, title, message, entity_type, entity_id, organization_id, is_read, created_at",
+        "id, type, title, message, entity_type, entity_id, organization_id, is_read, read_at, created_at",
       )
       .in("organization_id", organizationIds)
       .eq("recipient_user_id", recipientUserId)
@@ -155,7 +156,7 @@ export async function getAppNotificationsForCurrentUser({
       .select("id", { count: "exact", head: true })
       .in("organization_id", organizationIds)
       .eq("recipient_user_id", recipientUserId)
-      .eq("is_read", false),
+      .is("read_at", null),
   ]);
 
   if (notificationsResult.error || unreadResult.error) {
@@ -239,7 +240,8 @@ async function enrichAppNotifications(
       requestType: request?.request_type ?? null,
       requestStatus: request?.status ?? null,
       driverName: driver?.full_name ?? null,
-      isRead: row.is_read,
+      isRead: Boolean(row.read_at),
+      readAt: row.read_at,
       createdAt: row.created_at,
     };
   });

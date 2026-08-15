@@ -12,6 +12,7 @@ import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { OrganizationAccessFields } from "@/components/dashboard/users/organization-access-fields";
+import { GlobalAccessFields } from "@/components/dashboard/users/global-access-fields";
 import {
   archiveManagedUserAction,
   getUserActivityLogsAction,
@@ -28,6 +29,7 @@ import type {
   ManagedUserRole,
 } from "@/features/user-management/types";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
+import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { Locale } from "@/types/locale";
 
 type UserManagementDictionary = Dictionary["dashboard"]["userManagement"];
@@ -169,6 +171,9 @@ export function PermissionsDialog({
       ]),
     ),
   );
+  const [globalPermissions, setGlobalPermissions] = useState<GlobalPermissionKey[]>(
+    user.globalPermissions || [],
+  );
   const additionalAccess = useMemo(
     () =>
       user.role === "driver"
@@ -198,6 +203,11 @@ export function PermissionsDialog({
           name="additionalAccess"
           value={JSON.stringify(additionalAccess)}
         />
+        <input
+          type="hidden"
+          name="globalPermissions"
+          value={JSON.stringify(globalPermissions)}
+        />
         <div className="rounded-xl border border-border bg-background p-4">
           <p className="text-sm font-bold text-navy">{user.fullName}</p>
           <p className="mt-1 text-sm text-muted">
@@ -218,6 +228,7 @@ export function PermissionsDialog({
             dictionary={dictionary}
             organizations={organizations}
             homeOrganizationId={user.homeOrganization?.id ?? ""}
+            includeHomeOrganization={true}
             values={accessValues}
             onChange={(organizationId, permissionKeys) =>
               setAccessValues((current) => ({
@@ -225,6 +236,13 @@ export function PermissionsDialog({
                 [organizationId]: permissionKeys,
               }))
             }
+          />
+        )}
+        {!user.isSystemOwner && user.role !== "driver" && (
+          <GlobalAccessFields
+            dictionary={dictionary}
+            values={globalPermissions}
+            onChange={setGlobalPermissions}
           />
         )}
         {user.isSystemOwner ? (
@@ -427,7 +445,7 @@ function DialogFrame({
           <button
             type="button"
             onClick={onClose}
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <span aria-hidden="true">×</span>
           </button>
@@ -489,7 +507,7 @@ function DialogActions({
       <button
         type="button"
         onClick={onCancel}
-        className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         {cancel}
       </button>
@@ -530,7 +548,7 @@ function SafeJson({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="rounded-lg bg-background p-3">
       <p className="font-semibold text-navy">{label}</p>
-      <pre className="mt-1 whitespace-pre-wrap break-words font-sans">
+      <pre className="mt-1 whitespace-pre-wrap wrap-break-word font-sans">
         {value ? JSON.stringify(value, null, 2) : "-"}
       </pre>
     </div>

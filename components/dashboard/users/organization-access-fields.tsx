@@ -28,7 +28,7 @@ export function OrganizationAccessFields({
   dictionary,
   organizations,
   homeOrganizationId,
-  includeHomeOrganization = false,
+  includeHomeOrganization = true,
   values,
   onChange,
 }: OrganizationAccessFieldsProps) {
@@ -132,7 +132,7 @@ function OrganizationPermissionCard({
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            {organizationPermissionGroups.map((group) => (
+            {organizationPermissionGroups.filter((group) => group.id !== "fleet").map((group) => (
               <div key={group.id} className="rounded-xl border border-border bg-surface p-4">
                 <h4 className="text-sm font-bold text-navy">
                   {dictionary.permissions.groups[group.id]}

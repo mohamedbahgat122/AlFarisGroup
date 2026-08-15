@@ -645,6 +645,10 @@ function getStringValue(formData: FormData, key: string) {
 function revalidateDriverDashboardPaths(locale: string, organizationCode: string) {
   revalidatePath(`/${locale}/dashboard`, "layout");
   revalidatePath(`/${locale}/dashboard/organizations/${organizationCode}/drivers`);
+  revalidatePath(`/${locale}/dashboard/fleet/cars`);
+  revalidatePath(`/${locale}/dashboard/fleet/motorcycles`);
+  revalidatePath(`/${locale}/dashboard/organizations/${organizationCode}/fleet/cars`);
+  revalidatePath(`/${locale}/dashboard/organizations/${organizationCode}/fleet/motorcycles`);
 }
 
 function getFileValidationStage(
@@ -746,7 +750,9 @@ function getDriverFormValues(formData: FormData): DriverFormValues {
     fullName: getStringValue(formData, "fullName"),
     nationality: getStringValue(formData, "nationality"),
     mobileNumber: getStringValue(formData, "mobileNumber"),
+    nfcNumber: getStringValue(formData, "nfcNumber"),
     vehicleType: getStringValue(formData, "vehicleType"),
+    vehicleId: getStringValue(formData, "vehicleId"),
     vehicleNumber: getStringValue(formData, "vehicleNumber"),
     keetaVehiclePlateNumber: getStringValue(
       formData,
@@ -808,7 +814,9 @@ function buildDriverInput({
     fullName: values.fullName ?? "",
     nationality: values.nationality ?? "",
     mobileNumber: values.mobileNumber ?? "",
+    nfcNumber: values.nfcNumber ?? "",
     vehicleType,
+    vehicleId: values.vehicleId,
     vehicleNumber: values.vehicleNumber ?? "",
     keetaVehiclePlateNumber: values.keetaVehiclePlateNumber ?? "",
     vehicleSerialNumber: values.vehicleSerialNumber ?? "",

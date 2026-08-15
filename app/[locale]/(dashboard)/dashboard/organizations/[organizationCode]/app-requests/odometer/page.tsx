@@ -1,9 +1,20 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { AccessDenied } from "@/components/dashboard/access-denied";
+import {
+  AppRequestFilterActions,
+  AppRequestFilterDate,
+  AppRequestFilterSelect,
+  AppRequestFilterText,
+  AppRequestFiltersShell,
+  AppRequestPagination,
+  AppRequestResultAndPagination,
+  AppRequestSummaryCards,
+} from "@/components/dashboard/app-requests/app-request-page-ui";
 import { OdometerTable } from "@/components/dashboard/app-requests/app-requests-table";
 import { getOdometerPage, type OdometerFilters } from "@/features/app-requests/queries";
 import { getBusinessDateString } from "@/features/drivers/expiry";
-import { getAccessibleOrganizationByCode } from "@/features/organizations/queries";
+import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isLocale } from "@/types/locale";
 
@@ -28,8 +39,15 @@ export default async function OdometerRoute({ params, searchParams }: RouteProps
   const query = await searchParams;
   if (!isLocale(locale)) notFound();
 
-  const organization = await getAccessibleOrganizationByCode(organizationCode);
-  if (!organization || !organization.navigation.odometerManagement) notFound();
+  const access = await getOrganizationPageAccessByCode(organizationCode);
+  if (access.status === "unauthenticated") redirect(`/${locale}/login`);
+  if (access.status === "not_found") notFound();
+  if (access.status !== "success") return <AccessDenied locale={locale} />;
+
+  const organization = access.organization;
+  if (!organization.navigation.odometerManagement) {
+    return <AccessDenied locale={locale} />;
+  }
 
   const dictionary = getDictionary(locale).dashboard.appRequests;
   const filters = { ...query, date: query?.date ?? getBusinessDateString() };
@@ -51,65 +69,37 @@ export default async function OdometerRoute({ params, searchParams }: RouteProps
         <p className="mt-2 text-sm leading-6 text-muted">
           {dictionary.odometerDescription}
         </p>
-        <form className="mt-4 flex flex-wrap gap-2">
-          <input
-            type="date"
-            name="date"
-            defaultValue={filters.date}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          />
-          <input
-            name="driver"
-            defaultValue={filters.driver}
-            placeholder={dictionary.filters.driver}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          />
-          <input
-            name="driverId"
-            defaultValue={filters.driverId}
-            placeholder={dictionary.filters.driverId}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          />
-          <input
-            name="plate"
-            defaultValue={filters.plate}
-            placeholder={dictionary.filters.plate}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          />
-          <select
-            name="status"
-            defaultValue={filters.status ?? "all"}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          >
-            <option value="all">{dictionary.filters.all}</option>
-            <option value="open">{dictionary.statuses.open}</option>
-            <option value="completed">{dictionary.statuses.completed_shift}</option>
-          </select>
-          <select
-            name="reviewStatus"
-            defaultValue={filters.reviewStatus ?? "all"}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          >
-            <option value="all">{dictionary.filters.all}</option>
-            <option value="pending_review">{dictionary.reviewStatuses.pending_review}</option>
-            <option value="approved">{dictionary.reviewStatuses.approved}</option>
-            <option value="rejected">{dictionary.reviewStatuses.rejected}</option>
-          </select>
-          <select
-            name="phase"
-            defaultValue={filters.phase ?? "all"}
-            className="min-h-11 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-navy"
-          >
-            <option value="all">{dictionary.filters.all}</option>
-            <option value="start">{dictionary.start}</option>
-            <option value="end">{dictionary.end}</option>
-          </select>
-          <button className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white">
-            {dictionary.filters.apply}
-          </button>
-        </form>
       </div>
       <div className="px-5 py-6 sm:px-7">
+        <AppRequestSummaryCards
+          cards={[
+            { label: dictionary.odometerSummary.total, value: data.summary.total, tone: "neutral" },
+            { label: dictionary.odometerSummary.notStarted, value: data.summary.notStarted, tone: "pending" },
+            { label: dictionary.odometerSummary.startedOnly, value: data.summary.startedOnly, tone: "info" },
+            { label: dictionary.odometerSummary.completed, value: data.summary.completed, tone: "success" },
+          ]}
+        />
+        <OdometerFilterBar
+          locale={locale}
+          organizationCode={organizationCode}
+          dictionary={dictionary}
+          filters={filters}
+        />
+        <AppRequestResultAndPagination
+          locale={locale}
+          dictionary={dictionary}
+          totalRows={data.totalRows}
+          pagination={
+            <OdometerPagination
+              locale={locale}
+              organizationCode={organizationCode}
+              dictionary={dictionary}
+              filters={filters}
+              page={data.page}
+              totalPages={data.totalPages}
+            />
+          }
+        />
         {data.rows.length === 0 ? (
           <Panel message={dictionary.emptyOdometer} />
         ) : (
@@ -122,9 +112,106 @@ export default async function OdometerRoute({ params, searchParams }: RouteProps
             canReview={organization.permissionKeys.includes("odometer.manage")}
           />
         )}
+        {data.totalPages > 1 ? (
+          <div className="mt-4 flex justify-end">
+            <OdometerPagination
+              locale={locale}
+              organizationCode={organizationCode}
+              dictionary={dictionary}
+              filters={filters}
+              page={data.page}
+              totalPages={data.totalPages}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
+}
+
+function OdometerFilterBar({
+  locale,
+  organizationCode,
+  dictionary,
+  filters,
+}: {
+  locale: string;
+  organizationCode: string;
+  dictionary: ReturnType<typeof getDictionary>["dashboard"]["appRequests"];
+  filters: OdometerFilters;
+}) {
+  const resetHref = `/${locale}/dashboard/organizations/${organizationCode}/app-requests/odometer`;
+
+  return (
+    <AppRequestFiltersShell
+      actions={<AppRequestFilterActions dictionary={dictionary} resetHref={resetHref} />}
+    >
+      <AppRequestFilterText
+        name="driver"
+        label={dictionary.filters.search}
+        defaultValue={filters.driver}
+        placeholder={dictionary.filters.searchPlaceholder}
+        wide
+      />
+      <AppRequestFilterDate name="date" label={dictionary.filters.date} defaultValue={filters.date} />
+      <AppRequestFilterText name="driverId" label={dictionary.filters.driverId} defaultValue={filters.driverId} />
+      <AppRequestFilterText name="plate" label={dictionary.filters.plate} defaultValue={filters.plate} />
+      <AppRequestFilterSelect name="status" label={dictionary.filters.status} defaultValue={filters.status ?? "all"}>
+        <option value="all">{dictionary.filters.all}</option>
+        <option value="not_started">{dictionary.statuses.not_started}</option>
+        <option value="started">{dictionary.statuses.open}</option>
+        <option value="completed">{dictionary.statuses.completed_shift}</option>
+      </AppRequestFilterSelect>
+    </AppRequestFiltersShell>
+  );
+}
+
+function OdometerPagination({
+  locale,
+  organizationCode,
+  dictionary,
+  filters,
+  page,
+  totalPages,
+}: {
+  locale: string;
+  organizationCode: string;
+  dictionary: ReturnType<typeof getDictionary>["dashboard"]["appRequests"];
+  filters: OdometerFilters;
+  page: number;
+  totalPages: number;
+}) {
+  return (
+    <AppRequestPagination
+      dictionary={dictionary}
+      page={page}
+      totalPages={totalPages}
+      previousHref={page <= 1 ? undefined : buildOdometerPageHref({ locale, organizationCode, filters, page: page - 1 })}
+      nextHref={page >= totalPages ? undefined : buildOdometerPageHref({ locale, organizationCode, filters, page: page + 1 })}
+    />
+  );
+}
+
+function buildOdometerPageHref({
+  locale,
+  organizationCode,
+  filters,
+  page,
+}: {
+  locale: string;
+  organizationCode: string;
+  filters: OdometerFilters;
+  page: number;
+}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (key === "reviewStatus" || key === "phase") continue;
+    if (key === "page" || value === undefined || value === "" || value === "all") continue;
+    params.set(key, String(value));
+  }
+  if (page > 1) params.set("page", String(page));
+  const query = params.toString();
+  return `/${locale}/dashboard/organizations/${organizationCode}/app-requests/odometer${query ? `?${query}` : ""}`;
 }
 
 function Panel({ message }: { message: string }) {

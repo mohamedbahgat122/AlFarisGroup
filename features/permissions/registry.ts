@@ -32,6 +32,11 @@ export const organizationPermissionKeys = [
   "driver_warnings.view",
   "driver_warnings.issue",
   "driver_warnings.revoke",
+  "entitlements.view",
+  "entitlements.create_transaction",
+  "entitlements.view_transactions",
+  "entitlements.reverse_transaction",
+  "entitlements.publish",
   "shifts.view",
   "shifts.create",
   "shifts.update",
@@ -50,6 +55,7 @@ export type OrganizationPermissionGroup = {
     | "fleet"
     | "fuel"
     | "app_requests"
+    | "entitlements"
     | "shifts"
     | "driver_warnings"
     | "notifications";
@@ -71,6 +77,8 @@ export const viewOnlyOrganizationPermissionKeys = [
   "odometer.manage",
   "notifications.view",
   "driver_warnings.view",
+  "entitlements.view",
+  "entitlements.view_transactions",
   "shifts.view",
 ] as const satisfies readonly OrganizationPermissionKey[];
 
@@ -138,6 +146,16 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
       "driver_warnings.view",
       "driver_warnings.issue",
       "driver_warnings.revoke",
+    ],
+  },
+  {
+    id: "entitlements",
+    permissions: [
+      "entitlements.view",
+      "entitlements.create_transaction",
+      "entitlements.view_transactions",
+      "entitlements.reverse_transaction",
+      "entitlements.publish",
     ],
   },
   {
@@ -216,6 +234,15 @@ export function applyPermissionDependencies(
 
   if (permissions.has("driver_warnings.issue") || permissions.has("driver_warnings.revoke")) {
     permissions.add("driver_warnings.view");
+  }
+
+  if (
+    permissions.has("entitlements.create_transaction") ||
+    permissions.has("entitlements.view_transactions") ||
+    permissions.has("entitlements.reverse_transaction") ||
+    permissions.has("entitlements.publish")
+  ) {
+    permissions.add("entitlements.view");
   }
 
   if (

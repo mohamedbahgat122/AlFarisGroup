@@ -15,6 +15,7 @@ import {
   isUuid,
   parseAdditionalAccess,
   parseGranularAdditionalAccess,
+  parseGranularGlobalAccess,
 } from "@/features/user-management/validation";
 import { organizationPermissionSet } from "@/features/permissions/registry";
 import { isLocale } from "@/types/locale";
@@ -61,6 +62,7 @@ export async function createManagedUserAction(
   }
 
   revalidatePath(`/${locale}/dashboard/users`);
+  revalidatePath(`/${locale}/dashboard`, "layout");
 
   return {
     status: "success",
@@ -99,6 +101,7 @@ export async function updateManagedUserAction(
   }
 
   revalidatePath(`/${locale}/dashboard/users`);
+  revalidatePath(`/${locale}/dashboard`, "layout");
 
   return { status: "success", code: "success" };
 }
@@ -134,8 +137,12 @@ export async function updateManagedUserPermissionsAction(
   const additionalAccess = parseGranularAdditionalAccess(
     formData.get("additionalAccess"),
   );
+  
+  const globalPermissions = parseGranularGlobalAccess(
+    formData.get("globalPermissions"),
+  );
 
-  if (!isUuid(targetUserId) || !additionalAccess) {
+  if (!isUuid(targetUserId) || !additionalAccess || !globalPermissions) {
     logManagedUserPermissionActionDiagnostic({
       stage: "target_validation",
       targetUserId,
@@ -147,6 +154,7 @@ export async function updateManagedUserPermissionsAction(
   const result = await updateManagedUserPermissions({
     targetUserId,
     additionalAccess,
+    globalPermissions,
   });
 
   if (!result.success) {
@@ -154,6 +162,7 @@ export async function updateManagedUserPermissionsAction(
   }
 
   revalidatePath(`/${locale}/dashboard/users`);
+  revalidatePath(`/${locale}/dashboard`, "layout");
 
   return { status: "success", code: "success" };
 }
@@ -185,6 +194,7 @@ export async function setManagedUserStatusAction(
   }
 
   revalidatePath(`/${locale}/dashboard/users`);
+  revalidatePath(`/${locale}/dashboard`, "layout");
 
   return { status: "success", code: "success" };
 }
@@ -214,6 +224,7 @@ export async function archiveManagedUserAction(
   }
 
   revalidatePath(`/${locale}/dashboard/users`);
+  revalidatePath(`/${locale}/dashboard`, "layout");
 
   return { status: "success", code: "success" };
 }

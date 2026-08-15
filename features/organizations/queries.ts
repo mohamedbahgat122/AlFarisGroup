@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type {
   AccessibleOrganization,
   AccessibleOrganizationsResult,
@@ -92,6 +93,68 @@ export async function getAccessibleOrganizationByCode(
   );
 }
 
+export async function getOrganizationPageAccessByCode(
+  organizationCode: string,
+): Promise<
+  | { status: "success"; organization: AccessibleOrganization }
+  | { status: "not_found" }
+  | { status: "forbidden" }
+  | { status: "unauthenticated" }
+  | { status: "load_error" }
+> {
+  const normalizedCode = organizationCode.trim();
+
+  if (!ORGANIZATION_CODE_PATTERN.test(normalizedCode)) {
+    return { status: "not_found" };
+  }
+
+  const admin = await getAuthenticatedAdmin();
+
+  if (admin.status !== "authorized") {
+    return admin.status === "unauthenticated"
+      ? { status: "unauthenticated" }
+      : { status: "forbidden" };
+  }
+
+  const result = await getAccessibleOrganizationsForProfile(
+    admin.supabase,
+    admin.profile,
+  );
+
+  if (result.status !== "success") {
+    return { status: "load_error" };
+  }
+
+  const organization = result.organizations.find(
+    (item) => item.code === normalizedCode,
+  );
+
+  if (organization) {
+    return { status: "success", organization };
+  }
+
+  let serviceClient: SupabaseClient<Database>;
+  try {
+    serviceClient = createAdminClient();
+  } catch {
+    return { status: "load_error" };
+  }
+
+  const { data: existingOrganization, error: existingError } =
+    await serviceClient
+      .from("organizations")
+      .select("id")
+      .eq("code", normalizedCode)
+      .eq("is_active", true)
+      .maybeSingle();
+
+  if (existingError) {
+    return { status: "load_error" };
+  }
+
+  return existingOrganization ? { status: "forbidden" } : { status: "not_found" };
+}
+
 async function getSystemOwnerOrganizations(
   supabase: SupabaseClient<Database>,
   homeOrganizationId: string | null,
@@ -130,6 +193,7 @@ async function getSystemOwnerOrganizations(
           notifications: true,
           odometerManagement: true,
           driverWarnings: true,
+          entitlements: true,
           shifts: true,
         },
       })),

@@ -1,5 +1,6 @@
 import type { Database } from "@/types/database";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
+import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 
 export type ManagedUserRole = Exclude<
   Database["public"]["Enums"]["app_role"],
@@ -39,6 +40,7 @@ export type UpdateManagedUserPermissionsInput = {
     organizationId: string;
     permissionKeys: OrganizationPermissionKey[];
   }[];
+  globalPermissions: GlobalPermissionKey[];
 };
 
 export type ManagedUserStatusInput = {
@@ -71,6 +73,7 @@ export type ManagedUserListItem = {
     accessLevel: OrganizationAccessLevel;
     permissionKeys: OrganizationPermissionKey[];
   }[];
+  globalPermissions: GlobalPermissionKey[];
   createdAt: string;
   isSystemOwner: boolean;
 };
@@ -102,6 +105,18 @@ export type ManagedUsersQueryResult =
   | {
       status: "success";
       users: ManagedUserListItem[];
+      pagination: {
+        page: number;
+        pageSize: number;
+        totalRows: number;
+        totalPages: number;
+        search: string;
+      };
+      diagnostics: {
+        authUsersLoaded: number;
+        profilesWithoutAuthEmail: number;
+        authUsersWithoutProfile: number;
+      };
     }
   | {
       status: "unauthorized" | "configuration_error" | "load_error";

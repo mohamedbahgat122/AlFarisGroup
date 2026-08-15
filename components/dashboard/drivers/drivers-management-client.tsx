@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { UserToast, type ToastState } from "@/components/dashboard/users/user-toast";
@@ -35,10 +35,12 @@ import type {
   DriverMutationErrorCode,
   DriverSettlementType,
   DriverStatus,
+  DriverSummary,
   DriverVehicleType,
 } from "@/features/drivers/types";
 import type { AccessibleOrganization } from "@/features/organizations/types";
 import type { Locale } from "@/types/locale";
+import type { FleetVehicle } from "@/features/fleet/types";
 
 type DriversDictionary = Dictionary["dashboard"]["drivers"];
 
@@ -47,8 +49,16 @@ type DriversManagementClientProps = {
   dictionary: DriversDictionary;
   organization: AccessibleOrganization;
   drivers: DriverListItem[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalRows: number;
+    totalPages: number;
+  };
+  summary?: DriverSummary;
   today: string;
   initialDriverId: string | null;
+  fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 };
 
 type DialogState =
@@ -78,8 +88,11 @@ export function DriversManagementClient({
   dictionary,
   organization,
   drivers,
+  pagination,
+  summary,
   today,
   initialDriverId,
+  fleetVehicles,
 }: DriversManagementClientProps) {
   const router = useRouter();
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -141,6 +154,8 @@ export function DriversManagementClient({
           </Button>
         ) : null}
       </div>
+      <DriversSummaryCards summary={summary} />
+      <DriversFilterBar />
 
       <div className="px-5 py-6 sm:px-7">
         {drivers.length === 0 ? (
@@ -162,6 +177,7 @@ export function DriversManagementClient({
             onAction={setDialog}
           />
         )}
+        <PaginationControls pagination={pagination} />
       </div>
 
       {dialog && isDriverFormDialogState(dialog) ? (
@@ -173,6 +189,7 @@ export function DriversManagementClient({
           onClose={() => setDialog(null)}
           onSuccess={handleSuccess}
           onError={(message) => setToast({ tone: "error", message })}
+          fleetVehicles={fleetVehicles}
         />
       ) : null}
       {dialog?.mode === "suspend" || dialog?.mode === "reactivate" ? (
@@ -348,6 +365,8 @@ function DriversTable({
               >
                 <td className="max-w-[260px] px-4 py-4">
                   {driver.profilePhotoUrl ? (
+                    // Private signed dashboard image; keep native img to avoid Next image proxy/auth issues.
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={driver.profilePhotoUrl}
                       alt=""
@@ -1009,6 +1028,7 @@ function DriverDialog({
   onClose,
   onSuccess,
   onError,
+  fleetVehicles,
 }: {
   locale: Locale;
   dictionary: DriversDictionary;
@@ -1017,6 +1037,7 @@ function DriverDialog({
   onClose: () => void;
   onSuccess: (message: string) => void;
   onError: (message: string) => void;
+  fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const title =
@@ -1099,6 +1120,7 @@ function DriverDialog({
               )
             }
             onError={onError}
+            fleetVehicles={fleetVehicles}
           />
         )}
       </div>
@@ -1322,6 +1344,7 @@ function DriverForm({
   onCancel,
   onSuccess,
   onError,
+  fleetVehicles,
 }: {
   locale: Locale;
   dictionary: DriversDictionary;
@@ -1330,6 +1353,7 @@ function DriverForm({
   onCancel: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
+  fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 }) {
   const [state, formAction] = useActionState(
     driver ? updateDriverAction : createDriverAction,
@@ -1480,6 +1504,19 @@ function DriverForm({
           required
           autoComplete="off"
         />
+        <FormField
+          id="driverNfcNumber"
+          name="nfcNumber"
+          label="رقم NFC"
+          defaultValue={getFieldValue(
+            values,
+            "nfcNumber",
+            driver?.nfcNumber ?? "",
+          )}
+          error={fieldErrors.nfcNumber}
+          maxLength={80}
+          autoComplete="off"
+        />
         <ReadOnlyField
           label={dictionary.currentOrganization}
           value={organization.name}
@@ -1584,20 +1621,25 @@ function DriverForm({
             </option>
           ))}
         </SelectField>
-        <FormField
-          id="driverVehicleNumber"
-          name="vehicleNumber"
+        <SelectField
+          id="driverVehicleId"
+          name="vehicleId"
           label={dictionary.vehiclePlateNumber}
+          required={false}
           defaultValue={getFieldValue(
             values,
-            "vehicleNumber",
-            driver?.vehicleNumber,
+            "vehicleId",
+            driver?.vehicleId ?? "",
           )}
-          error={fieldErrors.vehicleNumber}
-          maxLength={80}
-          required
-          autoComplete="off"
-        />
+          error={fieldErrors.vehicleId}
+        >
+          <option value="">{locale === "ar" ? "بدون مركبة" : "No vehicle"}</option>
+          {fleetVehicles.map((vehicle) => (
+            <option key={vehicle.id} value={vehicle.id}>
+              {vehicle.plateNumber} - {dictionary.vehicleTypes[vehicle.vehicleType as DriverVehicleType] ?? vehicle.vehicleType}
+            </option>
+          ))}
+        </SelectField>
         <FormField
           id="driverKeetaVehiclePlateNumber"
           name="keetaVehiclePlateNumber"
@@ -1979,6 +2021,8 @@ function DriverDetails({
             <p className="text-sm font-semibold text-navy">
               {dictionary.personalPhoto}
             </p>
+            {/* Private signed dashboard image; keep native img to avoid Next image proxy/auth issues. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={driver.profilePhotoUrl}
               alt=""
@@ -1991,6 +2035,7 @@ function DriverDetails({
         <Detail label={dictionary.fullName} value={driver.fullName} />
         <Detail label={dictionary.nationality} value={driver.nationality} />
         <Detail label={dictionary.mobileNumber} value={driver.mobileNumber} />
+        <Detail label="رقم NFC" value={driver.nfcNumber ?? dictionary.notAvailable} />
         <Detail
           label={dictionary.currentOrganization}
           value={driver.organizationName}
@@ -2592,6 +2637,7 @@ function SelectField({
   defaultValue,
   children,
   error,
+  required = true,
 }: {
   id: string;
   name: string;
@@ -2599,6 +2645,7 @@ function SelectField({
   defaultValue: string;
   children: React.ReactNode;
   error?: string;
+  required?: boolean;
 }) {
   const errorId = error ? `${id}-error` : undefined;
 
@@ -2611,7 +2658,7 @@ function SelectField({
         id={id}
         name={name}
         defaultValue={defaultValue}
-        required
+        required={required}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         className={`min-h-12 w-full rounded-xl border bg-white px-4 text-base text-navy outline-none transition focus:ring-4 ${
@@ -2791,6 +2838,7 @@ function useDriverMutationFeedback(
   onSuccess: () => void,
   onError: (message: string) => void,
 ) {
+  const router = useRouter();
   const callbacksRef = useRef({ dictionary, onSuccess, onError });
   const handledKeyRef = useRef("");
 
@@ -2821,7 +2869,11 @@ function useDriverMutationFeedback(
       state.message ??
         getActionMessage(callbacksRef.current.dictionary, state.code),
     );
-  }, [state.code, state.message, state.status]);
+
+    if (state.code === "unauthorized") {
+      router.refresh();
+    }
+  }, [router, state.code, state.message, state.status]);
 }
 
 function useDebouncedValue(value: string, delayMs: number) {
@@ -2855,6 +2907,7 @@ function useDriverAccountFeedback(
   onSuccess: () => void,
   onError: (message: string) => void,
 ) {
+  const router = useRouter();
   const callbacksRef = useRef({ dictionary, onSuccess, onError });
   const handledKeyRef = useRef("");
 
@@ -2889,7 +2942,11 @@ function useDriverAccountFeedback(
         state.failedStage,
       ),
     );
-  }, [state.code, state.diagnosticCode, state.failedStage, state.status]);
+
+    if (state.code === "unauthorized") {
+      router.refresh();
+    }
+  }, [router, state.code, state.diagnosticCode, state.failedStage, state.status]);
 }
 
 function getDriverAccountMessage(
@@ -3135,5 +3192,186 @@ function ActivityIcon() {
         strokeWidth="1.7"
       />
     </svg>
+  );
+}
+
+function DriversSummaryCards({
+  summary,
+}: {
+  summary?: DriverSummary;
+}) {
+  if (!summary) return null;
+
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 px-5 py-2 sm:px-7">
+      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
+        <p className="text-sm font-medium text-muted">إجمالي المناديب</p>
+        <p className="mt-2 text-2xl font-bold text-navy">{summary.total}</p>
+      </div>
+      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
+        <p className="text-sm font-medium text-muted">النشط</p>
+        <p className="mt-2 text-2xl font-bold text-navy">{summary.active}</p>
+      </div>
+      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
+        <p className="text-sm font-medium text-muted">غير النشط</p>
+        <p className="mt-2 text-2xl font-bold text-navy">{summary.inactive}</p>
+      </div>
+      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
+        <p className="text-sm font-medium text-muted">المؤرشف</p>
+        <p className="mt-2 text-2xl font-bold text-navy">{summary.archived}</p>
+      </div>
+    </div>
+  );
+}
+
+function DriversFilterBar() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
+  const [search, setSearch] = useState(searchParams.get("search") ?? "");
+
+  const updateFilters = useCallback((updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null || value === "") {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+    if (Object.keys(updates).some(k => k !== 'page')) {
+      params.delete("page");
+    }
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
+  }, [searchParams, pathname, router]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (search !== (searchParams.get("search") ?? "")) {
+        updateFilters({ search: search || null });
+      }
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [search, searchParams, updateFilters]);
+
+  return (
+    <div className="flex flex-col gap-3 px-5 py-4 sm:px-7 sm:flex-row sm:items-center">
+      <div className="flex-1 relative">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="ابحث بالاسم أو الإقامة أو الجوال أو رقم اللوحة"
+          className="w-full min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+        />
+        {isPending && (
+          <div className="absolute left-4 top-4 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        )}
+      </div>
+      <select
+        value={searchParams.get("status") ?? ""}
+        onChange={(e) => updateFilters({ status: e.target.value })}
+        className="min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+      >
+        <option value="">الحالة (الكل)</option>
+        <option value="active">نشط</option>
+        <option value="suspended">موقوف</option>
+      </select>
+      <select
+        value={searchParams.get("sponsorship") ?? ""}
+        onChange={(e) => updateFilters({ sponsorship: e.target.value })}
+        className="min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+      >
+        <option value="">الكفالة (الكل)</option>
+        <option value="company">على كفالة الشركة</option>
+        <option value="other">غير ذلك</option>
+      </select>
+      <select
+        value={searchParams.get("archived") ?? "false"}
+        onChange={(e) => updateFilters({ archived: e.target.value })}
+        className="min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+      >
+        <option value="false">غير مؤرشف</option>
+        <option value="true">مؤرشف</option>
+        <option value="">الكل</option>
+      </select>
+    </div>
+  );
+}
+
+function PaginationControls({
+  pagination,
+}: {
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalRows: number;
+    totalPages: number;
+  };
+}) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
+  if (!pagination) return null;
+
+  const from = pagination.totalRows === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
+  const to = Math.min(pagination.page * pagination.pageSize, pagination.totalRows);
+
+  function goToPage(page: number) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", page.toString());
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
+  }
+
+  return (
+    <div className={`mt-4 flex flex-col gap-3 text-sm font-semibold text-muted transition-opacity sm:flex-row sm:items-center sm:justify-between ${isPending ? "opacity-70" : ""}`}>
+      <div className="space-y-1">
+        <p>إجمالي {pagination.totalRows.toLocaleString("ar-SA")} مندوب</p>
+        <p>
+          عرض {from.toLocaleString("ar-SA")} إلى {to.toLocaleString("ar-SA")} من أصل {pagination.totalRows.toLocaleString("ar-SA")}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        {pagination.page > 1 ? (
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => goToPage(pagination.page - 1)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary disabled:opacity-60"
+          >
+            السابق
+          </button>
+        ) : (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
+            السابق
+          </span>
+        )}
+        <span className="whitespace-nowrap px-2">
+          الصفحة {pagination.page.toLocaleString("ar-SA")} من {pagination.totalPages.toLocaleString("ar-SA")}
+        </span>
+        {pagination.page < pagination.totalPages ? (
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => goToPage(pagination.page + 1)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary disabled:opacity-60"
+          >
+            التالي
+          </button>
+        ) : (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
+            التالي
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

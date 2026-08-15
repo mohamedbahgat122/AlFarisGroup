@@ -1,14 +1,23 @@
 import "server-only";
 
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import type {
+  KafaratplusFuelManagementResult,
+  KafaratplusFuelManagementRow,
+  KafaratplusFuelOperationRow,
+  KafaratplusMatchDiagnostics,
+  KafaratplusFuelReportResult,
   FuelManagementRow,
   FuelReportDetailDay,
   FuelReportDetails,
   FuelReportDetailItem,
   FuelReportRow,
+  KafaratplusIntegrationStatus,
 } from "@/features/fuel/types";
+import { kafaratplusGet } from "@/features/fuel/kafaratplus-client";
+import { normalizePlateForFleet } from "@/features/fleet/validation";
 import type { Database } from "@/types/database";
 
 type DriverRow = Pick<
@@ -33,7 +42,25 @@ type FuelReportDriverRow = Pick<
 >;
 type FleetVehicleRow = Pick<
   Database["public"]["Tables"]["fleet_vehicles"]["Row"],
-  "id" | "vehicle_type" | "plate_number" | "assigned_driver_id" | "authorized_driver_id"
+  | "id"
+  | "vehicle_type"
+  | "plate_number"
+  | "normalized_plate_number"
+  | "assigned_driver_id"
+  | "authorized_driver_id"
+  | "organization_id"
+  | "assigned_organization_id"
+>;
+type KafaratplusDriverScopeRow = Pick<
+  Database["public"]["Tables"]["drivers"]["Row"],
+  | "id"
+  | "full_name"
+  | "iqama_number"
+  | "organization_id"
+  | "status"
+  | "vehicle_number"
+  | "vehicle_type"
+  | "keeta_vehicle_plate_number"
 >;
 type FuelTransactionRow =
   Database["public"]["Tables"]["fuel_transactions"]["Row"];
@@ -44,10 +71,747 @@ type ProfileRow = Pick<
   "id" | "full_name" | "role" | "job_title"
 >;
 
+type KafaratplusOperationsResponse = Record<string, unknown>;
+
 type FuelReportAccumulator = FuelReportRow & {
   fuelDates: Set<string>;
   vehiclePlates: Set<string>;
 };
+
+type LocalVehiclePlateScope =
+  | {
+      success: true;
+      localVehiclesByPlate: Map<string, LocalVehicleInfo>;
+      diagnostics: KafaratplusMatchDiagnostics;
+    }
+  | {
+      success: false;
+      diagnostics: KafaratplusMatchDiagnostics;
+    };
+
+type LocalVehicleInfo = {
+  id: string;
+  plate: string;
+  normalizedPlate: string;
+  vehicle: string | null;
+  driver: string | null;
+  driverId: string | null;
+  driverIqama: string | null;
+  dashPlate: string | null;
+};
+
+const fuelClassificationStrategy =
+  "Fuel operations are identified from actual Kafaratplus items[].product/category/service/fuel descriptors; obvious maintenance/parts/oil-change services are excluded.";
+const kafaratplusOperationsPageSize = 1000;
+const kafaratplusMaxOperationsPages = 100;
+const kafaratplusPaginationConcurrency = 4;
+
+function createKafaratplusPerformanceDiagnostics(context: string) {
+  if (process.env.NODE_ENV === "production") {
+    return {
+      mark() {},
+      metric() {},
+    };
+  }
+
+  const startedAt = performance.now();
+  let previousAt = startedAt;
+
+  return {
+    mark(stage: string, metadata: Record<string, unknown> = {}) {
+      const now = performance.now();
+      console.info("[kafaratplus:fuel:timing]", {
+        context,
+        stage,
+        durationMs: Math.round(now - previousAt),
+        totalMs: Math.round(now - startedAt),
+        ...metadata,
+      });
+      previousAt = now;
+    },
+    metric(stage: string, metadata: Record<string, unknown>) {
+      console.info("[kafaratplus:fuel:timing]", {
+        context,
+        stage,
+        ...metadata,
+      });
+    },
+  };
+}
+
+function toKafaratplusStartOfDay(date: string) {
+  return date.includes("T") || date.includes(" ")
+    ? date
+    : `${date}T00:00:00`;
+}
+
+function toKafaratplusEndOfDay(date: string) {
+  return date.includes("T") || date.includes(" ")
+    ? date
+    : `${date}T23:59:59`;
+}
+
+async function getLocalVehiclePlateScope(
+  organizationId: string,
+): Promise<LocalVehiclePlateScope> {
+  const emptyDiagnostics = createDiagnostics([], [], []);
+  const admin = await getAuthenticatedAdmin();
+  if (admin.status !== "authorized") {
+    return { success: false, diagnostics: emptyDiagnostics };
+  }
+
+  const { data: drivers, error: driversError } = await admin.supabase
+    .from("drivers")
+    .select(
+      "id, full_name, iqama_number, organization_id, status, vehicle_number, vehicle_type, keeta_vehicle_plate_number",
+    )
+    .eq("organization_id", organizationId)
+    .eq("status", "active")
+    .is("deleted_at", null)
+    .order("full_name", { ascending: true });
+
+  if (driversError) {
+    return { success: false, diagnostics: emptyDiagnostics };
+  }
+
+  const driverRows = (drivers ?? []) as KafaratplusDriverScopeRow[];
+  const actualPlates = Array.from(
+    new Set(
+      driverRows
+        .map((driver) => normalizePlateForFleet(driver.vehicle_number))
+        .filter(Boolean),
+    ),
+  );
+  const vehicleMetadataByPlate = await getFleetVehicleMetadataByPlate(actualPlates, admin.supabase);
+  const localVehiclesByPlate = new Map<string, LocalVehicleInfo>();
+  const diagnostics = createDiagnostics(actualPlates, [], []);
+  diagnostics.driversFound = driverRows.map((driver) => ({
+    driver: driver.full_name,
+    actualPlate: driver.vehicle_number || null,
+    dashPlate: driver.keeta_vehicle_plate_number || null,
+  }));
+  diagnostics.actualPlatesUsed = actualPlates.sort();
+  diagnostics.unmatchedDrivers = driverRows
+    .filter((driver) => !normalizePlateForFleet(driver.vehicle_number))
+    .map((driver) => ({
+      driver: driver.full_name,
+      actualPlate: driver.vehicle_number || null,
+      reason: "missing actual plate number",
+    }));
+
+  for (const driver of driverRows) {
+    const normalizedPlate = normalizePlateForFleet(driver.vehicle_number);
+    if (!normalizedPlate) continue;
+    if (localVehiclesByPlate.has(normalizedPlate)) {
+      diagnostics.unmatchedDrivers = [
+        ...(diagnostics.unmatchedDrivers ?? []),
+        {
+          driver: driver.full_name,
+          actualPlate: driver.vehicle_number,
+          reason: "actual plate is shared with another active driver; fuel operations are attributed once to avoid duplicate totals",
+        },
+      ];
+      continue;
+    }
+
+    const vehicle = vehicleMetadataByPlate.get(normalizedPlate);
+    localVehiclesByPlate.set(normalizedPlate, {
+      id: vehicle?.id ?? driver.id,
+      plate: driver.vehicle_number,
+      normalizedPlate,
+      vehicle: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
+      driver: driver.full_name,
+      driverId: driver.id,
+      driverIqama: driver.iqama_number,
+      dashPlate: driver.keeta_vehicle_plate_number,
+    });
+  }
+
+  return {
+    success: true,
+    localVehiclesByPlate,
+    diagnostics,
+  };
+}
+
+async function getFleetVehicleMetadataByPlate(
+  normalizedPlates: string[],
+  supabase: SupabaseClient<Database>,
+) {
+  const vehiclesByPlate = new Map<string, FleetVehicleRow>();
+  if (normalizedPlates.length === 0) return vehiclesByPlate;
+
+  const { data, error } = await supabase
+    .from("fleet_vehicles")
+    .select(
+      "id, vehicle_type, plate_number, normalized_plate_number, assigned_driver_id, authorized_driver_id, organization_id, assigned_organization_id",
+    )
+    .in("normalized_plate_number", normalizedPlates)
+    .is("archived_at", null);
+
+  if (error) return vehiclesByPlate;
+
+  for (const vehicle of (data ?? []) as FleetVehicleRow[]) {
+    const normalizedPlate =
+      vehicle.normalized_plate_number || normalizePlateForFleet(vehicle.plate_number);
+    if (normalizedPlate && !vehiclesByPlate.has(normalizedPlate)) {
+      vehiclesByPlate.set(normalizedPlate, vehicle);
+    }
+  }
+
+  return vehiclesByPlate;
+}
+
+const fetchAllKafaratplusOperations = cache(
+  async (
+    fromDate: string,
+    toDate: string,
+  ): Promise<
+    | { success: true; records: Record<string, unknown>[]; requestCount: number; durationMs: number }
+    | {
+        success: false;
+        code: Exclude<KafaratplusIntegrationStatus, "success">;
+        message: string;
+        requestCount: number;
+        durationMs: number;
+      }
+  > => fetchAllKafaratplusOperationsUncached({ fromDate, toDate }),
+);
+
+async function fetchAllKafaratplusOperationsUncached({
+  fromDate,
+  toDate,
+}: {
+  fromDate: string;
+  toDate: string;
+}): Promise<
+  | { success: true; records: Record<string, unknown>[]; requestCount: number; durationMs: number }
+  | {
+      success: false;
+      code: Exclude<KafaratplusIntegrationStatus, "success">;
+      message: string;
+      requestCount: number;
+      durationMs: number;
+    }
+> {
+  const startedAt = performance.now();
+  let requestCount = 0;
+  const firstStartedAt = performance.now();
+  const first = await fetchKafaratplusOperationsPage({
+    fromDate,
+    toDate,
+    skip: 0,
+    count: kafaratplusOperationsPageSize,
+    page: 1,
+  });
+  requestCount += 1;
+  logKafaratplusPaginationTiming("first_kafaratplus_request", {
+    success: first.success,
+    durationMs: Math.round(performance.now() - firstStartedAt),
+    pageSize: kafaratplusOperationsPageSize,
+    records: first.success ? first.records.length : 0,
+    totalCount: first.success ? extractTotalCount(first.data) : null,
+  });
+
+  if (!first.success) {
+    return {
+      success: false,
+      code: first.code,
+      message: first.message,
+      requestCount,
+      durationMs: Math.round(performance.now() - startedAt),
+    };
+  }
+
+  const totalCount = extractTotalCount(first.data);
+  const records = [...first.records];
+  if (totalCount !== null && totalCount > kafaratplusOperationsPageSize * kafaratplusMaxOperationsPages) {
+    console.error("[kafaratplus:fuel:pagination_limit_exceeded]", {
+      totalCount,
+      pageSize: kafaratplusOperationsPageSize,
+      maxPages: kafaratplusMaxOperationsPages,
+    });
+    return {
+      success: false,
+      code: "api_error",
+      message: "Kafaratplus returned more operations than the configured safe report limit.",
+      requestCount,
+      durationMs: Math.round(performance.now() - startedAt),
+    };
+  }
+
+  const totalPages = totalCount === null
+    ? null
+    : Math.max(Math.ceil(totalCount / kafaratplusOperationsPageSize), 1);
+
+  if (totalPages !== null) {
+    const remainingPages = Array.from(
+      { length: Math.max(totalPages - 1, 0) },
+      (_, index) => index + 2,
+    );
+    const remainingStartedAt = performance.now();
+    const remaining = await fetchKafaratplusOperationPagesWithConcurrency({
+      fromDate,
+      toDate,
+      pages: remainingPages,
+    });
+    requestCount += remaining.requestCount;
+    logKafaratplusPaginationTiming("remaining_pagination_fetch", {
+      success: remaining.success,
+      durationMs: Math.round(performance.now() - remainingStartedAt),
+      pages: remainingPages.length,
+      requests: remaining.requestCount,
+      concurrency: kafaratplusPaginationConcurrency,
+    });
+
+    if (!remaining.success) {
+      return {
+        success: false,
+        code: remaining.code,
+        message: remaining.message,
+        requestCount,
+        durationMs: Math.round(performance.now() - startedAt),
+      };
+    }
+
+    return {
+      success: true,
+      records: records.concat(remaining.records),
+      requestCount,
+      durationMs: Math.round(performance.now() - startedAt),
+    };
+  }
+
+  for (let page = 2; page <= kafaratplusMaxOperationsPages; page += 1) {
+    const remainingStartedAt = performance.now();
+    const result = await fetchKafaratplusOperationsPage({
+      fromDate,
+      toDate,
+      skip: (page - 1) * kafaratplusOperationsPageSize,
+      count: kafaratplusOperationsPageSize,
+      page,
+    });
+    requestCount += 1;
+    logKafaratplusPaginationTiming("remaining_pagination_fetch", {
+      success: result.success,
+      durationMs: Math.round(performance.now() - remainingStartedAt),
+      pages: 1,
+      requests: 1,
+      concurrency: 1,
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        code: result.code,
+        message: result.message,
+        requestCount,
+        durationMs: Math.round(performance.now() - startedAt),
+      };
+    }
+
+    records.push(...result.records);
+    if (result.records.length < kafaratplusOperationsPageSize) {
+      return {
+        success: true,
+        records,
+        requestCount,
+        durationMs: Math.round(performance.now() - startedAt),
+      };
+    }
+  }
+
+  console.error("[kafaratplus:fuel:pagination_limit_reached]", {
+    pageSize: kafaratplusOperationsPageSize,
+    maxPages: kafaratplusMaxOperationsPages,
+  });
+  return {
+    success: false,
+    code: "api_error",
+    message: "Kafaratplus pagination reached the configured safe report limit.",
+    requestCount,
+    durationMs: Math.round(performance.now() - startedAt),
+  };
+}
+
+function logKafaratplusPaginationTiming(stage: string, metadata: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") return;
+  console.info("[kafaratplus:fuel:timing]", {
+    context: "pagination",
+    stage,
+    ...metadata,
+  });
+}
+
+async function fetchKafaratplusOperationsPage({
+  fromDate,
+  toDate,
+  skip,
+  count,
+  page,
+}: {
+  fromDate: string;
+  toDate: string;
+  skip: number;
+  count: number;
+  page: number;
+}): Promise<
+  | { success: true; data: KafaratplusOperationsResponse; records: Record<string, unknown>[] }
+  | {
+      success: false;
+      code: Exclude<KafaratplusIntegrationStatus, "success">;
+      message: string;
+    }
+> {
+  const startedAt = performance.now();
+  const result = await kafaratplusGet<KafaratplusOperationsResponse>(
+    "/api/customer/setup/integration/vehicle/operations",
+    {
+      fromDate,
+      toDate,
+      skip,
+      count,
+    },
+  );
+
+  if (!result.success) {
+    console.error("[kafaratplus:fuel:page_failed]", {
+      page,
+      skip,
+      count,
+      durationMs: Math.round(performance.now() - startedAt),
+      code: result.code,
+      status: result.status,
+    });
+    return { success: false, code: result.code, message: result.message };
+  }
+
+  return {
+    success: true,
+    data: result.data,
+    records: extractRecords(result.data),
+  };
+}
+
+async function fetchKafaratplusOperationPagesWithConcurrency({
+  fromDate,
+  toDate,
+  pages,
+}: {
+  fromDate: string;
+  toDate: string;
+  pages: number[];
+}): Promise<
+  | { success: true; records: Record<string, unknown>[]; requestCount: number }
+  | {
+      success: false;
+      code: Exclude<KafaratplusIntegrationStatus, "success">;
+      message: string;
+      requestCount: number;
+    }
+> {
+  const recordsByPage = new Map<number, Record<string, unknown>[]>();
+  let nextIndex = 0;
+  let requestCount = 0;
+
+  async function worker() {
+    while (nextIndex < pages.length) {
+      const page = pages[nextIndex];
+      nextIndex += 1;
+      const result = await fetchKafaratplusOperationsPage({
+        fromDate,
+        toDate,
+        skip: (page - 1) * kafaratplusOperationsPageSize,
+        count: kafaratplusOperationsPageSize,
+        page,
+      });
+      requestCount += 1;
+
+      if (!result.success) return result;
+      recordsByPage.set(page, result.records);
+    }
+
+    return { success: true as const };
+  }
+
+  const workers = Array.from(
+    { length: Math.min(kafaratplusPaginationConcurrency, pages.length) },
+    () => worker(),
+  );
+  const results = await Promise.all(workers);
+  const failure = results.find((result) => !result.success);
+  if (failure && !failure.success) {
+    return {
+      success: false,
+      code: failure.code,
+      message: failure.message,
+      requestCount,
+    };
+  }
+
+  return {
+    success: true,
+    records: pages.flatMap((page) => recordsByPage.get(page) ?? []),
+    requestCount,
+  };
+}
+
+function matchAndClassifyOperations(
+  records: Record<string, unknown>[],
+  scope: Extract<LocalVehiclePlateScope, { success: true }>,
+) {
+  const kafaratplusPlates = new Set<string>();
+  const matchedPlates = new Set<string>();
+  const unmatchedKafaratplusPlates = new Set<string>();
+  const fuelOperations: Record<string, unknown>[] = [];
+  let nonFuelCount = 0;
+  let unverifiedCount = 0;
+
+  for (const record of records) {
+    const normalizedPlate = getOperationNormalizedPlate(record);
+    if (!normalizedPlate) continue;
+
+    kafaratplusPlates.add(normalizedPlate);
+    if (!scope.localVehiclesByPlate.has(normalizedPlate)) {
+      unmatchedKafaratplusPlates.add(normalizedPlate);
+      continue;
+    }
+
+    matchedPlates.add(normalizedPlate);
+    const classification = classifyOperation(record);
+    if (classification === "fuel") {
+      fuelOperations.push(record);
+    } else if (classification === "non_fuel") {
+      nonFuelCount += 1;
+    } else {
+      unverifiedCount += 1;
+    }
+  }
+
+  const localPlates = Array.from(scope.localVehiclesByPlate.keys()).sort();
+  const matched = Array.from(matchedPlates).sort();
+  const diagnostics = createDiagnostics(localPlates, Array.from(kafaratplusPlates).sort(), matched);
+  diagnostics.unmatchedKafaratplusPlates = Array.from(unmatchedKafaratplusPlates).sort();
+  diagnostics.fuelDescriptors = Array.from(
+    new Set(fuelOperations.map((record) => getOperationDescriptor(record)).filter(Boolean) as string[]),
+  ).sort();
+  diagnostics.driversFound = scope.diagnostics.driversFound;
+  diagnostics.actualPlatesUsed = scope.diagnostics.actualPlatesUsed ?? localPlates;
+  diagnostics.matchedDrivers = matched.flatMap((normalizedPlate) => {
+    const local = scope.localVehiclesByPlate.get(normalizedPlate);
+    if (!local?.driver) return [];
+    return [{
+      driver: local.driver,
+      actualPlate: local.plate,
+      kafaratplusPlate: normalizedPlate,
+    }];
+  });
+  diagnostics.unmatchedDrivers = [
+    ...(scope.diagnostics.unmatchedDrivers ?? []),
+    ...localPlates
+      .filter((plate) => !matchedPlates.has(plate))
+      .map((plate) => {
+        const local = scope.localVehiclesByPlate.get(plate);
+        return {
+          driver: local?.driver ?? plate,
+          actualPlate: local?.plate ?? plate,
+          reason: "no Kafaratplus vehicle/operation matched",
+        };
+      }),
+  ];
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[kafaratplus:fuel:plate_matching]", diagnostics);
+  }
+
+  return {
+    fuelOperations,
+    nonFuelCount,
+    unverifiedCount,
+    diagnostics,
+  };
+}
+
+function createDiagnostics(
+  localPlates: string[],
+  kafaratplusPlates: string[],
+  matchedPlates: string[],
+): KafaratplusMatchDiagnostics {
+  const matched = new Set(matchedPlates);
+  const local = new Set(localPlates);
+
+  return {
+    localPlates,
+    kafaratplusPlates,
+    matchedPlates,
+    unmatchedLocalPlates: localPlates.filter((plate) => !matched.has(plate)),
+    unmatchedKafaratplusPlates: kafaratplusPlates.filter((plate) => !local.has(plate)),
+    fuelDescriptors: [],
+  };
+}
+
+export async function getKafaratplusFuelManagementData({
+  organizationId,
+  fuelDate,
+}: {
+  organizationId: string;
+  fuelDate: string;
+}): Promise<KafaratplusFuelManagementResult> {
+  const perf = createKafaratplusPerformanceDiagnostics("management");
+  const scope = await getLocalVehiclePlateScope(organizationId);
+  perf.mark("local_driver_actual_plate_query", {
+    success: scope.success,
+    localPlateCount: scope.success ? scope.localVehiclesByPlate.size : 0,
+  });
+  if (!scope.success) {
+    return integrationState("load_error", scope.diagnostics);
+  }
+
+  if (scope.localVehiclesByPlate.size === 0) {
+    return {
+      status: "success",
+      source: "kafaratplus",
+      diagnostics: scope.diagnostics,
+      rows: [],
+    };
+  }
+
+  const operations = await fetchAllKafaratplusOperations(
+    toKafaratplusStartOfDay(fuelDate),
+    toKafaratplusEndOfDay(fuelDate),
+  );
+  perf.mark("kafaratplus_pagination_fetch", {
+    success: operations.success,
+    requestCount: operations.requestCount,
+    fetchDurationMs: operations.durationMs,
+    recordCount: operations.success ? operations.records.length : 0,
+    pageSize: kafaratplusOperationsPageSize,
+    concurrency: kafaratplusPaginationConcurrency,
+  });
+  if (!operations.success) {
+    return integrationState(operations.code, scope.diagnostics, operations.message);
+  }
+
+  const matched = matchAndClassifyOperations(operations.records, scope);
+  perf.mark("fuel_classification_and_local_plate_matching", {
+    fuelOperationCount: matched.fuelOperations.length,
+    excludedNonFuelCount: matched.nonFuelCount,
+    unverifiedCount: matched.unverifiedCount,
+  });
+  const rows = createManagementRows(matched.fuelOperations, scope);
+  perf.mark("aggregation", { rowCount: rows.length });
+  return {
+    status: "success",
+    source: "kafaratplus",
+    diagnostics: matched.diagnostics,
+    rows,
+  };
+}
+
+export async function getKafaratplusFuelReportData({
+  organizationId,
+  fromDate,
+  toDate,
+  page = 1,
+  pageSize = 50,
+}: {
+  organizationId: string;
+  fromDate: string;
+  toDate: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<KafaratplusFuelReportResult> {
+  const perf = createKafaratplusPerformanceDiagnostics("report");
+  const scope = await getLocalVehiclePlateScope(organizationId);
+  perf.mark("local_driver_actual_plate_query", {
+    success: scope.success,
+    localPlateCount: scope.success ? scope.localVehiclesByPlate.size : 0,
+  });
+  if (!scope.success) {
+    return integrationState("load_error", scope.diagnostics);
+  }
+
+  if (scope.localVehiclesByPlate.size === 0) {
+    const diagnostics = scope.diagnostics;
+    return {
+      status: "success",
+      source: "kafaratplus",
+      rows: [],
+      vehicleSummaries: [],
+      totals: { totalQuantity: 0, total: 0, totalPreTax: 0, totalTax: 0 },
+      operationsCount: 0,
+      diagnostics,
+      pagination: { page: 1, pageSize, totalRows: 0, totalPages: 1 },
+      fuelClassification: {
+        strategy: fuelClassificationStrategy,
+        excludedNonFuelCount: 0,
+        unverifiedCount: 0,
+        totalsAreMatchedOperationsOnly: true,
+      },
+    };
+  }
+
+  const operations = await fetchAllKafaratplusOperations(
+    toKafaratplusStartOfDay(fromDate),
+    toKafaratplusEndOfDay(toDate),
+  );
+  perf.mark("kafaratplus_pagination_fetch", {
+    success: operations.success,
+    requestCount: operations.requestCount,
+    fetchDurationMs: operations.durationMs,
+    recordCount: operations.success ? operations.records.length : 0,
+    pageSize: kafaratplusOperationsPageSize,
+    concurrency: kafaratplusPaginationConcurrency,
+  });
+  if (!operations.success) {
+    return integrationState(operations.code, scope.diagnostics, operations.message);
+  }
+
+  const matched = matchAndClassifyOperations(operations.records, scope);
+  perf.mark("fuel_classification_and_local_plate_matching", {
+    fuelOperationCount: matched.fuelOperations.length,
+    excludedNonFuelCount: matched.nonFuelCount,
+    unverifiedCount: matched.unverifiedCount,
+  });
+  const normalizedPageSize = Math.min(Math.max(pageSize, 1), 100);
+  const mappedRows = matched.fuelOperations.map((record) =>
+    mapKafaratplusOperation(record, scope),
+  );
+  const totalRows = mappedRows.length;
+  const totalPages = Math.max(Math.ceil(totalRows / normalizedPageSize), 1);
+  const normalizedPage = Math.min(Math.max(page, 1), totalPages);
+  const start = (normalizedPage - 1) * normalizedPageSize;
+  const vehicleSummaries = createVehicleSummaries(mappedRows, scope);
+  const totals = calculateMatchedTotals(mappedRows);
+  perf.mark("aggregation", {
+    operationRows: totalRows,
+    vehicleSummaryCount: vehicleSummaries.length,
+    page: normalizedPage,
+    pageSize: normalizedPageSize,
+  });
+
+  return {
+    status: "success",
+    source: "kafaratplus",
+    rows: mappedRows.slice(start, start + normalizedPageSize),
+    vehicleSummaries,
+    totals,
+    operationsCount: totalRows,
+    diagnostics: matched.diagnostics,
+    pagination: {
+      page: Math.min(normalizedPage, totalPages),
+      pageSize: normalizedPageSize,
+      totalRows,
+      totalPages,
+    },
+    fuelClassification: {
+      strategy: fuelClassificationStrategy,
+      excludedNonFuelCount: matched.nonFuelCount,
+      unverifiedCount: matched.unverifiedCount,
+      totalsAreMatchedOperationsOnly: true,
+    },
+  };
+}
 
 export async function getFuelManagementData({
   organizationId,
@@ -749,4 +1513,393 @@ function getActor(actorsById: Map<string, ProfileRow>, actorId: string | null) {
     role: actor.role,
     jobTitle: actor.job_title,
   };
+}
+
+function integrationState(
+  status: Exclude<KafaratplusFuelManagementResult["status"], "success">,
+  diagnostics?: KafaratplusMatchDiagnostics,
+  message = getIntegrationMessage(status),
+) {
+  return {
+    status,
+    source: "kafaratplus" as const,
+    diagnostics,
+    rows: [] as [],
+    message,
+  };
+}
+
+function getIntegrationMessage(status: Exclude<KafaratplusFuelManagementResult["status"], "success">) {
+  const messages: Record<typeof status, string> = {
+    not_configured: "لم يتم العثور على مركبات محلية مطابقة لهذا النطاق.",
+    missing_credentials: "إعدادات تكامل Kafaratplus غير مكتملة على الخادم.",
+    unauthorized: "بيانات تكامل Kafaratplus غير صحيحة أو غير مفعلة.",
+    bad_request: "رفض Kafaratplus الطلب. تحقق من إعدادات التكامل.",
+    timeout: "انتهت مهلة الاتصال مع Kafaratplus. حاول مرة أخرى.",
+    network_error: "تعذر الاتصال بخدمة Kafaratplus.",
+    malformed_response: "استجابة Kafaratplus غير قابلة للقراءة.",
+    api_error: "تعذر تحميل بيانات Kafaratplus.",
+    load_error: "تعذر تحميل بيانات الوقود.",
+  };
+
+  return messages[status];
+}
+
+function extractRecords(response: Record<string, unknown>): Record<string, unknown>[] {
+  const candidates = [
+    response.data,
+    getNested(response, ["data", "items"]),
+    getNested(response, ["data", "records"]),
+    getNested(response, ["data", "rows"]),
+    getNested(response, ["items"]),
+    getNested(response, ["records"]),
+    getNested(response, ["rows"]),
+    getNested(response, ["result"]),
+    getNested(response, ["result", "items"]),
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter(isRecord);
+    }
+  }
+
+  return [];
+}
+
+function extractTotalCount(response: Record<string, unknown>) {
+  const candidates = [
+    response.count,
+    response.total,
+    response.totalCount,
+    response.recordsTotal,
+    getNested(response, ["data", "count"]),
+    getNested(response, ["data", "total"]),
+    getNested(response, ["data", "totalCount"]),
+    getNested(response, ["result", "count"]),
+    getNested(response, ["result", "total"]),
+    getNested(response, ["result", "totalCount"]),
+    getNested(response, ["pagination", "total"]),
+    getNested(response, ["pagination", "totalCount"]),
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0) {
+      return candidate;
+    }
+    if (
+      typeof candidate === "string" &&
+      candidate.trim() &&
+      Number.isFinite(Number(candidate)) &&
+      Number(candidate) >= 0
+    ) {
+      return Number(candidate);
+    }
+  }
+
+  return null;
+}
+
+function mapKafaratplusOperation(
+  record: Record<string, unknown>,
+  scope?: Extract<LocalVehiclePlateScope, { success: true }>,
+): KafaratplusFuelOperationRow {
+  const item = getFirstItem(record);
+  const local = scope?.localVehiclesByPlate.get(getOperationNormalizedPlate(record));
+  const kafaratplusDriver = stringFrom(record, [
+    "customerEmployee.name",
+    "customerEmployee.fullName",
+    "driver",
+    "driverName",
+    "customerEmployee",
+  ]);
+  return {
+    key: stringFrom(record, ["_id", "id", "operationId", "orderId", "orderNumber", "operationNumber"]) ?? stableKey(record),
+    operationNumber: stringFrom(record, ["operationNumber", "orderNumber", "invoiceNumber", "_id", "id"]),
+    date: stringFrom(record, ["createdTime", "date", "createdAt", "deliveredAt", "operationDate", "orderDate"]),
+    driver: local?.driver ?? kafaratplusDriver,
+    localDriverId: local?.driverId ?? null,
+    localDriverIqama: local?.driverIqama ?? null,
+    kafaratplusDriver,
+    vehicle: stringFrom(record, ["customerVehicle.name", "customerVehicle.number", "vehicle", "vehicleName", "vehicleNumber", "vehicle.name"]) ?? local?.vehicle ?? null,
+    licencePlate: local?.plate ?? getOperationDisplayPlate(record),
+    brandModel: joinNonEmpty([
+      stringFrom(record, ["customerVehicle.brand.name", "customerVehicle.brand", "brand", "vehicleBrand", "vehicle.brand"]),
+      stringFrom(record, ["customerVehicle.model.name", "customerVehicle.model", "model", "vehicleModel", "vehicle.model"]),
+    ]),
+    odometer: stringFrom(record, ["odometer", "odometerReading", "operationOdometer", "customerVehicle.odometer"]),
+    branch: stringFrom(record, ["customerBranch.name", "customerBranch", "branch", "branchName", "branch.name"]),
+    provider: stringFrom(record, ["provider.name", "provider", "providerName", "station", "stationName"]),
+    paymentMethod: stringFrom(record, ["paymentMethod.name", "paymentMethod", "paymentType", "paymentMethodName"]),
+    item: getOperationDescriptor(record),
+    quantity: getOperationQuantity(record),
+    unitPrice: numberFrom(item, ["unitPrice", "price", "unit_price"]) ?? numberFrom(record, ["unitPrice", "price", "unit_price"]),
+    total: numberFrom(record, ["total", "totalMoney", "amount", "totalAmount"]),
+    tax: numberFrom(record, ["tax", "vat", "taxAmount", "vatAmount"]),
+    invoiceAvailable: booleanFrom(record, ["hasInvoice", "invoiceAvailable", "invoiceUrl", "invoiceId"]),
+  };
+}
+
+function createManagementRows(
+  records: Record<string, unknown>[],
+  scope: Extract<LocalVehiclePlateScope, { success: true }>,
+): KafaratplusFuelManagementRow[] {
+  const byPlate = groupRecordsByNormalizedPlate(records);
+
+  return Array.from(byPlate.entries())
+    .map(([normalizedPlate, plateRecords]) => {
+      const local = scope.localVehiclesByPlate.get(normalizedPlate);
+      const operations = plateRecords
+        .map((record) => mapKafaratplusOperation(record, scope))
+        .sort(compareOperationRowsDescending);
+      const latest = operations[0] ?? null;
+
+      return {
+        key: normalizedPlate,
+        localDriver: local?.driver ?? null,
+        localDriverId: local?.driverId ?? null,
+        localDriverIqama: local?.driverIqama ?? null,
+        kafaratplusDriver: latest?.kafaratplusDriver ?? null,
+        vehicle: latest?.vehicle ?? local?.vehicle ?? null,
+        licencePlate: latest?.licencePlate ?? local?.plate ?? normalizedPlate,
+        branch: latest?.branch ?? null,
+        brandModel: latest?.brandModel ?? null,
+        operationCount: operations.length,
+        totalQuantity: sumRows(operations, "quantity"),
+        total: sumRows(operations, "total"),
+        fuelProducts: Array.from(new Set(operations.map((operation) => operation.item).filter(Boolean) as string[])),
+        latestOdometer: latest?.odometer ?? null,
+        latestProvider: latest?.provider ?? null,
+        nfcIdentifier: stringFrom(plateRecords[0], [
+          "customerVehicle.NFCSerialNumber",
+          "customerVehicle.nfcIdentifier",
+          "NFCSerialNumber",
+          "nfcIdentifier",
+        ]),
+        operations,
+      };
+    })
+    .sort((first, second) => first.licencePlate.localeCompare(second.licencePlate));
+}
+
+function createVehicleSummaries(
+  rows: KafaratplusFuelOperationRow[],
+  scope: Extract<LocalVehiclePlateScope, { success: true }>,
+) {
+  const byPlate = new Map<string, KafaratplusFuelOperationRow[]>();
+
+  for (const row of rows) {
+    const normalizedPlate = normalizePlateForFleet(row.licencePlate ?? "");
+    if (!normalizedPlate) continue;
+
+    const group = byPlate.get(normalizedPlate) ?? [];
+    group.push(row);
+    byPlate.set(normalizedPlate, group);
+  }
+
+  return Array.from(byPlate.entries())
+    .map(([normalizedPlate, operations]) => {
+      const local = scope.localVehiclesByPlate.get(normalizedPlate);
+      const total = sumRows(operations, "total");
+      return {
+        key: normalizedPlate,
+        driver: local?.driver ?? operations[0]?.driver ?? null,
+        driverId: local?.driverId ?? operations[0]?.localDriverId ?? null,
+        driverIqama: local?.driverIqama ?? operations[0]?.localDriverIqama ?? null,
+        plate: operations[0]?.licencePlate ?? local?.plate ?? normalizedPlate,
+        vehicle: operations[0]?.vehicle ?? local?.vehicle ?? null,
+        operationCount: operations.length,
+        totalQuantity: sumRows(operations, "quantity"),
+        total,
+        averageCostPerOperation: operations.length > 0 ? total / operations.length : null,
+      };
+    })
+    .sort((first, second) => first.plate.localeCompare(second.plate));
+}
+
+function calculateMatchedTotals(rows: KafaratplusFuelOperationRow[]) {
+  const total = sumRows(rows, "total");
+  const totalTax = sumRows(rows, "tax");
+  const itemPreTax = rows.reduce((sum, row) => {
+    if (row.total !== null && row.tax !== null) return sum + row.total - row.tax;
+    return sum;
+  }, 0);
+
+  return {
+    totalQuantity: sumRows(rows, "quantity"),
+    total,
+    totalPreTax: itemPreTax || total,
+    totalTax,
+  };
+}
+
+function groupRecordsByNormalizedPlate(records: Record<string, unknown>[]) {
+  const byPlate = new Map<string, Record<string, unknown>[]>();
+
+  for (const record of records) {
+    const normalizedPlate = getOperationNormalizedPlate(record);
+    if (!normalizedPlate) continue;
+
+    const group = byPlate.get(normalizedPlate) ?? [];
+    group.push(record);
+    byPlate.set(normalizedPlate, group);
+  }
+
+  return byPlate;
+}
+
+function getOperationNormalizedPlate(record: Record<string, unknown>) {
+  return normalizePlateForFleet(getOperationDisplayPlate(record) ?? "");
+}
+
+function getOperationDisplayPlate(record: Record<string, unknown>) {
+  return stringFrom(record, [
+    "customerVehicle.licencePlateNumber.en",
+    "customerVehicle.licencePlateNumber.ar",
+    "customerVehicle.licencePlateNumber",
+    "customerVehicle.licencePlate",
+    "licencePlateNumber.en",
+    "licencePlateNumber.ar",
+    "licencePlateNumber",
+    "licencePlate",
+    "licensePlate",
+    "plateNumber",
+    "plate",
+    "vehiclePlate",
+  ]);
+}
+
+function getOperationQuantity(record: Record<string, unknown>) {
+  const items = record.items;
+  if (Array.isArray(items)) {
+    const total = items.reduce((sum, item) => {
+      return isRecord(item)
+        ? sum + (numberFrom(item, ["quantity", "qty", "totalQuantity"]) ?? 0)
+        : sum;
+    }, 0);
+
+    if (total > 0) return total;
+  }
+
+  return numberFrom(record, ["quantity", "qty", "totalQuantity"]);
+}
+
+function sumRows(
+  rows: KafaratplusFuelOperationRow[],
+  key: "quantity" | "total" | "tax",
+) {
+  return rows.reduce((sum, row) => sum + (row[key] ?? 0), 0);
+}
+
+function compareOperationRowsDescending(
+  first: KafaratplusFuelOperationRow,
+  second: KafaratplusFuelOperationRow,
+) {
+  return getOperationTime(second) - getOperationTime(first);
+}
+
+function getOperationTime(row: KafaratplusFuelOperationRow) {
+  if (!row.date) return 0;
+  const time = new Date(row.date).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function classifyOperation(record: Record<string, unknown>) {
+  const descriptor = getOperationDescriptor(record)?.toLowerCase() ?? "";
+  if (!descriptor) return "unknown";
+
+  const nonFuelTerms = ["maintenance", "oil change", "parts", "repair", "غيار", "صيانة", "زيت"];
+  if (nonFuelTerms.some((term) => descriptor.includes(term))) {
+    return "non_fuel";
+  }
+
+  const fuelTerms = ["fuel", "gasoline", "petrol", "diesel", "بنزين", "ديزل", "وقود"];
+  if (fuelTerms.some((term) => descriptor.includes(term))) {
+    return "fuel";
+  }
+
+  return "unknown";
+}
+
+function getOperationDescriptor(record: Record<string, unknown>) {
+  const item = getFirstItem(record);
+  return joinNonEmpty([
+    stringFrom(item, ["product.name.en", "product.name.ar", "item.name.en", "item.name.ar", "name.en", "name.ar"]),
+    stringFrom(item, ["product.category.name.en", "product.category.name.ar"]),
+    stringFrom(item, ["product.category.code.en", "product.category.code.ar", "product.category.code"]),
+    stringFrom(item, ["product.category.parent.name.en", "product.category.parent.name.ar"]),
+    stringFrom(item, ["product.category.type.name.en", "product.category.type.name.ar", "product.category.type.code"]),
+    stringFrom(record, ["item", "itemName", "product", "productName", "service", "serviceName"]),
+    stringFrom(item, ["item.name", "item", "product.name", "product", "name", "productName", "serviceName"]),
+    stringFrom(record, ["category", "categoryName", "productCategory", "product.category"]),
+    stringFrom(item, ["category.name", "category", "productCategory.name", "product.category.name"]),
+    stringFrom(record, ["fuelType", "fuelTypeName"]),
+    stringFrom(item, ["fuelType", "fuelTypeName"]),
+  ]);
+}
+
+function getFirstItem(record: Record<string, unknown>) {
+  const items = record.items;
+  if (Array.isArray(items) && isRecord(items[0])) {
+    return items[0];
+  }
+
+  return {};
+}
+
+function stringFrom(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = getNested(record, key.split("."));
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+  }
+
+  return null;
+}
+
+function numberFrom(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = getNested(record, key.split("."));
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+
+  return null;
+}
+
+function booleanFrom(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = getNested(record, key.split("."));
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string" && value.trim()) return true;
+    if (typeof value === "number") return value > 0;
+  }
+
+  return null;
+}
+
+function getNested(record: Record<string, unknown>, path: string[]) {
+  let current: unknown = record;
+
+  for (const part of path) {
+    if (!isRecord(current)) return null;
+    current = current[part];
+  }
+
+  return current;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableKey(record: Record<string, unknown>) {
+  return JSON.stringify(record).slice(0, 160);
+}
+
+function joinNonEmpty(values: Array<string | null>) {
+  const joined = values.filter(Boolean).join(" / ");
+  return joined || null;
 }

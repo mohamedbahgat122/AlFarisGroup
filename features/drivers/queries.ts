@@ -9,8 +9,8 @@ import type {
   DriverListItem,
   DriversQueryResult,
 } from "@/features/drivers/types";
+import type { DriverSummary, DriverStatus } from "@/features/drivers/types";
 import type { Database } from "@/types/database";
-
 type DriverRow = Database["public"]["Tables"]["drivers"]["Row"];
 type BankRow = Database["public"]["Tables"]["driver_bank_details"]["Row"];
 type DocumentRow = Database["public"]["Tables"]["driver_documents"]["Row"];
@@ -23,31 +23,211 @@ type DriverQueryRow = DriverRow & {
   driver_bank_details: BankRow | null;
   driver_documents: DocumentRow[];
 };
+type DriverQueryColumnMode = "withVehicleIdAndNfc" | "withVehicleId" | "legacy";
+
+export async function getDriversSummaryForOrganization(
+  organizationId: string
+): Promise<DriverSummary> {
+  const admin = await getAuthenticatedAdmin();
+
+  if (admin.status !== "authorized") {
+    return { total: 0, active: 0, inactive: 0, archived: 0 };
+  }
+
+  const base = () =>
+    admin.supabase
+      .from("drivers")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId);
+
+  const [total, active, inactive, archived] = await Promise.all([
+    base(),
+    base().is("deleted_at", null).eq("status", "active"),
+    base().is("deleted_at", null).neq("status", "active"),
+    base().not("deleted_at", "is", null),
+  ]);
+
+  return {
+    total: total.error ? 0 : total.count ?? 0,
+    active: active.error ? 0 : active.count ?? 0,
+    inactive: inactive.error ? 0 : inactive.count ?? 0,
+    archived: archived.error ? 0 : archived.count ?? 0,
+  };
+}
 
 export async function getDriversForOrganization(
   organizationId: string,
   organizationName: string,
+  options?: {
+    search?: string;
+    status?: DriverStatus;
+    nationality?: string;
+    sponsorship?: string;
+    archived?: string;
+    page?: number;
+    pageSize?: number;
+  }
 ): Promise<DriversQueryResult> {
   const admin = await getAuthenticatedAdmin();
 
+  const emptyResult: DriversQueryResult = {
+    status: "unauthorized",
+    drivers: [],
+  };
+
   if (admin.status !== "authorized") {
+    return emptyResult;
+  }
+
+  const requestedPage = normalizePage(options?.page);
+  const pageSize = normalizePageSize(options?.pageSize);
+  let queryColumnMode: DriverQueryColumnMode = "withVehicleIdAndNfc";
+  const fetchPage = (page: number, columnMode: DriverQueryColumnMode) =>
+    buildDriversPageQuery(admin.supabase, organizationId, options, columnMode)
+      .order("full_name", { ascending: true })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+
+  let page = requestedPage;
+  let { data, error, count } = await fetchPage(page, queryColumnMode);
+
+  if (isMissingNfcNumberColumnError(error)) {
+    queryColumnMode = "withVehicleId";
+    const retry = await fetchPage(page, queryColumnMode);
+    data = retry.data;
+    error = retry.error;
+    count = retry.count;
+  }
+
+  if (isMissingVehicleIdColumnError(error)) {
+    queryColumnMode = "legacy";
+    const retry = await fetchPage(page, queryColumnMode);
+    data = retry.data;
+    error = retry.error;
+    count = retry.count;
+  }
+
+  if (error) {
     return {
-      status: "unauthorized",
+      status: "load_error",
       drivers: [],
     };
   }
 
-  const { data, error } = await admin.supabase
+  const summary = await getDriversSummaryForOrganization(organizationId);
+  const totalRows = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+
+  if (page > totalPages) {
+    page = totalPages;
+    const retry = await fetchPage(page, queryColumnMode);
+    data = retry.data;
+    error = retry.error;
+    count = retry.count;
+
+    if (error) {
+      return {
+        status: "load_error",
+        drivers: [],
+      };
+    }
+  }
+
+  const rows = (data ?? []) as unknown as DriverQueryRow[];
+  const permissions = await getOrganizationPermissions(
+    admin.supabase,
+    admin.profile,
+    organizationId,
+  );
+  const canViewDocuments = permissions.has("drivers.documents.view");
+  const canDownloadDocuments = permissions.has("drivers.documents.download");
+  const actors = await getDriverActors(
+    admin.supabase,
+    rows.flatMap((driver) => [
+      driver.created_by_user_id,
+      driver.updated_by_user_id,
+    ]),
+  );
+  const appAccounts = await getDriverAppAccounts(
+    admin.supabase,
+    rows.map((driver) => driver.auth_user_id),
+  );
+
+  const drivers = rows.map((driver) =>
+    mapDriver(driver, organizationName, actors, appAccounts, {
+      canViewDocuments,
+      canDownloadDocuments,
+    }),
+  );
+
+  return {
+    status: "success",
+    drivers,
+    pagination: {
+      page,
+      pageSize,
+      totalRows,
+      totalPages,
+    },
+    summary,
+  };
+}
+
+function buildDriversPageQuery(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+  options: Parameters<typeof getDriversForOrganization>[2],
+  columnMode: DriverQueryColumnMode,
+) {
+  let query = supabase
     .from("drivers")
     .select(
-      `
+      getDriversSelectColumns(columnMode),
+      { count: "exact" },
+    )
+    .eq("organization_id", organizationId);
+
+  if (options?.archived === "true") {
+    query = query.not("deleted_at", "is", null);
+  } else if (options?.archived === "false") {
+    query = query.is("deleted_at", null);
+  } else {
+    query = query.is("deleted_at", null);
+  }
+
+  if (options?.status) {
+    query = query.eq("status", options.status);
+  }
+
+  if (options?.nationality) {
+    query = query.eq("nationality", options.nationality);
+  }
+
+  if (options?.sponsorship) {
+    query = query.eq("is_company_sponsored", options.sponsorship === "company");
+  }
+
+  const search = options?.search?.trim();
+  if (search) {
+    const searchTerm = `%${sanitizeDriverSearch(search)}%`;
+    query = query.or(
+      `full_name.ilike.${searchTerm},iqama_number.ilike.${searchTerm},mobile_number.ilike.${searchTerm},vehicle_number.ilike.${searchTerm},keeta_vehicle_plate_number.ilike.${searchTerm}`,
+    );
+  }
+
+  return query;
+}
+
+function getDriversSelectColumns(columnMode: DriverQueryColumnMode) {
+  return `
       id,
       auth_user_id,
       organization_id,
       full_name,
       nationality,
       mobile_number,
+      ${columnMode === "withVehicleIdAndNfc" ? "nfc_number," : ""}
       vehicle_type,
+      ${columnMode !== "legacy" ? "vehicle_id," : ""}
       vehicle_number,
       keeta_vehicle_plate_number,
       vehicle_serial_number,
@@ -94,50 +274,39 @@ export async function getDriversForOrganization(
         created_at,
         updated_at
       )
-    `,
-    )
-    .eq("organization_id", organizationId)
-    .is("deleted_at", null)
-    .order("full_name", { ascending: true });
+    )`;
+}
 
-  if (error) {
-    return {
-      status: "load_error",
-      drivers: [],
-    };
-  }
+function normalizePage(value: number | undefined) {
+  return Number.isInteger(value) && value && value > 0 ? value : 1;
+}
 
-  const rows = (data ?? []) as DriverQueryRow[];
-  const permissions = await getOrganizationPermissions(
-    admin.supabase,
-    admin.profile,
-    organizationId,
-  );
-  const canViewDocuments = permissions.has("drivers.documents.view");
-  const canDownloadDocuments = permissions.has("drivers.documents.download");
-  const actors = await getDriverActors(
-    admin.supabase,
-    rows.flatMap((driver) => [
-      driver.created_by_user_id,
-      driver.updated_by_user_id,
-    ]),
-  );
-  const appAccounts = await getDriverAppAccounts(
-    admin.supabase,
-    rows.map((driver) => driver.auth_user_id),
-  );
+function normalizePageSize(value: number | undefined) {
+  return Number.isInteger(value) && value && value > 0 ? Math.min(value, 50) : 20;
+}
 
-  const drivers = rows.map((driver) =>
-    mapDriver(driver, organizationName, actors, appAccounts, {
-      canViewDocuments,
-      canDownloadDocuments,
-    }),
-  );
+function sanitizeDriverSearch(value: string) {
+  return value.normalize("NFKC").trim().replace(/[%,*()"]/g, " ").replace(/\s+/g, "%");
+}
 
-  return {
-    status: "success",
-    drivers,
-  };
+function isMissingVehicleIdColumnError(
+  error: { code?: string; message?: string } | null,
+) {
+  return (
+    error?.code === "42703" &&
+    typeof error.message === "string" &&
+    error.message.includes("vehicle_id")
+  );
+}
+
+function isMissingNfcNumberColumnError(
+  error: { code?: string; message?: string } | null,
+) {
+  return (
+    error?.code === "42703" &&
+    typeof error.message === "string" &&
+    error.message.includes("nfc_number")
+  );
 }
 
 function mapDriver(
@@ -196,7 +365,9 @@ function mapDriver(
     fullName: driver.full_name,
     nationality: driver.nationality,
     mobileNumber: driver.mobile_number,
+    nfcNumber: "nfc_number" in driver ? driver.nfc_number ?? null : null,
     vehicleType: driver.vehicle_type,
+    vehicleId: driver.vehicle_id || null,
     vehicleNumber: driver.vehicle_number,
     keetaVehiclePlateNumber: driver.keeta_vehicle_plate_number ?? null,
     vehicleSerialNumber: driver.vehicle_serial_number,

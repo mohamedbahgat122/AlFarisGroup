@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { User } from "@supabase/supabase-js";
 import { requireSystemOwner } from "@/lib/auth/authorization";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type {
@@ -11,7 +12,9 @@ import {
   normalizePermissionKeys,
   viewOnlyOrganizationPermissionKeys,
 } from "@/features/permissions/registry";
+import { normalizeGlobalPermissionKeys, globalPermissionKeys } from "@/features/permissions/global-registry";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
+import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { Database } from "@/types/database";
 
 type OrganizationAccessRow =
@@ -21,6 +24,21 @@ type OrganizationPermissionRow = {
   organization_id: string;
   permission_key: string;
 };
+type ManagedUserProfileRow = Pick<
+  Database["public"]["Tables"]["profiles"]["Row"],
+  | "id"
+  | "full_name"
+  | "role"
+  | "job_title"
+  | "status"
+  | "created_at"
+  | "updated_at"
+  | "home_organization_id"
+  | "deleted_at"
+>;
+
+const managedUsersPageSize = 50;
+const authUsersPageSize = 100;
 
 export async function getActiveOrganizationsForUserManagement(): Promise<
   ActiveOrganizationOption[]
@@ -44,7 +62,13 @@ export async function getActiveOrganizationsForUserManagement(): Promise<
   return data;
 }
 
-export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQueryResult> {
+export async function getManagedUsersForUserManagement({
+  page = 1,
+  search = "",
+}: {
+  page?: number;
+  search?: string;
+} = {}): Promise<ManagedUsersQueryResult> {
   const currentUser = await requireSystemOwner();
 
   if (!currentUser.authorized) {
@@ -54,14 +78,33 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
     };
   }
 
-  const { data: profiles, error: profilesError } = await currentUser.supabase
+  const normalizedPage = Math.max(Math.floor(page), 1);
+  const normalizedSearch = normalizeUserSearch(search);
+  const authUsers = await getAllAuthUsers();
+  const emailByUserId = new Map(authUsers.map((user) => [user.id, user.email ?? ""]));
+  const profileIdsForDiagnostics = await getAllLiveProfileIds(currentUser.supabase);
+  const matchingEmailUserIds = normalizedSearch
+    ? authUsers
+        .filter((user) => user.email?.toLowerCase().includes(normalizedSearch.toLowerCase()))
+        .map((user) => user.id)
+    : [];
+
+  let profileQuery = currentUser.supabase
     .from("profiles")
     .select(
       "id, full_name, role, job_title, status, created_at, updated_at, home_organization_id, deleted_at",
+      { count: "exact" },
     )
     .is("deleted_at", null)
-    .order("created_at", { ascending: true })
-    .limit(100);
+    .order("created_at", { ascending: true });
+
+  if (normalizedSearch) {
+    profileQuery = profileQuery.or(buildManagedUserSearchFilter(normalizedSearch, matchingEmailUserIds));
+  }
+
+  const from = (normalizedPage - 1) * managedUsersPageSize;
+  const to = from + managedUsersPageSize - 1;
+  const { data: profiles, error: profilesError, count } = await profileQuery.range(from, to);
 
   if (profilesError) {
     return {
@@ -70,10 +113,11 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
     };
   }
 
-  const profileIds = profiles.map((profile) => profile.id);
+  const profileRows = (profiles ?? []) as ManagedUserProfileRow[];
+  const profileIds = profileRows.map((profile) => profile.id);
   const organizationIds = new Set<string>();
 
-  for (const profile of profiles) {
+  for (const profile of profileRows) {
     if (profile.home_organization_id) {
       organizationIds.add(profile.home_organization_id);
     }
@@ -107,6 +151,20 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
     };
   }
 
+  const { data: globalPermissionRows, error: globalPermissionError } = profileIds.length
+    ? await currentUser.supabase
+        .from("user_global_permissions")
+        .select("user_id, permission_key")
+        .in("user_id", profileIds)
+    : { data: [], error: null };
+
+  if (globalPermissionError) {
+    return {
+      status: "load_error",
+      users: [],
+    };
+  }
+
   for (const access of accessRows) {
     organizationIds.add(access.organization_id);
   }
@@ -129,7 +187,6 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
     };
   }
 
-  const emailByUserId = await getAuthEmailMap();
   const organizationsById = new Map(
     organizations.map((organization) => [organization.id, organization]),
   );
@@ -143,9 +200,19 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
   const permissionsByUserAndOrganization =
     groupPermissionKeysByUserAndOrganization(permissionRows);
 
+  const globalPermissionsByUserId = new Map<string, GlobalPermissionKey[]>();
+  for (const row of globalPermissionRows) {
+    const keys = globalPermissionsByUserId.get(row.user_id) ?? [];
+    keys.push(row.permission_key as GlobalPermissionKey);
+    globalPermissionsByUserId.set(row.user_id, keys);
+  }
+
+  const totalRows = count ?? profileRows.length;
+  const totalPages = Math.max(Math.ceil(totalRows / managedUsersPageSize), 1);
+
   return {
     status: "success",
-    users: profiles.map((profile) => ({
+    users: profileRows.map((profile) => ({
       id: profile.id,
       email: emailByUserId.get(profile.id) ?? "",
       fullName: profile.full_name,
@@ -189,10 +256,49 @@ export async function getManagedUsersForUserManagement(): Promise<ManagedUsersQu
           permissionKeys,
         };
       }),
+      globalPermissions: profile.role === "system_owner"
+        ? normalizeGlobalPermissionKeys(globalPermissionKeys)
+        : normalizeGlobalPermissionKeys(globalPermissionsByUserId.get(profile.id) ?? []),
       createdAt: profile.created_at,
       isSystemOwner: profile.role === "system_owner",
     })),
+    pagination: {
+      page: Math.min(normalizedPage, totalPages),
+      pageSize: managedUsersPageSize,
+      totalRows,
+      totalPages,
+      search: normalizedSearch,
+    },
+    diagnostics: {
+      authUsersLoaded: authUsers.length,
+      profilesWithoutAuthEmail: profileRows.filter((profile) => !emailByUserId.has(profile.id)).length,
+      authUsersWithoutProfile: profileIdsForDiagnostics
+        ? authUsers.filter((user) => !profileIdsForDiagnostics.has(user.id)).length
+        : 0,
+    },
   };
+}
+
+function normalizeUserSearch(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 120);
+}
+
+function buildManagedUserSearchFilter(search: string, matchingEmailUserIds: string[]) {
+  const escaped = escapePostgrestFilterValue(search);
+  const filters = [
+    `full_name.ilike.%${escaped}%`,
+    `job_title.ilike.%${escaped}%`,
+  ];
+
+  if (matchingEmailUserIds.length > 0) {
+    filters.push(`id.in.(${matchingEmailUserIds.map(escapePostgrestFilterValue).join(",")})`);
+  }
+
+  return filters.join(",");
+}
+
+function escapePostgrestFilterValue(value: string) {
+  return value.replace(/[,%()]/g, "");
 }
 
 function getAccessLevelFromPermissions(
@@ -220,22 +326,42 @@ function groupPermissionKeysByUserAndOrganization(
   return grouped;
 }
 
-async function getAuthEmailMap() {
+async function getAllAuthUsers() {
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin.auth.admin.listUsers({
-      page: 1,
-      perPage: 100,
-    });
+    const users: User[] = [];
 
-    if (error) {
-      return new Map<string, string>();
+    for (let page = 1; ; page += 1) {
+      const { data, error } = await admin.auth.admin.listUsers({
+        page,
+        perPage: authUsersPageSize,
+      });
+
+      if (error) {
+        return [];
+      }
+
+      users.push(...data.users);
+      if (data.users.length < authUsersPageSize) {
+        return users;
+      }
     }
-
-    return new Map(data.users.map((user) => [user.id, user.email ?? ""]));
   } catch {
-    return new Map<string, string>();
+    return [];
   }
+}
+
+async function getAllLiveProfileIds(
+  supabase: Awaited<ReturnType<typeof requireSystemOwner>>["supabase"],
+) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .is("deleted_at", null);
+
+  if (error) return null;
+
+  return new Set((data ?? []).map((profile) => profile.id));
 }
 
 export async function getUserActivityLogs(

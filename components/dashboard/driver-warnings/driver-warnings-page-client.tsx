@@ -44,6 +44,9 @@ type DriverWarningsPageClientProps = {
   canRevoke: boolean;
 };
 
+const permissionUpdatedMessage =
+  "تم تحديث صلاحيات حسابك ولم تعد تملك صلاحية تنفيذ هذا الإجراء.";
+
 const warningCategories: DriverWarningCategory[] = [
   "attendance",
   "behavior",
@@ -404,11 +407,18 @@ function IssueWarningDialog({
 }) {
   const router = useRouter();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useModalFocus(dialogRef, onClose);
 
   async function formAction(formData: FormData) {
-    await issueDriverWarningAction(formData);
+    const result = await issueDriverWarningAction(formData);
+    if (result?.status === "error") {
+      setErrorMessage(permissionUpdatedMessage);
+      router.refresh();
+      return;
+    }
+
     onClose();
     router.refresh();
   }
@@ -427,6 +437,11 @@ function IssueWarningDialog({
         <input type="hidden" name="organizationId" value={organization.id} />
         <input type="hidden" name="organizationCode" value={organization.code} />
         <div className="grid gap-4 overflow-y-auto p-5 md:grid-cols-2">
+          {errorMessage ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 md:col-span-2">
+              {errorMessage}
+            </p>
+          ) : null}
           <label>
             <span className="text-xs font-bold text-muted">{dictionary.issue.driver}</span>
             <select name="driverId" required className={inputClassName}>
@@ -505,11 +520,18 @@ function WarningDetailsDialog({
 }) {
   const router = useRouter();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useModalFocus(dialogRef, onClose);
 
   async function formAction(formData: FormData) {
-    await revokeDriverWarningAction(formData);
+    const result = await revokeDriverWarningAction(formData);
+    if (result?.status === "error") {
+      setErrorMessage(permissionUpdatedMessage);
+      router.refresh();
+      return;
+    }
+
     onClose();
     router.refresh();
   }
@@ -524,6 +546,11 @@ function WarningDetailsDialog({
       maxWidthClassName="sm:max-w-[800px]"
     >
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        {errorMessage ? (
+          <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+            {errorMessage}
+          </p>
+        ) : null}
         <div className="space-y-4">
         <section className="flex flex-col gap-3 rounded-lg border border-border bg-primary-soft/25 p-4 sm:flex-row sm:items-center sm:justify-between">
           <DriverCell warning={warning} />

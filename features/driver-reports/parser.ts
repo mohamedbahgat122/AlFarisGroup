@@ -1,6 +1,7 @@
 import "server-only";
 
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import type { Cell, CellValue, Workbook, Worksheet } from "exceljs";
 import type {
   DriverReportImportErrorDetails,
   DriverReportImportErrorCode,
@@ -102,11 +103,15 @@ type PerformanceWorksheet = {
   ambiguousFields: PerformanceField[];
   sheetName: string;
   headerRows: number[];
-  worksheet: XLSX.WorkSheet;
+  worksheet: Worksheet;
 };
 type PerformanceDataRow = {
   values: unknown[];
   rowIndex: number;
+};
+type MergeRange = {
+  s: { r: number; c: number };
+  e: { r: number; c: number };
 };
 type DurationParseResult =
   | { ok: true; seconds: number }
@@ -126,7 +131,7 @@ type DurationParseContext = {
   rowNumber: number;
   columnIndex: number;
   columnHeader: string;
-  cell: XLSX.CellObject | undefined;
+  cell: Cell | undefined;
 };
 type ArabicDurationParts = {
   days: number;
@@ -138,8 +143,16 @@ type ArabicDurationUnit = keyof ArabicDurationParts;
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_ROWS = 10_000;
+const MAX_COLUMNS = 200;
+const MAX_WORKSHEETS = 8;
+const MAX_WORKBOOK_CELLS = MAX_ROWS * MAX_COLUMNS;
 const HEADER_SCAN_ROWS = 20;
 const MAX_DURATION_ERRORS = 10;
+const allowedWorkbookMimeTypes = new Set([
+  "",
+  "application/octet-stream",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
 
 const performanceHeaders = {
   reportDate: "التاريخ",
@@ -410,7 +423,7 @@ export async function parseKeetaReportFiles({
     };
   }
 
-  const performance = parsePerformanceWorkbook(
+  const performance = await parsePerformanceWorkbook(
     performanceBuffer.data,
     performanceFile.name,
   );
@@ -418,7 +431,7 @@ export async function parseKeetaReportFiles({
     return performance;
   }
 
-  const ranking = parseRankingWorkbook(rankingBuffer.data);
+  const ranking = await parseRankingWorkbook(rankingBuffer.data);
   if (!ranking.success) {
     return ranking;
   }
@@ -540,7 +553,11 @@ async function readAndValidateFile(
     };
   }
 
-  if (file.size > MAX_FILE_BYTES || !file.name.toLowerCase().endsWith(".xlsx")) {
+  if (
+    file.size > MAX_FILE_BYTES ||
+    !file.name.toLowerCase().endsWith(".xlsx") ||
+    !allowedWorkbookMimeTypes.has(file.type)
+  ) {
     return { success: false, code: "invalid_excel_file", field };
   }
 
@@ -550,8 +567,8 @@ async function readAndValidateFile(
   };
 }
 
-function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
-  const workbook = readWorkbook(buffer, "performanceFile");
+async function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
+  const workbook = await readWorkbook(buffer, "performanceFile");
   if (!workbook.success) {
     return workbook;
   }
@@ -617,10 +634,11 @@ function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
     }
     dates.add(reportDate);
 
-    const durationCellReference = XLSX.utils.encode_cell({
-      r: dataRow.rowIndex,
-      c: columns.validOnlineDuration,
-    });
+    const durationCell = getWorksheetCell(
+      worksheet.worksheet,
+      dataRow.rowIndex,
+      columns.validOnlineDuration,
+    );
     const durationContext: DurationParseContext = {
       workbookFileName: fileName,
       worksheetName: worksheet.sheetName,
@@ -629,7 +647,7 @@ function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
       columnHeader:
         worksheet.header[columns.validOnlineDuration] ??
         performanceFieldLabels.validOnlineDuration,
-      cell: worksheet.worksheet[durationCellReference],
+      cell: durationCell,
     };
     const validOnlineDuration = parseExcelDurationToSeconds(
       row[columns.validOnlineDuration],
@@ -640,10 +658,11 @@ function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
       if (durationErrors.length < MAX_DURATION_ERRORS) {
         durationErrors.push({
           rowNumber: durationContext.rowNumber,
-          column: XLSX.utils.encode_col(durationContext.columnIndex),
+          column: encodeColumn(durationContext.columnIndex),
           columnHeader: durationContext.columnHeader,
           rawValue: serializeCellValue(
-            durationContext.cell?.v ?? row[columns.validOnlineDuration],
+            getCellRawValue(durationContext.cell) ??
+              row[columns.validOnlineDuration],
           ),
         });
       } else {
@@ -662,10 +681,11 @@ function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
       if (durationErrors.length < MAX_DURATION_ERRORS) {
         durationErrors.push({
           rowNumber: durationContext.rowNumber,
-          column: XLSX.utils.encode_col(durationContext.columnIndex),
+          column: encodeColumn(durationContext.columnIndex),
           columnHeader: durationContext.columnHeader,
           rawValue: serializeCellValue(
-            durationContext.cell?.v ?? row[columns.validOnlineDuration],
+            getCellRawValue(durationContext.cell) ??
+              row[columns.validOnlineDuration],
           ),
         });
       } else {
@@ -760,8 +780,8 @@ function parsePerformanceWorkbook(buffer: Buffer, fileName: string) {
   };
 }
 
-function parseRankingWorkbook(buffer: Buffer): ParseResult<{ rows: RankingRow[] }> {
-  const workbook = readWorkbook(buffer, "rankingFile");
+async function parseRankingWorkbook(buffer: Buffer): Promise<ParseResult<{ rows: RankingRow[] }>> {
+  const workbook = await readWorkbook(buffer, "rankingFile");
   if (!workbook.success) {
     return workbook;
   }
@@ -854,38 +874,99 @@ function formatMissingPerformanceField(field: PerformanceField) {
   return performanceFieldLabels[field];
 }
 
-function readWorkbook(
+async function readWorkbook(
   buffer: Buffer,
   field: "performanceFile" | "rankingFile",
-): ParseResult<XLSX.WorkBook> {
+): Promise<ParseResult<Workbook>> {
   try {
-    return {
-      success: true,
-      data: XLSX.read(buffer, {
-        type: "buffer",
-        cellDates: false,
-        cellText: true,
-        raw: false,
-      }),
-    };
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      buffer as unknown as Parameters<Workbook["xlsx"]["load"]>[0],
+    );
+    const structure = validateWorkbookStructure(workbook);
+
+    if (!structure.valid) {
+      return { success: false, code: "invalid_excel_file", field };
+    }
+
+    return { success: true, data: workbook };
   } catch {
     return { success: false, code: "invalid_excel_file", field };
   }
 }
 
-function findPerformanceWorksheet(workbook: XLSX.WorkBook): PerformanceWorksheet | null {
+function validateWorkbookStructure(workbook: Workbook) {
+  const worksheets = workbook.worksheets;
+  if (
+    worksheets.length === 0 ||
+    worksheets.length > MAX_WORKSHEETS ||
+    hasExternalWorkbookLinks(workbook)
+  ) {
+    return { valid: false as const };
+  }
+
+  let totalCells = 0;
+
+  for (const worksheet of worksheets) {
+    if (!worksheet || hasUnsafeCellFeatures(worksheet)) {
+      return { valid: false as const };
+    }
+
+    const bounds = getWorksheetBounds(worksheet);
+    const rowCount = bounds.rowCount;
+    const columnCount = bounds.columnCount;
+
+    if (
+      rowCount > MAX_ROWS + HEADER_SCAN_ROWS ||
+      columnCount > MAX_COLUMNS ||
+      rowCount * columnCount > MAX_WORKBOOK_CELLS
+    ) {
+      return { valid: false as const };
+    }
+
+    totalCells += rowCount * columnCount;
+    if (totalCells > MAX_WORKBOOK_CELLS) {
+      return { valid: false as const };
+    }
+  }
+
+  return { valid: true as const };
+}
+
+function hasExternalWorkbookLinks(workbook: Workbook) {
+  const model = workbook.model as {
+    definedNames?: Array<{ ranges?: string[]; range?: string }>;
+  };
+  const ranges = model.definedNames?.flatMap((name) => [
+    ...(name.ranges ?? []),
+    name.range,
+  ]) ?? [];
+
+  return ranges.some(
+    (range) => typeof range === "string" && /\[[^\]]+\]/.test(range),
+  );
+}
+
+function hasUnsafeCellFeatures(worksheet: Worksheet) {
+  let unsafe = false;
+
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    row.eachCell({ includeEmpty: false }, (cell) => {
+      if (isFormulaCell(cell) || isHyperlinkCell(cell)) {
+        unsafe = true;
+      }
+    });
+  });
+
+  return unsafe;
+}
+
+function findPerformanceWorksheet(workbook: Workbook): PerformanceWorksheet | null {
   const candidates: HeaderLayoutCandidate[] = [];
 
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const actualRange = repairWorksheetRange(sheet);
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-      blankrows: false,
-      ...(actualRange ? { range: actualRange } : {}),
-    });
+  for (const sheet of workbook.worksheets) {
+    const sheetName = sheet.name;
+    const rows = worksheetToRows(sheet);
     const inspectedRows = rows.slice(0, HEADER_SCAN_ROWS);
     const anchorHeaderRowIndex = inspectedRows.findIndex((row) =>
       isPerformanceAnchorRow(row),
@@ -916,7 +997,7 @@ function findPerformanceWorksheet(workbook: XLSX.WorkBook): PerformanceWorksheet
             cells: buildTwoRowHeaderCells(
               inspectedRows[index],
               inspectedRows[index + 1],
-              sheet["!merges"] ?? [],
+              getMergeRanges(sheet),
               index,
             ),
             rows,
@@ -948,7 +1029,7 @@ function findPerformanceWorksheet(workbook: XLSX.WorkBook): PerformanceWorksheet
       ambiguousFields: [],
       sheetName: selected.sheetName,
       headerRows: selected.headerRows,
-      worksheet: workbook.Sheets[selected.sheetName],
+      worksheet: getWorksheetByName(workbook, selected.sheetName),
     };
   }
 
@@ -969,7 +1050,7 @@ function findPerformanceWorksheet(workbook: XLSX.WorkBook): PerformanceWorksheet
     ambiguousFields: best.ambiguousFields,
     sheetName: best.sheetName,
     headerRows: best.headerRows,
-    worksheet: workbook.Sheets[best.sheetName],
+    worksheet: getWorksheetByName(workbook, best.sheetName),
   };
 }
 
@@ -1095,7 +1176,7 @@ function buildSingleRowHeaderCells(row: unknown[]): HeaderCell[] {
 function buildTwoRowHeaderCells(
   groupRow: unknown[],
   metricRow: unknown[],
-  merges: XLSX.Range[],
+  merges: MergeRange[],
   groupRowIndex: number,
 ): HeaderCell[] {
   const columnCount = Math.max(groupRow.length, metricRow.length);
@@ -1129,7 +1210,7 @@ function getHeaderLeaf(value: string) {
 
 function fillGroupHeaderRow(
   row: unknown[],
-  merges: XLSX.Range[],
+  merges: MergeRange[],
   rowIndex: number,
   columnCount: number,
 ) {
@@ -1175,7 +1256,7 @@ function compareHeaderCandidates(
   );
 }
 
-function findRankingWorksheet(workbook: XLSX.WorkBook) {
+function findRankingWorksheet(workbook: Workbook) {
   const candidates: Array<{
     sheetName: string;
     headerRowIndex: number;
@@ -1188,16 +1269,9 @@ function findRankingWorksheet(workbook: XLSX.WorkBook) {
     score: number;
   }> = [];
 
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const actualRange = repairWorksheetRange(sheet);
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-      blankrows: false,
-      ...(actualRange ? { range: actualRange } : {}),
-    });
+  for (const sheet of workbook.worksheets) {
+    const sheetName = sheet.name;
+    const rows = worksheetToRows(sheet);
     const inspectedRows = rows.slice(0, HEADER_SCAN_ROWS);
     inspectedRows.forEach((row, rowIndex) => {
       const header = row.map(normalizeHeaderDisplay);
@@ -1341,49 +1415,170 @@ function normalizeCell(value: unknown) {
     .replace(/\s+/g, " ");
 }
 
-function getActualWorksheetRange(worksheet: XLSX.WorkSheet): string | null {
-  const cellReferences = Object.keys(worksheet).filter(
-    (key) => !key.startsWith("!") && /^[A-Z]+[1-9]\d*$/i.test(key),
-  );
+function getWorksheetBounds(worksheet: Worksheet) {
+  return {
+    rowCount: worksheet.actualRowCount,
+    columnCount: worksheet.actualColumnCount,
+  };
+}
 
-  if (cellReferences.length === 0) {
-    return worksheet["!ref"] ?? null;
+function worksheetToRows(worksheet: Worksheet) {
+  const rows: unknown[][] = [];
+  const rowLimit = Math.min(worksheet.rowCount, MAX_ROWS + HEADER_SCAN_ROWS);
+  const columnLimit = Math.min(worksheet.columnCount, MAX_COLUMNS);
+
+  for (let rowNumber = 1; rowNumber <= rowLimit; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const values: unknown[] = [];
+
+    for (let columnNumber = 1; columnNumber <= columnLimit; columnNumber += 1) {
+      values.push(getCellValueForParsing(row.getCell(columnNumber)));
+    }
+
+    if (values.some((cell) => normalizeCell(cell) !== "")) {
+      rows[rowNumber - 1] = values;
+    } else {
+      rows[rowNumber - 1] = [];
+    }
   }
 
-  let minimumRow = Number.POSITIVE_INFINITY;
-  let minimumColumn = Number.POSITIVE_INFINITY;
-  let maximumRow = Number.NEGATIVE_INFINITY;
-  let maximumColumn = Number.NEGATIVE_INFINITY;
+  return rows;
+}
 
-  for (const reference of cellReferences) {
-    const cell = XLSX.utils.decode_cell(reference);
+function getWorksheetCell(
+  worksheet: Worksheet,
+  zeroBasedRow: number,
+  zeroBasedColumn: number,
+) {
+  return worksheet.getRow(zeroBasedRow + 1).getCell(zeroBasedColumn + 1);
+}
 
-    minimumRow = Math.min(minimumRow, cell.r);
-    minimumColumn = Math.min(minimumColumn, cell.c);
-    maximumRow = Math.max(maximumRow, cell.r);
-    maximumColumn = Math.max(maximumColumn, cell.c);
+function getWorksheetByName(workbook: Workbook, sheetName: string) {
+  const worksheet = workbook.getWorksheet(sheetName);
+  if (!worksheet) {
+    throw new Error(`Worksheet not found: ${sheetName}`);
   }
+  return worksheet;
+}
 
-  return XLSX.utils.encode_range({
-    s: {
-      r: minimumRow,
-      c: minimumColumn,
-    },
-    e: {
-      r: maximumRow,
-      c: maximumColumn,
-    },
+function getMergeRanges(worksheet: Worksheet): MergeRange[] {
+  const model = worksheet.model as { merges?: string[] };
+  return (model.merges ?? []).flatMap((range) => {
+    const decoded = decodeRange(range);
+    return decoded ? [decoded] : [];
   });
 }
 
-function repairWorksheetRange(worksheet: XLSX.WorkSheet): string | null {
-  const actualRange = getActualWorksheetRange(worksheet);
+function decodeRange(range: string): MergeRange | null {
+  const [start, end = start] = range.split(":");
+  const decodedStart = decodeCellAddress(start);
+  const decodedEnd = decodeCellAddress(end);
 
-  if (actualRange) {
-    worksheet["!ref"] = actualRange;
+  if (!decodedStart || !decodedEnd) {
+    return null;
   }
 
-  return actualRange;
+  return {
+    s: decodedStart,
+    e: decodedEnd,
+  };
+}
+
+function decodeCellAddress(address: string) {
+  const match = address.match(/^([A-Z]+)([1-9]\d*)$/i);
+  if (!match) return null;
+
+  return {
+    r: Number(match[2]) - 1,
+    c: decodeColumn(match[1]),
+  };
+}
+
+function decodeColumn(column: string) {
+  return column
+    .toUpperCase()
+    .split("")
+    .reduce((value, character) => value * 26 + character.charCodeAt(0) - 64, 0) - 1;
+}
+
+function encodeColumn(zeroBasedColumn: number) {
+  let column = zeroBasedColumn + 1;
+  let encoded = "";
+
+  while (column > 0) {
+    const remainder = (column - 1) % 26;
+    encoded = String.fromCharCode(65 + remainder) + encoded;
+    column = Math.floor((column - remainder - 1) / 26);
+  }
+
+  return encoded;
+}
+
+function getCellValueForParsing(cell: Cell) {
+  const value = cell.value;
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (value instanceof Date || typeof value !== "object") {
+    return value;
+  }
+
+  if (isRichTextValue(value)) {
+    return value.richText.map((item) => item.text).join("");
+  }
+
+  if (isFormulaValue(value) || isHyperlinkValue(value)) {
+    return "";
+  }
+
+  if (isErrorValue(value)) {
+    return value.error;
+  }
+
+  return cell.text || String(value);
+}
+
+function getCellRawValue(cell: Cell | undefined) {
+  if (!cell) return undefined;
+  return getCellValueForParsing(cell);
+}
+
+function isFormulaCell(cell: Cell) {
+  const value = cell.value;
+  return Boolean(
+    cell.formula ||
+      cell.model.formula ||
+      cell.model.sharedFormula ||
+      (value && typeof value === "object" && isFormulaValue(value)),
+  );
+}
+
+function isHyperlinkCell(cell: Cell) {
+  const value = cell.value;
+  return Boolean(
+    cell.isHyperlink ||
+      cell.hyperlink ||
+      cell.model.hyperlink ||
+      (value && typeof value === "object" && isHyperlinkValue(value)),
+  );
+}
+
+function isFormulaValue(value: object): value is Extract<CellValue, { formula?: string; sharedFormula?: string }> {
+  return "formula" in value || "sharedFormula" in value;
+}
+
+function isHyperlinkValue(value: object): value is Extract<CellValue, { hyperlink: string }> {
+  return "hyperlink" in value;
+}
+
+function isRichTextValue(value: object): value is Extract<CellValue, { richText: Array<{ text: string }> }> {
+  return "richText" in value && Array.isArray(value.richText);
+}
+
+function isErrorValue(value: object): value is Extract<CellValue, { error: string }> {
+  return "error" in value && typeof value.error === "string";
 }
 
 function normalizeKeetaDriverId(value: unknown) {
@@ -1396,6 +1591,13 @@ function normalizeKeetaDriverId(value: unknown) {
 }
 
 function parseReportDate(value: unknown) {
+  if (value instanceof Date) {
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(value.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
   const normalized = normalizeCell(value).replace(/[^\d-]/g, "");
   const compact = normalized.replace(/-/g, "");
 
@@ -1423,7 +1625,7 @@ function parseExcelDurationToSeconds(
   value: unknown,
   context: DurationParseContext,
 ): DurationParseResult {
-  const rawValue = context.cell?.v ?? value;
+  const rawValue = getCellRawValue(context.cell) ?? value;
 
   if (rawValue === null || rawValue === undefined || rawValue === "") {
     return { ok: false, reason: "empty", normalizedValue: "" };
@@ -1476,10 +1678,10 @@ function parseNumericExcelDuration(
     };
   }
 
-  if (isDurationNumberFormat(context.cell?.z)) {
+  if (isDurationNumberFormat(context.cell?.numFmt)) {
     const seconds = Math.round(value * 86_400);
 
-    if (!isBracketedDurationNumberFormat(context.cell?.z) && seconds > 86_400) {
+    if (!isBracketedDurationNumberFormat(context.cell?.numFmt) && seconds > 86_400) {
       return {
         ok: false,
         reason: "invalid_format",
@@ -1825,26 +2027,30 @@ function logInvalidDurationDiagnostic(
     workbookFileName: context.workbookFileName,
     worksheetName: context.worksheetName,
     rowNumber: context.rowNumber,
-    column: XLSX.utils.encode_col(context.columnIndex),
+    column: encodeColumn(context.columnIndex),
     columnHeader: context.columnHeader,
     rawCellType: getCellType(context.cell),
-    rawValue: serializeCellValue(context.cell?.v),
-    cellNumberFormat: context.cell?.z ?? null,
+    rawValue: serializeCellValue(getCellRawValue(context.cell)),
+    cellNumberFormat: context.cell?.numFmt ?? null,
     normalizedValue: result.normalizedValue,
     reason: result.reason,
   });
 }
 
-function getCellType(cell: XLSX.CellObject | undefined) {
+function getCellType(cell: Cell | undefined) {
   if (!cell) {
     return "undefined";
   }
 
-  if (cell.f) {
-    return `formula:${cell.t ?? "unknown"}`;
+  if (isFormulaCell(cell)) {
+    return "formula";
   }
 
-  return cell.t ?? "unknown";
+  if (isHyperlinkCell(cell)) {
+    return "hyperlink";
+  }
+
+  return cell.type.toString();
 }
 
 function serializeCellValue(value: unknown) {

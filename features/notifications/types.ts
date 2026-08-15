@@ -40,5 +40,6 @@ export type AppNotification = {
   requestStatus: string | null;
   driverName: string | null;
   isRead: boolean;
+  readAt: string | null;
   createdAt: string;
 };

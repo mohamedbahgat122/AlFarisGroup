@@ -1,11 +1,14 @@
 import "server-only";
 
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { getBusinessDateString } from "@/features/drivers/expiry";
 import type {
+  AppRequestSummary,
   AppRequestRow,
   DriverAppRequestStatus,
   DriverAppRequestType,
   OdometerShiftRow,
+  OdometerSummary,
 } from "@/features/app-requests/types";
 
 type RequestRecord = {
@@ -28,10 +31,34 @@ type DriverRecord = {
   id: string;
   full_name: string;
   keeta_driver_id: string | null;
+  mobile_number: string | null;
   vehicle_type: string | null;
   keeta_vehicle_plate_number: string | null;
   vehicle_number: string | null;
-  profile_photo_path: string | null;
+};
+
+type OdometerShiftRecord = {
+  id: string;
+  driver_id: string;
+  vehicle_id: string | null;
+  vehicle_plate_snapshot: string | null;
+  status: "open" | "completed" | "cancelled";
+  started_at: string;
+  start_odometer_reading: number;
+  start_photo_path: string | null;
+  start_photo_captured_at: string | null;
+  ended_at: string | null;
+  end_odometer_reading: number | null;
+  end_photo_path: string | null;
+  end_photo_captured_at: string | null;
+  start_review_status: "pending_review" | "approved" | "rejected" | null;
+  start_reviewed_by: string | null;
+  start_reviewed_at: string | null;
+  start_review_note: string | null;
+  end_review_status: "pending_review" | "approved" | "rejected" | null;
+  end_reviewed_by: string | null;
+  end_reviewed_at: string | null;
+  end_review_note: string | null;
 };
 
 type VehicleRecord = {
@@ -53,6 +80,7 @@ type OrganizationRecord = {
 };
 
 export type RequestFilters = {
+  search?: string;
   from?: string;
   to?: string;
   driver?: string;
@@ -75,20 +103,17 @@ export type OdometerFilters = {
 };
 
 const pageSize = 25;
+const odometerPageSize = 20;
 const riyadhUtcOffsetHours = 3;
-const ibrahimDriverIdentifier = "1784563088060809";
-
-type OdometerPhotoSignResult = {
-  urls: Map<string, string>;
-  failedPaths: Set<string>;
-};
 
 export async function getAppRequestPage({
   organizationId,
+  organizationName,
   requestType,
   filters,
 }: {
   organizationId: string;
+  organizationName?: string;
   requestType: DriverAppRequestType;
   filters: RequestFilters;
 }): Promise<
@@ -98,6 +123,7 @@ export async function getAppRequestPage({
       page: number;
       totalPages: number;
       totalRows: number;
+      summary: AppRequestSummary;
     }
   | { status: "unauthorized" | "load_error"; rows: [] }
 > {
@@ -110,6 +136,30 @@ export async function getAppRequestPage({
   const page = normalizePage(filters.page);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
+  const search = getRequestSearch(filters);
+  const [matchedDriverIds, matchedLeaveRequestIds, summary] = await Promise.all([
+    findMatchingRequestDriverIds({
+      supabase: admin.supabase,
+      organizationId,
+      organizationName,
+      search,
+    }),
+    findMatchingLeaveRequestIds({
+      supabase: admin.supabase,
+      search,
+      leaveType: requestType === "leave" ? filters.leaveType : undefined,
+    }),
+    getRequestSummary({
+          supabase: admin.supabase,
+          organizationId,
+      requestType,
+        })
+  ]);
+
+  if (matchedDriverIds.status === "load_error" || matchedLeaveRequestIds.status === "load_error") {
+    return { status: "load_error", rows: [] };
+  }
+
   let query = admin.supabase
     .from("driver_app_requests")
     .select(
@@ -118,12 +168,39 @@ export async function getAppRequestPage({
     )
     .eq("organization_id", organizationId)
     .eq("request_type", requestType)
-    .order("submitted_at", { ascending: false })
-    .range(from, to);
+    .order("submitted_at", { ascending: false });
 
   if (isDate(filters.from)) query = query.gte("submitted_at", filters.from);
   if (isDate(filters.to)) query = query.lte("submitted_at", `${filters.to}T23:59:59`);
   if (isRequestStatus(filters.status)) query = query.eq("status", filters.status);
+  if (matchedDriverIds.driverIds) {
+    if (matchedDriverIds.driverIds.length === 0) {
+      return {
+        status: "success",
+        page,
+        totalRows: 0,
+        totalPages: 1,
+        summary,
+        rows: [],
+      };
+    }
+    query = query.in("driver_id", matchedDriverIds.driverIds);
+  }
+  if (matchedLeaveRequestIds.requestIds) {
+    if (matchedLeaveRequestIds.requestIds.length === 0) {
+      return {
+        status: "success",
+        page,
+        totalRows: 0,
+        totalPages: 1,
+        summary,
+        rows: [],
+      };
+    }
+    query = query.in("id", matchedLeaveRequestIds.requestIds);
+  }
+
+  query = query.range(from, to);
 
   const { data, error, count } = await query;
 
@@ -177,10 +254,6 @@ export async function getAppRequestPage({
     return { status: "load_error", rows: [] };
   }
 
-  const driverPhotoUrls = await signDriverPhotos(
-    admin.supabase,
-    Array.from(drivers.values()).map((driver) => driver.profile_photo_path),
-  );
   const requestedManagerIds =
     requestType === "meeting"
       ? Array.from(
@@ -201,6 +274,7 @@ export async function getAppRequestPage({
     page,
     totalRows: count ?? requests.length,
     totalPages: Math.max(1, Math.ceil((count ?? requests.length) / pageSize)),
+    summary,
     rows: requests
       .map((request) => {
         const driver = drivers.get(request.driver_id);
@@ -218,9 +292,6 @@ export async function getAppRequestPage({
           submittedNote: request.submitted_note,
           driverName: driver?.full_name ?? "",
           driverIdentifier: driver?.keeta_driver_id ?? null,
-          driverPhotoUrl: driver?.profile_photo_path
-            ? driverPhotoUrls.get(driver.profile_photo_path) ?? null
-            : null,
           organizationName: organizations.get(request.organization_id)?.name ?? null,
           vehicleLabel:
             vehicles.get(request.vehicle_id ?? "")?.vehicle_type ??
@@ -258,6 +329,7 @@ export async function getOdometerPage({
       page: number;
       totalPages: number;
       totalRows: number;
+      summary: OdometerSummary;
     }
   | { status: "unauthorized" | "load_error"; rows: [] }
 > {
@@ -267,107 +339,218 @@ export async function getOdometerPage({
     return { status: "unauthorized", rows: [] };
   }
 
-  const page = normalizePage(filters.page);
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  const requestedPage = normalizePage(filters.page);
+  const selectedDate = isDate(filters.date) ? filters.date : getBusinessDateString();
   const dateRange = isDate(filters.date)
     ? getRiyadhDayUtcRange(filters.date)
-    : null;
-  let query = admin.supabase
-    .from("driver_shifts")
-    .select("*", { count: "exact" })
-    .eq("organization_id", organizationId)
-    .order("started_at", { ascending: false })
-    .range(from, to);
+    : getRiyadhDayUtcRange(selectedDate);
+  const eligibleDriversResult = await loadEligibleOdometerDrivers(admin.supabase, organizationId, filters);
 
-  if (dateRange) {
-    query = query
-      .gte("started_at", dateRange.startIso)
-      .lte("started_at", dateRange.endIso);
-  }
-
-  if (filters.status === "open" || filters.status === "completed") {
-    query = query.eq("status", filters.status);
-  }
-
-  const { data, error, count } = await query;
-
-  if (error) {
+  if (eligibleDriversResult.error) {
     logOdometerLoadDiagnostic({
       organizationId,
-      selectedDate: filters.date,
+      selectedDate,
       dateRange,
-      returnedShiftCount: 0,
-      ibrahimShiftCount: 0,
-      shiftIdSuffixes: [],
-      error: { code: error.code, message: error.message },
+      eligibleDriverCount: 0,
+      visibleDriverCount: 0,
+      matchedShiftCount: 0,
+      error: {
+        code: eligibleDriversResult.error.code,
+        message: eligibleDriversResult.error.message,
+      },
     });
     return { status: "load_error", rows: [] };
   }
 
-  const shifts = (data ?? []) as Array<{
-    id: string;
-    driver_id: string;
-    vehicle_id: string | null;
-    vehicle_plate_snapshot: string;
-    status: "open" | "completed" | "cancelled";
-    started_at: string;
-    start_odometer_reading: number;
-    start_photo_path: string;
-    start_photo_captured_at: string;
-    ended_at: string | null;
-    end_odometer_reading: number | null;
-    end_photo_path: string | null;
-    end_photo_captured_at: string | null;
-    start_review_status: "pending_review" | "approved" | "rejected" | null;
-    start_reviewed_by: string | null;
-    start_reviewed_at: string | null;
-    start_review_note: string | null;
-    end_review_status: "pending_review" | "approved" | "rejected" | null;
-    end_reviewed_by: string | null;
-    end_reviewed_at: string | null;
-    end_review_note: string | null;
-  }>;
-  const [drivers, vehicles, reviewers, signedPhotos] = await Promise.all([
-    loadDrivers(admin.supabase, shifts.map((shift) => shift.driver_id)),
-    loadVehicles(
+  const eligibleDrivers = eligibleDriversResult.drivers;
+  const allDriverIds = eligibleDrivers.map((driver) => driver.id);
+  const allShifts = await loadDailyOdometerShifts(
+    admin.supabase,
+    organizationId,
+    allDriverIds,
+    dateRange,
+  );
+  const allRows = mapDriversToOdometerRows({
+    drivers: eligibleDrivers,
+    shifts: allShifts,
+    vehicles: await loadVehicles(
       admin.supabase,
-      shifts
+      allShifts
         .map((shift) => shift.vehicle_id)
         .filter((value): value is string => Boolean(value)),
     ),
-    loadProfiles(
+    reviewers: await loadProfiles(
       admin.supabase,
-      shifts
+      allShifts
         .flatMap((shift) => [shift.start_reviewed_by, shift.end_reviewed_by])
         .filter((value): value is string => Boolean(value)),
     ),
-    signOdometerPhotos(admin.supabase, shifts),
-  ]);
+    selectedDate,
+  });
+  const statusFilteredRows = allRows.filter((row) => matchesOdometerDailyStatus(row, filters.status));
+  const totalRows = statusFilteredRows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / odometerPageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const visibleRows = statusFilteredRows
+    .sort(compareOdometerRows)
+    .slice((page - 1) * odometerPageSize, page * odometerPageSize);
+  const summary = summarizeOdometerDailyRows(allRows);
 
-  const driverPhotoUrls = await signDriverPhotos(
-    admin.supabase,
-    Array.from(drivers.values()).map((driver) => driver.profile_photo_path),
-  );
+  logOdometerLoadDiagnostic({
+    organizationId,
+    selectedDate,
+    dateRange,
+    eligibleDriverCount: eligibleDrivers.length,
+    visibleDriverCount: visibleRows.length,
+    matchedShiftCount: allShifts.length,
+    error: null,
+  });
 
-  const shiftedRows = shifts.map((shift) => {
-    const driver = drivers.get(shift.driver_id);
+  return {
+    status: "success",
+    page,
+    totalRows,
+    totalPages,
+    summary,
+    rows: visibleRows,
+  };
+}
+
+async function loadEligibleOdometerDrivers(
+  supabase: Parameters<typeof loadDrivers>[0],
+  organizationId: string,
+  filters: OdometerFilters,
+): Promise<
+  | { drivers: DriverRecord[]; error: null }
+  | { drivers: []; error: { code?: string; message: string } }
+> {
+  let query = supabase
+    .from("drivers")
+    .select("id, full_name, keeta_driver_id, mobile_number, vehicle_type, keeta_vehicle_plate_number, vehicle_number")
+    .eq("organization_id", organizationId)
+    .is("deleted_at", null)
+    .order("full_name", { ascending: true });
+
+  const driver = filters.driver?.trim();
+  if (driver) {
+    const searchTerm = `%${sanitizeSearchValue(driver)}%`;
+    query = query.or(
+      `full_name.ilike.${searchTerm},keeta_driver_id.ilike.${searchTerm},mobile_number.ilike.${searchTerm},vehicle_number.ilike.${searchTerm}`,
+    );
+  }
+
+  const driverId = filters.driverId?.trim();
+  if (driverId) {
+    query = query.ilike("keeta_driver_id", `%${sanitizeSearchValue(driverId)}%`);
+  }
+
+  const plate = filters.plate?.trim();
+  if (plate) {
+    query = query.ilike("vehicle_number", `%${sanitizeSearchValue(plate)}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return { drivers: [], error: { code: error.code, message: error.message } };
+  }
+
+  return {
+    drivers: (data ?? []) as DriverRecord[],
+    error: null,
+  };
+}
+
+async function loadDailyOdometerShifts(
+  supabase: Parameters<typeof loadDrivers>[0],
+  organizationId: string,
+  driverIds: string[],
+  dateRange: { startIso: string; endIso: string },
+) {
+  if (driverIds.length === 0) return [];
+
+  const { data } = await supabase
+    .from("driver_shifts")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .in("driver_id", driverIds)
+    .gte("started_at", dateRange.startIso)
+    .lte("started_at", dateRange.endIso)
+    .order("started_at", { ascending: false });
+
+  return (data ?? []) as OdometerShiftRecord[];
+}
+
+function mapDriversToOdometerRows({
+  drivers,
+  shifts,
+  vehicles,
+  reviewers,
+  selectedDate,
+}: {
+  drivers: DriverRecord[];
+  shifts: OdometerShiftRecord[];
+  vehicles: Map<string, VehicleRecord>;
+  reviewers: Map<string, ProfileRecord>;
+  selectedDate: string;
+}) {
+  const shiftsByDriver = new Map<string, OdometerShiftRecord>();
+  for (const shift of shifts) {
+    if (!shiftsByDriver.has(shift.driver_id)) {
+      shiftsByDriver.set(shift.driver_id, shift);
+    }
+  }
+
+  return drivers.map((driver) => {
+    const shift = shiftsByDriver.get(driver.id);
+    if (!shift) {
+      return {
+        id: `driver-${driver.id}-${selectedDate}`,
+        driverName: driver.full_name,
+        driverIdentifier: driver.keeta_driver_id ?? null,
+        organizationName: null,
+        vehicleLabel: driver.vehicle_type ?? null,
+        vehiclePlate: driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
+        status: "not_started",
+        shiftDate: `${selectedDate}T00:00:00+03:00`,
+        startedAt: null,
+        startReading: null,
+        startPhotoUrl: null,
+        startPhotoPathPresent: false,
+        startPhotoCapturedAt: null,
+        startReviewStatus: null,
+        startReviewerName: null,
+        startReviewedAt: null,
+        startReviewNote: null,
+        endedAt: null,
+        endReading: null,
+        endPhotoUrl: null,
+        endPhotoPathPresent: false,
+        endPhotoCapturedAt: null,
+        endReviewStatus: null,
+        endReviewerName: null,
+        endReviewedAt: null,
+        endReviewNote: null,
+        distance: null,
+      } satisfies OdometerShiftRow;
+    }
+
     const vehicle = vehicles.get(shift.vehicle_id ?? "");
     const endReading = shift.end_odometer_reading;
 
     return {
       id: shift.id,
-      driverName: driver?.full_name ?? "",
-      driverIdentifier: driver?.keeta_driver_id ?? null,
+      driverName: driver.full_name,
+      driverIdentifier: driver.keeta_driver_id ?? null,
       organizationName: null,
-      driverPhotoUrl: driver?.profile_photo_path ? driverPhotoUrls.get(driver.profile_photo_path) ?? null : null,
-      vehicleLabel: vehicle?.vehicle_type ?? driver?.vehicle_type ?? null,
-      vehiclePlate: shift.vehicle_plate_snapshot,
-      status: shift.status,
+      vehicleLabel: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
+      vehiclePlate: shift.vehicle_plate_snapshot ?? driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
+      status: endReading === null ? "open" : "completed",
       shiftDate: shift.started_at,
       startedAt: shift.started_at,
       startReading: shift.start_odometer_reading,
-      startPhotoUrl: signedPhotos.urls.get(shift.start_photo_path) ?? null,
+      startPhotoUrl: shift.start_photo_path
+        ? getAppRequestPhotoUrl({ shiftId: shift.id, type: "odometer-start" })
+        : null,
       startPhotoPathPresent: Boolean(shift.start_photo_path),
       startPhotoCapturedAt: shift.start_photo_captured_at,
       startReviewStatus: shift.start_review_status ?? "pending_review",
@@ -377,7 +560,7 @@ export async function getOdometerPage({
       endedAt: shift.ended_at,
       endReading,
       endPhotoUrl: shift.end_photo_path
-        ? signedPhotos.urls.get(shift.end_photo_path) ?? null
+        ? getAppRequestPhotoUrl({ shiftId: shift.id, type: "odometer-end" })
         : null,
       endPhotoPathPresent: Boolean(shift.end_photo_path),
       endPhotoCapturedAt: shift.end_photo_captured_at,
@@ -391,28 +574,14 @@ export async function getOdometerPage({
           : null,
     } satisfies OdometerShiftRow;
   });
+}
 
-  logOdometerLoadDiagnostic({
-    organizationId,
-    selectedDate: filters.date,
-    dateRange,
-    returnedShiftCount: shifts.length,
-    ibrahimShiftCount: shiftedRows.filter(
-      (row) => row.driverIdentifier === ibrahimDriverIdentifier,
-    ).length,
-    shiftIdSuffixes: shifts.map((shift) => safeSuffix(shift.id)),
-    signedPhotoFailureCount: signedPhotos.failedPaths.size,
-    error: null,
-  });
-
+function summarizeOdometerDailyRows(rows: OdometerShiftRow[]): OdometerSummary {
   return {
-    status: "success",
-    page,
-    totalRows: count ?? shifts.length,
-    totalPages: Math.max(1, Math.ceil((count ?? shifts.length) / pageSize)),
-    rows: shiftedRows
-      .filter((row) => matchesOdometerFilters(row, filters))
-      .sort(compareOdometerRows),
+    total: rows.length,
+    notStarted: rows.filter((row) => row.status === "not_started").length,
+    startedOnly: rows.filter((row) => row.status === "open").length,
+    completed: rows.filter((row) => row.status === "completed").length,
   };
 }
 
@@ -431,7 +600,7 @@ async function loadDrivers(
 
   const { data } = await supabase
     .from("drivers")
-    .select("id, full_name, keeta_driver_id, vehicle_type, keeta_vehicle_plate_number, vehicle_number, profile_photo_path")
+    .select("id, full_name, keeta_driver_id, mobile_number, vehicle_type, keeta_vehicle_plate_number, vehicle_number")
     .in("id", uniqueIds);
 
   for (const driver of (data ?? []) as DriverRecord[]) {
@@ -504,6 +673,171 @@ async function loadOrganizations(
   return organizations;
 }
 
+async function findMatchingRequestDriverIds({
+  supabase,
+  organizationId,
+  organizationName,
+  search,
+}: {
+  supabase: Parameters<typeof loadDrivers>[0];
+  organizationId: string;
+  organizationName: string | undefined;
+  search: string;
+}): Promise<
+  | { status: "success"; driverIds: string[] | null }
+  | { status: "load_error"; driverIds: null }
+> {
+  if (search.length < 2) {
+    return { status: "success", driverIds: null };
+  }
+
+  if (organizationName && organizationName.normalize("NFKC").toLowerCase().includes(search.normalize("NFKC").toLowerCase())) {
+    return { status: "success", driverIds: null };
+  }
+
+  const like = `%${sanitizeSearchLike(search)}%`;
+  const { data, error } = await supabase
+    .from("drivers")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .or(
+      [
+        `full_name.ilike.${like}`,
+        `keeta_driver_id.ilike.${like}`,
+        `iqama_number.ilike.${like}`,
+        `mobile_number.ilike.${like}`,
+      ].join(","),
+    )
+    .limit(500);
+
+  if (error) {
+    return { status: "load_error", driverIds: null };
+  }
+
+  return {
+    status: "success",
+    driverIds: (data ?? []).map((driver) => driver.id),
+  };
+}
+
+async function findMatchingLeaveRequestIds({
+  supabase,
+  search,
+  leaveType,
+}: {
+  supabase: Parameters<typeof loadDrivers>[0];
+  search: string;
+  leaveType: string | undefined;
+}): Promise<
+  | { status: "success"; requestIds: string[] | null }
+  | { status: "load_error"; requestIds: null }
+> {
+  const normalizedLeaveType = isLeaveTypeFilter(leaveType) ? leaveType : "";
+  const searchLeaveTypes = getLeaveTypesMatchingSearch(search);
+
+  if (!normalizedLeaveType && searchLeaveTypes === null) {
+    return { status: "success", requestIds: null };
+  }
+
+  let query = supabase
+    .from("driver_app_leave_request_details")
+    .select("request_id");
+
+  if (normalizedLeaveType) {
+    query = query.eq("leave_type", normalizedLeaveType);
+  }
+
+  if (searchLeaveTypes) {
+    if (searchLeaveTypes.length === 0) {
+      return { status: "success", requestIds: [] };
+    }
+    query = query.in("leave_type", searchLeaveTypes);
+  }
+
+  const { data, error } = await query.limit(1000);
+
+  if (error) {
+    return { status: "load_error", requestIds: null };
+  }
+
+  return {
+    status: "success",
+    requestIds: (data ?? [])
+      .map((detail) => detail.request_id)
+      .filter((id): id is string => typeof id === "string"),
+  };
+}
+
+async function getRequestSummary({
+  supabase,
+  organizationId,
+  requestType,
+}: {
+  supabase: Parameters<typeof loadDrivers>[0];
+  organizationId: string;
+  requestType: DriverAppRequestType;
+}): Promise<AppRequestSummary> {
+  const today = getBusinessDateString();
+  const todayRange = getRiyadhDayUtcRange(today);
+  const activeLeaveRequestIds =
+    requestType === "leave"
+      ? await getActiveLeaveRequestIds({ supabase, today })
+      : [];
+
+  const base = () =>
+    supabase
+      .from("driver_app_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId)
+      .eq("request_type", requestType);
+
+  const [
+    total,
+    pending,
+    approved,
+    rejected,
+    todayCount,
+    activeToday,
+  ] = await Promise.all([
+    base(),
+    base().eq("status", "pending"),
+    base().eq("status", "approved"),
+    base().eq("status", "rejected"),
+    base().gte("submitted_at", todayRange.startIso).lte("submitted_at", todayRange.endIso),
+    activeLeaveRequestIds.length > 0
+      ? base().eq("status", "approved").in("id", activeLeaveRequestIds)
+      : Promise.resolve({ count: 0, error: null }),
+  ]);
+
+  return {
+    total: total.error ? 0 : total.count ?? 0,
+    pending: pending.error ? 0 : pending.count ?? 0,
+    approved: approved.error ? 0 : approved.count ?? 0,
+    rejected: rejected.error ? 0 : rejected.count ?? 0,
+    today: todayCount.error ? 0 : todayCount.count ?? 0,
+    activeToday: activeToday.error ? 0 : activeToday.count ?? 0,
+  };
+}
+
+async function getActiveLeaveRequestIds({
+  supabase,
+  today,
+}: {
+  supabase: Parameters<typeof loadDrivers>[0];
+  today: string;
+}) {
+  const { data } = await supabase
+    .from("driver_app_leave_request_details")
+    .select("request_id")
+    .lte("start_date", today)
+    .gte("end_date", today)
+    .limit(1000);
+
+  return (data ?? [])
+    .map((row) => row.request_id)
+    .filter((id): id is string => typeof id === "string");
+}
+
 async function loadDetails(
   supabase: Parameters<typeof loadDrivers>[0],
   requestType: DriverAppRequestType,
@@ -549,55 +883,17 @@ async function loadDetails(
   return { details, table, error: null };
 }
 
-async function signOdometerPhotos(
-  supabase: Parameters<typeof loadDrivers>[0],
-  shifts: Array<{ start_photo_path: string; end_photo_path: string | null }>,
-): Promise<OdometerPhotoSignResult> {
-  const urls = new Map<string, string>();
-  const failedPaths = new Set<string>();
-  const paths = Array.from(
-    new Set(
-      shifts.flatMap((shift) =>
-        [shift.start_photo_path, shift.end_photo_path].filter(
-          (path): path is string => Boolean(path),
-        ),
-      ),
-    ),
-  );
-
-  await Promise.all(
-    paths.map(async (path) => {
-      const { data, error } = await supabase.storage
-        .from("driver-odometer")
-        .createSignedUrl(path, 300);
-
-      if (data?.signedUrl) urls.set(path, data.signedUrl);
-      if (error || !data?.signedUrl) failedPaths.add(path);
-    }),
-  );
-
-  return { urls, failedPaths };
-}
-
-async function signDriverPhotos(
-  supabase: Parameters<typeof loadDrivers>[0],
-  paths: Array<string | null>,
+function getAppRequestPhotoUrl(
+  input:
+    | { type: "request-driver"; requestId: string }
+    | { type: "odometer-driver" | "odometer-start" | "odometer-end"; shiftId: string },
 ) {
-  const urls = new Map<string, string>();
-  const uniquePaths = Array.from(new Set(paths.filter((path): path is string => Boolean(path))));
-
-  await Promise.all(
-    uniquePaths.map(async (path) => {
-      const { data } = await supabase.storage
-        .from("driver-documents")
-        .createSignedUrl(path, 300);
-
-      if (data?.signedUrl) urls.set(path, data.signedUrl);
-    }),
-  );
-
-  return urls;
+  const params = new URLSearchParams({ type: input.type });
+  if ("requestId" in input) params.set("requestId", input.requestId);
+  if ("shiftId" in input) params.set("shiftId", input.shiftId);
+  return `/api/dashboard/app-requests/photo?${params.toString()}`;
 }
+
 function matchesTextFilters(row: AppRequestRow, filters: RequestFilters) {
   const driver = filters.driver?.trim().toLowerCase();
   const driverId = filters.driverId?.trim().toLowerCase();
@@ -611,39 +907,64 @@ function matchesTextFilters(row: AppRequestRow, filters: RequestFilters) {
   );
 }
 
-function matchesOdometerFilters(row: OdometerShiftRow, filters: OdometerFilters) {
-  const driver = filters.driver?.trim().toLowerCase();
-  const driverId = filters.driverId?.trim().toLowerCase();
-  const plate = filters.plate?.trim().toLowerCase();
-  const reviewStatus = filters.reviewStatus;
-  const phase = filters.phase;
+function getRequestSearch(filters: RequestFilters) {
+  return (filters.search || filters.driver || filters.driverId || "").trim();
+}
 
-  const matchesReviewStatus =
-    !reviewStatus ||
-    reviewStatus === "all" ||
-    (phase !== "end" && row.startReviewStatus === reviewStatus) ||
-    (phase !== "start" && row.endReviewStatus === reviewStatus);
+function sanitizeSearchLike(value: string) {
+  return value.normalize("NFKC").trim().replace(/[%,*()"]/g, " ").replace(/\s+/g, "%");
+}
 
-  const matchesPhase =
-    !phase ||
-    phase === "all" ||
-    (phase === "start" && row.startReading !== null) ||
-    (phase === "end" && row.endReading !== null);
-
+function isLeaveTypeFilter(value: string | undefined) {
   return (
-    (!driver || row.driverName.toLowerCase().includes(driver)) &&
-    (!driverId || row.driverIdentifier?.toLowerCase().includes(driverId)) &&
-    (!plate || row.vehiclePlate?.toLowerCase().includes(plate)) &&
-    matchesReviewStatus &&
-    matchesPhase
+    value === "annual" ||
+    value === "sick" ||
+    value === "weekly" ||
+    value === "emergency" ||
+    value === "unpaid" ||
+    value === "other"
   );
 }
 
+function getLeaveTypesMatchingSearch(search: string) {
+  if (search.trim().length < 2) {
+    return null;
+  }
+
+  const normalized = search.normalize("NFKC").trim().toLowerCase();
+  const pairs = [
+    ["annual", ["annual", "سنوية"]],
+    ["sick", ["sick", "مرضية"]],
+    ["weekly", ["weekly", "أسبوعية", "اسبوعية"]],
+    ["emergency", ["emergency", "طارئة"]],
+    ["unpaid", ["unpaid", "بدون راتب"]],
+    ["other", ["other", "أخرى", "اخرى"]],
+  ] as const;
+
+  return pairs
+    .filter(([, labels]) => labels.some((label) => label.includes(normalized) || normalized.includes(label)))
+    .map(([value]) => value);
+}
+
+function matchesOdometerDailyStatus(row: OdometerShiftRow, status: string | undefined) {
+  if (!status || status === "all") return true;
+  if (status === "not_started") return row.status === "not_started";
+  if (status === "started") return row.status === "open";
+  if (status === "completed") return row.status === "completed";
+  return true;
+}
+
 function compareOdometerRows(a: OdometerShiftRow, b: OdometerShiftRow) {
-  const aPending = a.startReviewStatus === "pending_review" || a.endReviewStatus === "pending_review";
-  const bPending = b.startReviewStatus === "pending_review" || b.endReviewStatus === "pending_review";
-  if (aPending !== bPending) return aPending ? -1 : 1;
-  return new Date(b.shiftDate).getTime() - new Date(a.shiftDate).getTime();
+  if (a.status !== b.status) {
+    const rank = { open: 0, completed: 1, not_started: 2, cancelled: 3 };
+    return rank[a.status] - rank[b.status];
+  }
+
+  return a.driverName.localeCompare(b.driverName, "ar");
+}
+
+function sanitizeSearchValue(value: string) {
+  return value.replace(/[%_,]/g, "").trim();
 }
 
 function compareAppRequestRows(a: AppRequestRow, b: AppRequestRow) {
@@ -669,19 +990,17 @@ function logOdometerLoadDiagnostic({
   organizationId,
   selectedDate,
   dateRange,
-  returnedShiftCount,
-  ibrahimShiftCount,
-  shiftIdSuffixes,
-  signedPhotoFailureCount,
+  eligibleDriverCount,
+  visibleDriverCount,
+  matchedShiftCount,
   error,
 }: {
   organizationId: string;
   selectedDate: string | undefined;
   dateRange: { startIso: string; endIso: string } | null;
-  returnedShiftCount: number;
-  ibrahimShiftCount: number;
-  shiftIdSuffixes: string[];
-  signedPhotoFailureCount?: number;
+  eligibleDriverCount: number;
+  visibleDriverCount: number;
+  matchedShiftCount: number;
   error: { code?: string; message: string } | null;
 }) {
   if (process.env.NODE_ENV === "production") return;
@@ -690,10 +1009,9 @@ function logOdometerLoadDiagnostic({
     organizationIdSuffix: safeSuffix(organizationId),
     selectedDate,
     utcRange: dateRange,
-    returnedShiftCount,
-    ibrahimShiftCount,
-    shiftIdSuffixes,
-    signedPhotoFailureCount,
+    eligibleDriverCount,
+    visibleDriverCount,
+    matchedShiftCount,
     error,
   });
 }

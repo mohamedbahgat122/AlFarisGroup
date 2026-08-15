@@ -921,6 +921,7 @@ export type Database = {
           keeta_username: string
           keeta_vehicle_plate_number: string | null
           mobile_number: string
+          nfc_number: string | null
           nationality: string
           operating_card_expiry_date: string | null
           operating_card_file_path: string | null
@@ -936,6 +937,7 @@ export type Database = {
           vehicle_authorization_expiry_date: string
           vehicle_authorization_number: string
           vehicle_brand: string | null
+          vehicle_id: string | null
           vehicle_number: string
           vehicle_owner_identifier: string | null
           vehicle_serial_number: string | null
@@ -961,6 +963,7 @@ export type Database = {
           keeta_username: string
           keeta_vehicle_plate_number?: string | null
           mobile_number: string
+          nfc_number?: string | null
           nationality: string
           operating_card_expiry_date?: string | null
           operating_card_file_path?: string | null
@@ -976,6 +979,7 @@ export type Database = {
           vehicle_authorization_expiry_date: string
           vehicle_authorization_number: string
           vehicle_brand?: string | null
+          vehicle_id?: string | null
           vehicle_number: string
           vehicle_owner_identifier?: string | null
           vehicle_serial_number?: string | null
@@ -1001,6 +1005,7 @@ export type Database = {
           keeta_username?: string
           keeta_vehicle_plate_number?: string | null
           mobile_number?: string
+          nfc_number?: string | null
           nationality?: string
           operating_card_expiry_date?: string | null
           operating_card_file_path?: string | null
@@ -1016,6 +1021,7 @@ export type Database = {
           vehicle_authorization_expiry_date?: string
           vehicle_authorization_number?: string
           vehicle_brand?: string | null
+          vehicle_id?: string | null
           vehicle_number?: string
           vehicle_owner_identifier?: string | null
           vehicle_serial_number?: string | null
@@ -1048,6 +1054,13 @@ export type Database = {
             columns: ["updated_by_user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drivers_vehicle_id_fkey"
+            columns: ["vehicle_id"]
+            isOneToOne: false
+            referencedRelation: "fleet_vehicles"
             referencedColumns: ["id"]
           },
         ]
@@ -1114,6 +1127,7 @@ export type Database = {
         Row: {
           archived_at: string | null
           archived_by: string | null
+          assigned_organization_id: string | null
           assigned_driver_id: string | null
           assigned_driver_manual_iqama: string | null
           assigned_driver_manual_name: string | null
@@ -1126,7 +1140,9 @@ export type Database = {
           created_at: string
           created_by: string
           fault_location: string | null
+          front_photo_path: string | null
           id: string
+          left_photo_path: string | null
           manual_owner_name: string | null
           normalized_plate_number: string
           notes: string | null
@@ -1137,9 +1153,20 @@ export type Database = {
           operating_card_number: string | null
           operational_status: string
           organization_id: string
+          owner_contact_phone: string | null
+          owner_driver_id: string | null
+          owner_name: string | null
           owner_organization_id: string | null
           owner_source: string
+          ownership_contract_number: string | null
+          ownership_notes: string | null
+          ownership_type: string | null
           plate_number: string
+          rear_photo_path: string | null
+          rental_end_date: string | null
+          rental_monthly_cost: number | null
+          rental_start_date: string | null
+          right_photo_path: string | null
           suspended_at: string | null
           suspended_by: string | null
           technical_status: string
@@ -1154,6 +1181,7 @@ export type Database = {
         Insert: {
           archived_at?: string | null
           archived_by?: string | null
+          assigned_organization_id?: string | null
           assigned_driver_id?: string | null
           assigned_driver_manual_iqama?: string | null
           assigned_driver_manual_name?: string | null
@@ -1166,7 +1194,9 @@ export type Database = {
           created_at?: string
           created_by: string
           fault_location?: string | null
+          front_photo_path?: string | null
           id: string
+          left_photo_path?: string | null
           manual_owner_name?: string | null
           normalized_plate_number: string
           notes?: string | null
@@ -1177,9 +1207,20 @@ export type Database = {
           operating_card_number?: string | null
           operational_status?: string
           organization_id: string
+          owner_contact_phone?: string | null
+          owner_driver_id?: string | null
+          owner_name?: string | null
           owner_organization_id?: string | null
           owner_source: string
+          ownership_contract_number?: string | null
+          ownership_notes?: string | null
+          ownership_type?: string | null
           plate_number: string
+          rear_photo_path?: string | null
+          rental_end_date?: string | null
+          rental_monthly_cost?: number | null
+          rental_start_date?: string | null
+          right_photo_path?: string | null
           suspended_at?: string | null
           suspended_by?: string | null
           technical_status?: string
@@ -1194,6 +1235,7 @@ export type Database = {
         Update: {
           archived_at?: string | null
           archived_by?: string | null
+          assigned_organization_id?: string | null
           assigned_driver_id?: string | null
           assigned_driver_manual_iqama?: string | null
           assigned_driver_manual_name?: string | null
@@ -1206,7 +1248,9 @@ export type Database = {
           created_at?: string
           created_by?: string
           fault_location?: string | null
+          front_photo_path?: string | null
           id?: string
+          left_photo_path?: string | null
           manual_owner_name?: string | null
           normalized_plate_number?: string
           notes?: string | null
@@ -1217,9 +1261,20 @@ export type Database = {
           operating_card_number?: string | null
           operational_status?: string
           organization_id?: string
+          owner_contact_phone?: string | null
+          owner_driver_id?: string | null
+          owner_name?: string | null
           owner_organization_id?: string | null
           owner_source?: string
+          ownership_contract_number?: string | null
+          ownership_notes?: string | null
+          ownership_type?: string | null
           plate_number?: string
+          rear_photo_path?: string | null
+          rental_end_date?: string | null
+          rental_monthly_cost?: number | null
+          rental_start_date?: string | null
+          right_photo_path?: string | null
           suspended_at?: string | null
           suspended_by?: string | null
           technical_status?: string
@@ -1237,6 +1292,13 @@ export type Database = {
             columns: ["archived_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fleet_vehicles_assigned_organization_id_fkey"
+            columns: ["assigned_organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
           {
@@ -1842,11 +1904,13 @@ export type Database = {
           p_keeta_username: string
           p_mobile_number: string
           p_nationality: string
+          p_nfc_number?: string
           p_organization_id: string
           p_settlement_type: Database["public"]["Enums"]["driver_settlement_type"]
           p_vehicle_authorization_expiry_date: string
           p_vehicle_authorization_number: string
           p_vehicle_brand: string
+          p_vehicle_id?: string | null
           p_vehicle_number: string
           p_vehicle_owner_identifier: string
           p_vehicle_serial_number: string
@@ -2232,11 +2296,13 @@ export type Database = {
           p_keeta_username: string
           p_mobile_number: string
           p_nationality: string
+          p_nfc_number?: string
           p_organization_id: string
           p_settlement_type: Database["public"]["Enums"]["driver_settlement_type"]
           p_vehicle_authorization_expiry_date: string
           p_vehicle_authorization_number: string
           p_vehicle_brand: string
+          p_vehicle_id?: string | null
           p_vehicle_number: string
           p_vehicle_owner_identifier: string
           p_vehicle_serial_number: string

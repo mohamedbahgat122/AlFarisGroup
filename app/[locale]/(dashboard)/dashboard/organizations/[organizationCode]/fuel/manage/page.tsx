@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { AccessDenied } from "@/components/dashboard/access-denied";
 import { FuelManagementClient } from "@/components/dashboard/fuel/fuel-management-client";
-import { getFuelManagementData } from "@/features/fuel/queries";
+import { getKafaratplusFuelManagementData } from "@/features/fuel/queries";
 import { getBusinessDateString } from "@/features/drivers/expiry";
-import { getAccessibleOrganizationByCode } from "@/features/organizations/queries";
+import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isLocale } from "@/types/locale";
 
@@ -41,30 +42,32 @@ export default async function FuelManagementRoute({
     notFound();
   }
 
-  const organization = await getAccessibleOrganizationByCode(organizationCode);
+  const access = await getOrganizationPageAccessByCode(organizationCode);
 
-  if (!organization || !organization.navigation.fuelManagement) {
+  if (access.status === "unauthenticated") {
+    redirect(`/${locale}/login`);
+  }
+
+  if (access.status === "not_found") {
     notFound();
+  }
+
+  if (access.status !== "success") {
+    return <AccessDenied locale={locale} />;
+  }
+
+  const organization = access.organization;
+
+  if (!organization.navigation.fuelManagement) {
+    return <AccessDenied locale={locale} />;
   }
 
   const fuelDate = isDate(query?.date) ? query.date : getBusinessDateString();
   const dictionary = getDictionary(locale).dashboard.fuel;
-  const data = await getFuelManagementData({
+  const data = await getKafaratplusFuelManagementData({
     organizationId: organization.id,
     fuelDate,
   });
-
-  if (data.status !== "success") {
-    return (
-      <div className="min-h-full bg-background px-5 py-6 sm:px-7">
-        <div className="border border-border bg-surface px-6 py-10 text-center">
-          <h1 className="text-lg font-bold text-navy">
-            {dictionary.errors.load_failed}
-          </h1>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <FuelManagementClient
@@ -73,6 +76,7 @@ export default async function FuelManagementRoute({
       organization={organization}
       rows={data.rows}
       fuelDate={fuelDate}
+      integrationMessage={data.status === "success" ? undefined : data.message}
     />
   );
 }

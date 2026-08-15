@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { AccessDenied } from "@/components/dashboard/access-denied";
 import { RealtimeRefresh } from "@/components/dashboard/realtime-refresh";
 import { ShiftManagementClient } from "@/components/dashboard/shifts/shift-management-client";
-import { getAccessibleOrganizationByCode } from "@/features/organizations/queries";
+import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import { getShiftManagementData } from "@/features/shifts/queries";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isLocale } from "@/types/locale";
@@ -36,21 +37,31 @@ export default async function ShiftsManagementPage({ params }: RouteProps) {
     notFound();
   }
 
-  const organization = await getAccessibleOrganizationByCode(organizationCode);
+  const access = await getOrganizationPageAccessByCode(organizationCode);
 
-  if (!organization) {
+  if (access.status === "unauthenticated") {
+    redirect(`/${locale}/login`);
+  }
+
+  if (access.status === "not_found") {
     notFound();
   }
 
+  if (access.status !== "success") {
+    return <AccessDenied locale={locale} />;
+  }
+
+  const organization = access.organization;
+
   if (!organization.navigation.shifts) {
-    notFound();
+    return <AccessDenied locale={locale} />;
   }
 
   const dictionary = getDictionary(locale).dashboard.shifts.management;
   const result = await getShiftManagementData({ organizationId: organization.id });
 
   if (result.status === "unauthorized") {
-    redirect(`/${locale}/login`);
+    return <AccessDenied locale={locale} />;
   }
 
   if (result.status === "load_error") {

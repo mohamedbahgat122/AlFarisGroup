@@ -206,14 +206,7 @@ export function CreateUserForm({
             name="homeOrganizationId"
             value={homeOrganizationId}
             onChange={(event) => {
-              const nextHomeOrganizationId = event.target.value;
-              setHomeOrganizationId(nextHomeOrganizationId);
-
-              setAccessValues((current) => {
-                const next = { ...current };
-                delete next[nextHomeOrganizationId];
-                return next;
-              });
+              setHomeOrganizationId(event.target.value);
             }}
             className="min-h-12 w-full rounded-xl border border-border bg-white px-4 text-base text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
             required

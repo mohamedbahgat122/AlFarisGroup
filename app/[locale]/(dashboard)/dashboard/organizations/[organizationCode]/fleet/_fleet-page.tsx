@@ -1,9 +1,10 @@
 import { notFound, redirect } from "next/navigation";
+import { AccessDenied } from "@/components/dashboard/access-denied";
 import { FleetManagementClient } from "@/components/dashboard/fleet/fleet-management-client";
 import { getBusinessDateString } from "@/features/drivers/expiry";
 import { getFleetPageData } from "@/features/fleet/queries";
 import type { FleetVehicleCategory } from "@/features/fleet/types";
-import { getAccessibleOrganizationByCode } from "@/features/organizations/queries";
+import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import { getDictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
 
@@ -18,17 +19,27 @@ export async function FleetPage({
   category: FleetVehicleCategory;
   includeArchived: boolean;
 }) {
-  const organization = await getAccessibleOrganizationByCode(organizationCode);
+  const access = await getOrganizationPageAccessByCode(organizationCode);
 
-  if (!organization) {
+  if (access.status === "unauthenticated") {
+    redirect(`/${locale}/login`);
+  }
+
+  if (access.status === "not_found") {
     notFound();
   }
+
+  if (access.status !== "success") {
+    return <AccessDenied locale={locale} />;
+  }
+
+  const organization = access.organization;
 
   if (
     (category === "car" && !organization.navigation.fleetCars) ||
     (category === "motorcycle" && !organization.navigation.fleetMotorcycles)
   ) {
-    notFound();
+    return <AccessDenied locale={locale} />;
   }
 
   const result = await getFleetPageData({
@@ -38,7 +49,7 @@ export async function FleetPage({
   });
 
   if (result.status === "unauthorized") {
-    redirect(`/${locale}/login`);
+    return <AccessDenied locale={locale} />;
   }
 
   const dictionary = getDictionary(locale).dashboard.fleet;

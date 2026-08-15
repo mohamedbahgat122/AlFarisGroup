@@ -81,6 +81,17 @@ type DriverAccountTarget = {
   deleted_at: string | null;
 };
 
+type DriverFleetVehicleResolution =
+  | {
+      success: true;
+      vehicleId: string | null;
+      vehicleNumber: string;
+    }
+  | {
+      success: false;
+      code: DriverMutationErrorCode;
+    };
+
 export async function createDriverForOrganization({
   organizationCode,
   input,
@@ -123,6 +134,22 @@ export async function createDriverForOrganization({
 
   if (!validation.valid) {
     return { success: false, code: "validation_error" };
+  }
+
+  const admin = getAdminClientOrNull();
+
+  if (!admin) {
+    return { success: false, code: "configuration_error" };
+  }
+
+  const vehicleResolution = await resolveDriverFleetVehicle({
+    admin,
+    organizationId: access.organization.id,
+    vehicleId: validation.input.vehicleId,
+  });
+
+  if (!vehicleResolution.success) {
+    return { success: false, code: vehicleResolution.code };
   }
 
   const uploaded: DriverDocumentUploadMetadata[] = [];
@@ -210,16 +237,6 @@ export async function createDriverForOrganization({
     uploadedAssetPaths.push(operatingCardUpload.path);
   }
 
-  const admin = getAdminClientOrNull();
-
-  if (!admin) {
-    await deleteDriverDocuments([
-      ...uploaded.map((document) => document.storage_path),
-      ...uploadedAssetPaths,
-    ]);
-    return { success: false, code: "configuration_error" };
-  }
-
   const createPayload = {
     p_actor_user_id: access.actorUserId,
     p_driver_id: driverId,
@@ -228,7 +245,7 @@ export async function createDriverForOrganization({
     p_nationality: validation.input.nationality,
     p_mobile_number: validation.input.mobileNumber,
     p_vehicle_type: validation.input.vehicleType,
-    p_vehicle_number: validation.input.vehicleNumber,
+    p_vehicle_number: vehicleResolution.vehicleNumber,
     p_vehicle_serial_number: validation.input.vehicleSerialNumber,
     p_vehicle_owner_identifier: validation.input.vehicleOwnerIdentifier,
     p_vehicle_brand: validation.input.vehicleBrand,
@@ -252,6 +269,8 @@ export async function createDriverForOrganization({
     p_bank_name: validation.input.bankName ?? "",
     p_account_number: validation.input.accountNumber ?? "",
     p_documents: uploaded,
+    p_vehicle_id: vehicleResolution.vehicleId,
+    p_nfc_number: validation.input.nfcNumber,
   } satisfies CreateDriverRecordArgs;
 
   const { error } = await admin.rpc("create_driver_record", createPayload);
@@ -386,6 +405,16 @@ export async function updateDriverForOrganization({
     return { success: false, code: "already_archived" };
   }
 
+  const vehicleResolution = await resolveDriverFleetVehicle({
+    admin,
+    organizationId: access.organization.id,
+    vehicleId: validation.input.vehicleId,
+  });
+
+  if (!vehicleResolution.success) {
+    return { success: false, code: vehicleResolution.code };
+  }
+
   const { data: existingDocuments, error: documentsError } = await admin
     .from("driver_documents")
     .select("document_type, storage_path")
@@ -505,7 +534,7 @@ export async function updateDriverForOrganization({
     p_nationality: validation.input.nationality,
     p_mobile_number: validation.input.mobileNumber,
     p_vehicle_type: validation.input.vehicleType,
-    p_vehicle_number: validation.input.vehicleNumber,
+    p_vehicle_number: vehicleResolution.vehicleNumber,
     p_vehicle_serial_number: validation.input.vehicleSerialNumber,
     p_vehicle_owner_identifier: validation.input.vehicleOwnerIdentifier,
     p_vehicle_brand: validation.input.vehicleBrand,
@@ -529,6 +558,8 @@ export async function updateDriverForOrganization({
     p_bank_name: validation.input.bankName ?? "",
     p_account_number: validation.input.accountNumber ?? "",
     p_documents: replacementDocuments,
+    p_vehicle_id: vehicleResolution.vehicleId,
+    p_nfc_number: validation.input.nfcNumber,
   } satisfies UpdateDriverRecordArgs;
 
   const { error } = await admin.rpc("update_driver_record", updatePayload);
@@ -1908,6 +1939,56 @@ async function updateDriverExtensionFields(
     .eq("organization_id", organizationId);
 
   return { success: !error, error };
+}
+
+async function resolveDriverFleetVehicle({
+  admin,
+  organizationId,
+  vehicleId,
+}: {
+  admin: ReturnType<typeof createAdminClient>;
+  organizationId: string;
+  vehicleId?: string;
+}): Promise<DriverFleetVehicleResolution> {
+  const normalizedVehicleId = vehicleId?.trim() ?? "";
+
+  if (!normalizedVehicleId) {
+    return {
+      success: true,
+      vehicleId: null,
+      vehicleNumber: "",
+    };
+  }
+
+  const { data, error } = await admin
+    .from("fleet_vehicles")
+    .select("id, plate_number")
+    .eq("id", normalizedVehicleId)
+    .eq("assigned_organization_id", organizationId)
+    .is("archived_at", null)
+    .maybeSingle();
+
+  if (error) {
+    logDriverUpdateStageFailure("validate_form_data", {
+      driverIdExists: false,
+      organizationResolved: true,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    return { success: false, code: "validation_error" };
+  }
+
+  if (!data) {
+    return { success: false, code: "validation_error" };
+  }
+
+  return {
+    success: true,
+    vehicleId: data.id,
+    vehicleNumber: data.plate_number,
+  };
 }
 
 function nullableTrimmed(value: string) {

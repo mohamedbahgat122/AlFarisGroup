@@ -26,7 +26,6 @@ export type AppRequestRow = {
   submittedNote: string | null;
   driverName: string;
   driverIdentifier: string | null;
-  driverPhotoUrl: string | null;
   organizationName: string | null;
   vehicleLabel: string | null;
   vehiclePlate: string | null;
@@ -38,6 +37,22 @@ export type AppRequestRow = {
   reviewedAt: string | null;
   completedAt: string | null;
   detail: Record<string, string | number | null>;
+};
+
+export type AppRequestSummary = {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  today: number;
+  activeToday: number;
+};
+
+export type OdometerSummary = {
+  total: number;
+  notStarted: number;
+  startedOnly: number;
+  completed: number;
 };
 
 export type OdometerShiftRow = {
@@ -54,7 +69,6 @@ export type OdometerShiftRow = {
   startPhotoPathPresent: boolean;
   startPhotoCapturedAt: string | null;
   organizationName: string | null;
-  driverPhotoUrl: string | null;
   startReviewStatus: OdometerReviewStatus | null;
   startReviewerName: string | null;
   startReviewedAt: string | null;

@@ -14,6 +14,10 @@ type UsersRouteProps = {
   params: Promise<{
     locale: string;
   }>;
+  searchParams?: Promise<{
+    page?: string;
+    search?: string;
+  }>;
 };
 
 export async function generateMetadata({
@@ -37,8 +41,9 @@ export async function generateMetadata({
   };
 }
 
-export default async function UsersRoute({ params }: UsersRouteProps) {
+export default async function UsersRoute({ params, searchParams }: UsersRouteProps) {
   const { locale } = await params;
+  const query = (await searchParams) ?? {};
 
   if (!isLocale(locale)) {
     notFound();
@@ -51,9 +56,13 @@ export default async function UsersRoute({ params }: UsersRouteProps) {
   }
 
   const dictionary = getDictionary(locale).dashboard.userManagement;
+  const page = Number(query.page);
   const [organizations, usersResult] = await Promise.all([
     getActiveOrganizationsForUserManagement(),
-    getManagedUsersForUserManagement(),
+    getManagedUsersForUserManagement({
+      page: Number.isFinite(page) ? page : 1,
+      search: query.search ?? "",
+    }),
   ]);
   const creationDisabled =
     organizations.length === 0 || usersResult.status === "configuration_error";
@@ -76,6 +85,17 @@ export default async function UsersRoute({ params }: UsersRouteProps) {
     );
   }
 
+  if (usersResult.status !== "success") {
+    return (
+      <StatePage
+        title={dictionary.loadErrorTitle}
+        description={dictionary.loadErrorDescription}
+      />
+    );
+  }
+
+  const successfulUsersResult = usersResult;
+
   return (
     <div className="min-h-full bg-background">
       {organizations.length === 0 ? (
@@ -90,7 +110,8 @@ export default async function UsersRoute({ params }: UsersRouteProps) {
         locale={locale}
         dictionary={dictionary}
         organizations={organizations}
-        users={usersResult.users}
+        users={successfulUsersResult.users}
+        pagination={successfulUsersResult.pagination}
         creationDisabled={creationDisabled}
       />
     </div>

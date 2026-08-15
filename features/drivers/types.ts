@@ -31,7 +31,9 @@ export type DriverListItem = {
   fullName: string;
   nationality: string;
   mobileNumber: string;
+  nfcNumber: string | null;
   vehicleType: DriverVehicleType;
+  vehicleId: string | null;
   vehicleNumber: string;
   keetaVehiclePlateNumber: string | null;
   vehicleSerialNumber: string | null;
@@ -112,10 +114,24 @@ export type DriverActivityLog = {
   };
 };
 
+export type DriverSummary = {
+  total: number;
+  active: number;
+  inactive: number;
+  archived: number;
+};
+
 export type DriversQueryResult =
   | {
       status: "success";
       drivers: DriverListItem[];
+      pagination: {
+        page: number;
+        pageSize: number;
+        totalRows: number;
+        totalPages: number;
+      };
+      summary: DriverSummary;
     }
   | {
       status: "unauthorized" | "load_error";
@@ -136,7 +152,9 @@ export type DriverMutationInput = {
   fullName: string;
   nationality: string;
   mobileNumber: string;
+  nfcNumber: string;
   vehicleType: DriverVehicleType;
+  vehicleId?: string;
   vehicleNumber: string;
   keetaVehiclePlateNumber: string;
   vehicleSerialNumber: string;
@@ -166,7 +184,9 @@ export type DriverFormFieldName =
   | "fullName"
   | "nationality"
   | "mobileNumber"
+  | "nfcNumber"
   | "vehicleType"
+  | "vehicleId"
   | "vehicleNumber"
   | "keetaVehiclePlateNumber"
   | "vehicleSerialNumber"

@@ -2,6 +2,7 @@ import { DashboardUserControls } from "@/components/dashboard/dashboard-user-con
 import { OrganizationSwitcher } from "@/components/dashboard/organization-switcher";
 import type { AccessibleOrganization } from "@/features/organizations/types";
 import type { AppNotification } from "@/features/notifications/types";
+import type { SystemExpiryAlertsResult } from "@/features/expiry-alerts/types";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
 
@@ -27,6 +28,7 @@ type DashboardHeaderProps = {
         unreadCount: 0;
         canViewNotifications: false;
       };
+  systemExpiryAlerts: SystemExpiryAlertsResult;
   onOpenSidebar: () => void;
 };
 
@@ -36,10 +38,11 @@ export function DashboardHeader({
   user,
   organizations,
   appNotifications,
+  systemExpiryAlerts,
   onOpenSidebar,
 }: DashboardHeaderProps) {
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border bg-surface/95 px-4 backdrop-blur sm:px-6 lg:h-18">
+    <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-border bg-surface/98 px-4 shadow-sm backdrop-blur sm:px-6 lg:h-18">
       <div className="flex min-w-0 items-center gap-3">
         <button
           type="button"
@@ -60,6 +63,7 @@ export function DashboardHeader({
         dictionary={dictionary}
         user={user}
         appNotifications={appNotifications}
+        systemExpiryAlerts={systemExpiryAlerts}
       />
     </header>
   );

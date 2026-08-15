@@ -1,14 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { Cairo, Geist_Mono } from "next/font/google";
+import { Geist_Mono, IBM_Plex_Sans_Arabic } from "next/font/google";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { getDirection, isLocale, locales } from "@/types/locale";
 import "../globals.css";
 
-const cairo = Cairo({
-  variable: "--font-cairo",
+const arabicUi = IBM_Plex_Sans_Arabic({
+  variable: "--font-arabic-ui",
   subsets: ["arabic", "latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -54,7 +54,7 @@ export default async function LocaleLayout({
     <html
       lang={locale}
       dir={getDirection(locale)}
-      className={`${cairo.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${arabicUi.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full">{children}</body>
     </html>

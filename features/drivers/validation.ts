@@ -44,6 +44,8 @@ export function normalizeAndValidateDriverInput(
     fullName: input.fullName.trim(),
     nationality: input.nationality.trim(),
     mobileNumber: normalizeMobile(input.mobileNumber),
+    nfcNumber: normalizeOptionalText(input.nfcNumber) ?? "",
+    vehicleId: normalizeOptionalText(input.vehicleId) ?? undefined,
     vehicleNumber: input.vehicleNumber.trim(),
     keetaVehiclePlateNumber: input.keetaVehiclePlateNumber.trim(),
     vehicleSerialNumber: input.vehicleSerialNumber.trim(),
@@ -89,7 +91,13 @@ export function normalizeAndValidateDriverInput(
   if (!allowedVehicleTypes.has(normalized.vehicleType)) {
     fields.push("vehicleType");
   }
-  if (!isLength(normalized.vehicleNumber, 1, 80)) {
+  if (normalized.vehicleId && !isUuid(normalized.vehicleId)) {
+    fields.push("vehicleId");
+  }
+  if (normalized.nfcNumber && normalized.nfcNumber.length > 80) {
+    fields.push("nfcNumber");
+  }
+  if (normalized.vehicleNumber && normalized.vehicleNumber.length > 80) {
     fields.push("vehicleNumber");
   }
   if (

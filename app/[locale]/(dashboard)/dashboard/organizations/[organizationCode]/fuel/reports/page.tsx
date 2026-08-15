@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { AccessDenied } from "@/components/dashboard/access-denied";
 import { FuelReportsTable } from "@/components/dashboard/fuel/fuel-reports-table";
 import { getBusinessDateString } from "@/features/drivers/expiry";
-import { getFuelReportData } from "@/features/fuel/queries";
-import { getAccessibleOrganizationByCode } from "@/features/organizations/queries";
+import { getKafaratplusFuelReportData } from "@/features/fuel/queries";
+import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isLocale } from "@/types/locale";
 
@@ -41,10 +42,24 @@ export default async function FuelReportsRoute({
     notFound();
   }
 
-  const organization = await getAccessibleOrganizationByCode(organizationCode);
+  const access = await getOrganizationPageAccessByCode(organizationCode);
 
-  if (!organization || !organization.navigation.fuelReports) {
+  if (access.status === "unauthenticated") {
+    redirect(`/${locale}/login`);
+  }
+
+  if (access.status === "not_found") {
     notFound();
+  }
+
+  if (access.status !== "success") {
+    return <AccessDenied locale={locale} />;
+  }
+
+  const organization = access.organization;
+
+  if (!organization.navigation.fuelReports) {
+    return <AccessDenied locale={locale} />;
   }
 
   const today = getBusinessDateString();
@@ -52,24 +67,12 @@ export default async function FuelReportsRoute({
   const toDate = isDate(query?.to) ? query.to : today;
   const page = getPositiveInteger(query?.page) ?? 1;
   const dictionary = getDictionary(locale).dashboard.fuel;
-  const data = await getFuelReportData({
+  const data = await getKafaratplusFuelReportData({
     organizationId: organization.id,
     fromDate,
     page,
     toDate,
   });
-
-  if (data.status !== "success") {
-    return (
-      <div className="min-h-full bg-background px-5 py-6 sm:px-7">
-        <div className="border border-border bg-surface px-6 py-10 text-center">
-          <h1 className="text-lg font-bold text-navy">
-            {dictionary.errors.load_failed}
-          </h1>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-full bg-background">
@@ -99,7 +102,11 @@ export default async function FuelReportsRoute({
         </form>
       </div>
       <div className="px-5 py-6 sm:px-7">
-        {data.rows.length === 0 ? (
+        {data.status !== "success" ? (
+          <div className="border border-amber-200 bg-amber-50 px-6 py-10 text-center">
+            <p className="text-sm font-bold text-amber-800">{data.message}</p>
+          </div>
+        ) : data.rows.length === 0 ? (
           <div className="border border-border bg-surface px-6 py-10 text-center">
             <p className="text-sm font-semibold text-muted">
               {dictionary.emptyReports}
@@ -108,13 +115,36 @@ export default async function FuelReportsRoute({
         ) : (
           <FuelReportsTable
             dictionary={dictionary}
-            fromDate={fromDate}
             locale={locale}
-            organizationCode={organizationCode}
             rows={data.rows}
-            toDate={toDate}
+            totals={data.totals}
+            vehicleSummaries={data.vehicleSummaries}
           />
         )}
+        {data.status === "success" ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm font-semibold text-muted">
+            <p>
+              العمليات: {data.operationsCount} | الصفحة {data.pagination.page} من {data.pagination.totalPages}
+            </p>
+            <div className="flex gap-2">
+              {data.pagination.page > 1 ? (
+                <a className="rounded-lg border border-border bg-surface px-3 py-2" href={`?from=${fromDate}&to=${toDate}&page=${data.pagination.page - 1}`}>
+                  السابق
+                </a>
+              ) : null}
+              {data.pagination.page < data.pagination.totalPages ? (
+                <a className="rounded-lg border border-border bg-surface px-3 py-2" href={`?from=${fromDate}&to=${toDate}&page=${data.pagination.page + 1}`}>
+                  التالي
+                </a>
+              ) : null}
+            </div>
+            {data.fuelClassification.excludedNonFuelCount > 0 || data.fuelClassification.unverifiedCount > 0 ? (
+              <p className="w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                تم استبعاد {data.fuelClassification.excludedNonFuelCount} عملية غير وقود. توجد {data.fuelClassification.unverifiedCount} عملية غير مؤكدة لم تدخل في الإجماليات.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

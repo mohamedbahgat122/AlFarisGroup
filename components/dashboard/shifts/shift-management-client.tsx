@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import {
   archiveShiftTemplateAction,
   replaceShiftAssignmentsAction,
@@ -209,6 +210,8 @@ function ShiftCard({
     saveShiftTemplateAction,
     idleState,
   );
+  useRefreshOnUnauthorized(archiveState);
+  useRefreshOnUnauthorized(statusState);
 
   return (
     <article className="rounded-lg border border-border bg-surface p-5 shadow-sm">
@@ -306,6 +309,7 @@ function ShiftFormDialog({
   onClose: () => void;
 }) {
   const [state, action] = useActionState(saveShiftTemplateAction, idleState);
+  useRefreshOnUnauthorized(state);
   const [startTime, setStartTime] = useState(shift?.startTime ?? "08:00");
   const [endTime, setEndTime] = useState(shift?.endTime ?? "20:00");
   const [hasBreak, setHasBreak] = useState(shift?.hasBreak ?? false);
@@ -423,6 +427,7 @@ function AssignmentDialog({
   onClose: () => void;
 }) {
   const [state, action] = useActionState(replaceShiftAssignmentsAction, idleState);
+  useRefreshOnUnauthorized(state);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const filteredDrivers = drivers.filter((driver) => {
@@ -615,6 +620,20 @@ function ActionMessage({ state }: { state: ShiftActionResult }) {
       {state.message}
     </p>
   );
+}
+
+function useRefreshOnUnauthorized(state: ShiftActionResult) {
+  const router = useRouter();
+
+  useEffect(() => {
+    if (
+      state.status === "error" &&
+      "code" in state &&
+      state.code === "unauthorized"
+    ) {
+      router.refresh();
+    }
+  }, [router, state]);
 }
 
 function formatMinutes(minutes: number, locale: "ar" | "en") {

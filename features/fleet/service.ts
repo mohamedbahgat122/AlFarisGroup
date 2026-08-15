@@ -26,6 +26,16 @@ type FleetMutationResult =
   | { success: false; code: FleetMutationCode; fields?: string[] };
 
 type Json = Database["public"]["Tables"]["fleet_vehicle_activity_logs"]["Row"]["new_values"];
+type SupabaseLikeError = {
+  code?: string;
+  message?: string;
+  details?: string;
+};
+
+const duplicatePlateConstraintNames = [
+  "fleet_vehicles_active_normalized_plate_global_key",
+  "fleet_vehicles_active_normalized_plate_key",
+];
 
 export async function createFleetVehicle({
   organizationCode,
@@ -82,9 +92,7 @@ export async function createFleetVehicle({
     if (upload?.success) await deleteFleetFiles([upload.path]);
     return {
       success: false,
-      code: error.message.includes("fleet_vehicles_active_normalized_plate_key")
-        ? "duplicate_plate"
-        : "save_failed",
+      code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
     };
   }
 
@@ -159,9 +167,7 @@ export async function updateFleetVehicle({
     if (upload?.success) await deleteFleetFiles([upload.path]);
     return {
       success: false,
-      code: error.message.includes("fleet_vehicles_active_normalized_plate_key")
-        ? "duplicate_plate"
-        : "save_failed",
+      code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
     };
   }
 
@@ -243,7 +249,12 @@ export async function setFleetOperationalStatus({
     .update(patch)
     .eq("id", vehicleId)
     .eq("organization_id", access.organization.id);
-  if (error) return { success: false, code: "save_failed" };
+  if (error) {
+    return {
+      success: false,
+      code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
+    };
+  }
 
   await insertActivityLog({
     organizationId: access.organization.id,
@@ -284,7 +295,12 @@ export async function setFleetArchiveStatus({
     .update(patch)
     .eq("id", vehicleId)
     .eq("organization_id", access.organization.id);
-  if (error) return { success: false, code: "save_failed" };
+  if (error) {
+    return {
+      success: false,
+      code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
+    };
+  }
   await insertActivityLog({
     organizationId: access.organization.id,
     vehicleId,
@@ -349,7 +365,7 @@ export async function updateFleetTechnicalStatus({
   return { success: true, vehicleId };
 }
 
-function buildRecord({
+export function buildRecord({
   input,
   organizationId,
   actorUserId,
@@ -375,6 +391,15 @@ function buildRecord({
     owner_source: input.ownerSource,
     owner_organization_id: input.ownerSource === "organization" ? organizationId : null,
     manual_owner_name: input.ownerSource === "manual" ? input.manualOwnerName : null,
+    ownership_type: input.ownershipType,
+    owner_name: input.ownerName,
+    owner_driver_id: input.ownershipType === "driver_owned" ? input.ownerDriverId : null,
+    owner_contact_phone: input.ownerContactPhone,
+    rental_start_date: input.rentalStartDate,
+    rental_end_date: input.rentalEndDate,
+    rental_monthly_cost: input.rentalMonthlyCost,
+    ownership_contract_number: input.ownershipContractNumber,
+    ownership_notes: input.ownershipNotes,
     operating_card_number: input.operatingCardNumber,
     operating_card_expiry_date: input.operatingCardExpiryDate,
     operating_card_file_path: uploadedFile?.path ?? existing?.operating_card_file_path ?? null,
@@ -412,6 +437,7 @@ function buildRecord({
     suspended_by: existing?.suspended_by ?? null,
     archived_at: existing?.archived_at ?? null,
     archived_by: existing?.archived_by ?? null,
+    assigned_organization_id: input.assignedOrganizationId ?? null,
   };
 }
 
@@ -456,7 +482,7 @@ async function getFleetVehicleForMutation({
   return data as FleetVehicleRow;
 }
 
-async function insertActivityLog({
+export async function insertActivityLog({
   organizationId,
   vehicleId,
   actorUserId,
@@ -474,8 +500,8 @@ async function insertActivityLog({
   note?: string | null;
 }) {
   const admin = getAdminClientOrNull();
-  if (!admin) return;
-  await admin.from("fleet_vehicle_activity_logs").insert({
+  if (!admin) return { success: false as const, error: null };
+  const { error } = await admin.from("fleet_vehicle_activity_logs").insert({
     id: randomUUID(),
     organization_id: organizationId,
     vehicle_id: vehicleId,
@@ -485,9 +511,12 @@ async function insertActivityLog({
     new_values: newValues,
     note,
   });
+  return error
+    ? { success: false as const, error }
+    : { success: true as const };
 }
 
-function getAdminClientOrNull() {
+export function getAdminClientOrNull() {
   try {
     return createAdminClient();
   } catch {
@@ -495,11 +524,32 @@ function getAdminClientOrNull() {
   }
 }
 
-function safeFleetSnapshot(value: Partial<FleetVehicleRow>) {
+export function isDuplicateFleetPlateError(error: SupabaseLikeError | null | undefined) {
+  if (!error || error.code !== "23505") return false;
+
+  const haystack = [error.message, error.details]
+    .filter(Boolean)
+    .join(" ");
+
+  return duplicatePlateConstraintNames.some((constraintName) =>
+    haystack.includes(constraintName),
+  );
+}
+
+export function safeFleetSnapshot(value: Partial<FleetVehicleRow>) {
   return {
     vehicle_type: value.vehicle_type,
     plate_number: value.plate_number,
     owner_source: value.owner_source,
+    ownership_type: value.ownership_type,
+    owner_name: value.owner_name,
+    owner_driver_id: value.owner_driver_id,
+    owner_contact_phone: value.owner_contact_phone,
+    rental_start_date: value.rental_start_date,
+    rental_end_date: value.rental_end_date,
+    rental_monthly_cost: value.rental_monthly_cost,
+    ownership_contract_number: value.ownership_contract_number,
+    ownership_notes: value.ownership_notes,
     operational_status: value.operational_status,
     technical_status: value.technical_status,
     fault_location: value.fault_location,
@@ -507,7 +557,7 @@ function safeFleetSnapshot(value: Partial<FleetVehicleRow>) {
   } satisfies Record<string, unknown>;
 }
 
-function safeAssignedDriverSnapshot(value: Partial<FleetVehicleRow>) {
+export function safeAssignedDriverSnapshot(value: Partial<FleetVehicleRow>) {
   return {
     assigned_driver_source: value.assigned_driver_source,
     assigned_driver_id: value.assigned_driver_id,
@@ -516,7 +566,7 @@ function safeAssignedDriverSnapshot(value: Partial<FleetVehicleRow>) {
   } satisfies Record<string, unknown>;
 }
 
-function safeAuthorizedPersonSnapshot(value: Partial<FleetVehicleRow>) {
+export function safeAuthorizedPersonSnapshot(value: Partial<FleetVehicleRow>) {
   return {
     authorized_person_source: value.authorized_person_source,
     authorized_driver_id: value.authorized_driver_id,

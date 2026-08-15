@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
+import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { Database } from "@/types/database";
 import type { Profile } from "@/types/profile";
 
@@ -17,6 +18,7 @@ export type OrganizationNavigationPermissions = {
   notifications: boolean;
   odometerManagement: boolean;
   driverWarnings: boolean;
+  entitlements: boolean;
   shifts: boolean;
 };
 
@@ -57,6 +59,34 @@ export const getOrganizationPermissions = cache(
     (data ?? []).map((row) => row.permission_key as OrganizationPermissionKey),
   );
 });
+
+export const getGlobalPermissions = cache(
+  async (
+    supabase: SupabaseClient<Database>,
+    profile: Profile,
+  ): Promise<Set<GlobalPermissionKey>> => {
+    if (profile.role === "system_owner") {
+      const { globalPermissionKeys } = await import(
+        "@/features/permissions/global-registry"
+      );
+      return new Set(globalPermissionKeys);
+    }
+
+    const { data, error } = await supabase
+      .from("user_global_permissions")
+      .select("permission_key")
+      .eq("user_id", profile.id);
+
+    if (error) {
+      console.error("[getGlobalPermissions] Error loading global permissions for user:", profile.id.slice(-6), error);
+      return new Set();
+    }
+
+    return new Set(
+      (data ?? []).map((row) => row.permission_key as GlobalPermissionKey),
+    );
+  },
+);
 
 export async function hasOrganizationPermission({
   organizationId,
@@ -109,6 +139,7 @@ export function getAccessibleOrganizationNavigation(
     notifications: permissions.has("notifications.view"),
     odometerManagement: permissions.has("odometer.manage"),
     driverWarnings: permissions.has("driver_warnings.view"),
+    entitlements: permissions.has("entitlements.view"),
     shifts: permissions.has("shifts.view"),
   };
 }

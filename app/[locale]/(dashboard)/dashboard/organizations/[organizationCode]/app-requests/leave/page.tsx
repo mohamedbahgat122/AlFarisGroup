@@ -27,7 +27,11 @@ export default async function LeaveRequestsRoute({ params, searchParams }: Route
       organizationCode={organizationCode}
       requestType="leave"
       title={dictionary.leaveTitle}
-      query={{ ...query, page: toPage(query?.page) }}
+      query={{
+        ...query,
+        search: query?.search,
+        page: toPage(query?.page),
+      }}
     />
   );
 }

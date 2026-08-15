@@ -34,25 +34,25 @@ export function AppRequestsTable({
 }) {
   const [selected, setSelected] = useState<AppRequestRow | null>(null);
   const router = useRouter();
+  const isMeeting = requestType === "meeting";
 
   return (
     <>
       <div className="overflow-x-auto border border-border bg-surface">
-        <table className="w-full min-w-[1100px] border-collapse text-start">
+        <table className={isMeeting ? "min-w-[1780px] border-collapse text-start" : `table-fixed border-collapse text-start ${requestType === "leave" ? "min-w-[1460px]" : "w-full min-w-[1100px]"}`}>
           <thead className="bg-background text-xs font-bold uppercase text-muted">
             <tr>
-              {requestType === "leave" && <Header>{dictionary.columns.driverPhoto}</Header>}
-              <Header>{dictionary.driver}</Header>
-              <Header>{dictionary.driverId}</Header>
-              {requestType === "leave" && <Header>{dictionary.columns.organization}</Header>}
-              {requestType !== "leave" && <Header>{dictionary.vehicle}</Header>}
-              {requestType !== "leave" && <Header>{dictionary.plate}</Header>}
+              <Header className={isMeeting ? "w-[260px] min-w-[260px] whitespace-nowrap" : requestType === "leave" || requestType === "maintenance" ? "w-72 whitespace-nowrap" : undefined}>{dictionary.driver}</Header>
+              <Header className={isMeeting ? "w-[180px] min-w-[180px] whitespace-nowrap" : requestType === "leave" ? "w-44 whitespace-nowrap" : undefined}>{dictionary.driverId}</Header>
+              {requestType === "leave" && <Header className="w-48 whitespace-nowrap">{dictionary.columns.organization}</Header>}
+              {requestType !== "leave" && <Header className={isMeeting ? "w-[150px] min-w-[150px]" : undefined}>{dictionary.vehicle}</Header>}
+              {requestType !== "leave" && <Header className={isMeeting ? "w-[130px] min-w-[130px] whitespace-nowrap" : undefined}>{dictionary.plate}</Header>}
               {requestType === "leave" && (
                 <>
-                  <Header>{dictionary.columns.leaveType}</Header>
-                  <Header>{dictionary.columns.startDate}</Header>
-                  <Header>{dictionary.columns.endDate}</Header>
-                  <Header>{dictionary.columns.days}</Header>
+                  <Header className="w-36 whitespace-nowrap">{dictionary.columns.leaveType}</Header>
+                  <Header className="w-36 whitespace-nowrap">{dictionary.columns.startDate}</Header>
+                  <Header className="w-36 whitespace-nowrap">{dictionary.columns.endDate}</Header>
+                  <Header className="w-24 whitespace-nowrap">{dictionary.columns.days}</Header>
                 </>
               )}
               {requestType === "maintenance" && (
@@ -64,10 +64,10 @@ export function AppRequestsTable({
               )}
               {requestType === "meeting" && (
                 <>
-                  <Header>{dictionary.columns.meetingWith}</Header>
-                  <Header>{dictionary.columns.subject}</Header>
-                  <Header>{dictionary.columns.preferredDate}</Header>
-                  <Header>{dictionary.columns.scheduledAt}</Header>
+                  <Header className="w-[220px] min-w-[220px]">{dictionary.columns.meetingWith}</Header>
+                  <Header className="w-[220px] min-w-[220px]">{dictionary.columns.subject}</Header>
+                  <Header className="w-[150px] min-w-[150px] whitespace-nowrap">{dictionary.columns.preferredDate}</Header>
+                  <Header className="w-[190px] min-w-[190px] whitespace-nowrap">{dictionary.columns.scheduledAt}</Header>
                 </>
               )}
               {requestType === "oil_change" && (
@@ -76,45 +76,35 @@ export function AppRequestsTable({
                   <Header>{dictionary.columns.scheduledAt}</Header>
                 </>
               )}
-              <Header>{dictionary.requestDate}</Header>
-              <Header>{dictionary.status}</Header>
-              <Header>{dictionary.reviewer}</Header>
-              <Header>{dictionary.actions}</Header>
+              <Header className={isMeeting ? "w-[190px] min-w-[190px] whitespace-nowrap" : requestType === "leave" ? "w-44 whitespace-nowrap" : undefined}>{dictionary.requestDate}</Header>
+              <Header className={isMeeting ? "w-[150px] min-w-[150px] whitespace-nowrap" : requestType === "leave" ? "w-36 whitespace-nowrap" : undefined}>{dictionary.status}</Header>
+              <Header className={isMeeting ? "w-[190px] min-w-[190px]" : requestType === "leave" ? "w-40 whitespace-nowrap" : undefined}>{dictionary.reviewer}</Header>
+              <Header className={isMeeting ? "w-[120px] min-w-[120px] whitespace-nowrap" : requestType === "leave" ? "w-32 whitespace-nowrap" : undefined}>{dictionary.actions}</Header>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.map((row) => (
               <tr key={row.id}>
+                <Cell strong>
+                  <DriverNameCell name={row.driverName} identifier={row.driverIdentifier} />
+                </Cell>
+                <Cell nowrap>{row.driverIdentifier ?? dictionary.notAvailable}</Cell>
                 {requestType === "leave" && (
-                  <Cell>
-                    {row.driverPhotoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={row.driverPhotoUrl} alt="" className="h-10 w-10 rounded-full object-cover" />
-                    ) : (
-                      <span className="inline-grid h-10 w-10 place-items-center rounded-full bg-primary-soft text-xs font-bold text-primary">
-                        {row.driverName.slice(0, 1) || "-"}
-                      </span>
-                    )}
-                  </Cell>
-                )}
-                <Cell strong>{row.driverName}</Cell>
-                <Cell>{row.driverIdentifier ?? dictionary.notAvailable}</Cell>
-                {requestType === "leave" && (
-                  <Cell>{row.organizationName ?? dictionary.notAvailable}</Cell>
+                  <Cell truncate title={row.organizationName ?? dictionary.notAvailable}>{row.organizationName ?? dictionary.notAvailable}</Cell>
                 )}
                 {requestType !== "leave" && (
                   <>
-                    <Cell>{row.vehicleLabel ?? dictionary.notAvailable}</Cell>
-                    <Cell>{row.vehiclePlate ?? dictionary.notAvailable}</Cell>
+                    <Cell className={isMeeting ? "whitespace-normal leading-5" : undefined}>{row.vehicleLabel ?? dictionary.notAvailable}</Cell>
+                    <Cell nowrap>{row.vehiclePlate ?? dictionary.notAvailable}</Cell>
                   </>
                 )}
                 {renderRequestCells(row, requestType, dictionary, locale)}
-                <Cell>{formatDateTime(row.submittedAt, locale)}</Cell>
-                <Cell>
+                <Cell nowrap>{formatDateTime(row.submittedAt, locale)}</Cell>
+                <Cell nowrap>
                   <StatusBadge status={row.status} dictionary={dictionary} />
                 </Cell>
-                <Cell>{row.reviewerName ?? dictionary.notAvailable}</Cell>
-                <Cell>
+                <Cell truncate={!isMeeting} title={row.reviewerName ?? dictionary.notAvailable} className={isMeeting ? "whitespace-normal leading-5" : undefined}>{row.reviewerName ?? dictionary.notAvailable}</Cell>
+                <Cell nowrap>
                   <button
                     type="button"
                     onClick={() => setSelected(row)}
@@ -163,74 +153,92 @@ export function OdometerTable({
   canReview: boolean;
 }) {
   const [selected, setSelected] = useState<OdometerShiftRow | null>(null);
+  const [preview, setPreview] = useState<{ url: string; title: string; subtitle: string } | null>(null);
   const router = useRouter();
 
   return (
     <>
       <div className="overflow-x-auto border border-border bg-surface">
-        <table className="w-full min-w-[1500px] border-collapse text-start">
+        <table className="min-w-[2220px] table-fixed border-collapse text-start">
           <thead className="bg-background text-xs font-bold uppercase text-muted">
             <tr>
-              <Header>{dictionary.columns.driverPhoto}</Header>
-              <Header>{dictionary.driver}</Header>
-              <Header>{dictionary.driverId}</Header>
-              <Header>{dictionary.vehicle}</Header>
-              <Header>{dictionary.columns.actualPlate}</Header>
-              <Header>{dictionary.columns.shiftDate}</Header>
-              <Header>{dictionary.columns.startTime}</Header>
-              <Header>{dictionary.columns.startReading}</Header>
-              <Header>{dictionary.columns.startPhoto}</Header>
-              <Header>{dictionary.columns.startReviewStatus}</Header>
-              <Header>{dictionary.columns.endTime}</Header>
-              <Header>{dictionary.columns.endReading}</Header>
-              <Header>{dictionary.columns.endPhoto}</Header>
-              <Header>{dictionary.columns.endReviewStatus}</Header>
-              <Header>{dictionary.columns.distance}</Header>
-              <Header>{dictionary.actions}</Header>
+              <Header className="w-72 whitespace-nowrap">{dictionary.driver}</Header>
+              <Header className="w-48 whitespace-nowrap">{dictionary.driverId}</Header>
+              <Header className="w-60 whitespace-nowrap">{dictionary.vehicle}</Header>
+              <Header className="w-44 whitespace-nowrap">{dictionary.columns.actualPlate}</Header>
+              <Header className="w-44 whitespace-nowrap">{dictionary.columns.shiftDate}</Header>
+              <Header className="w-44 whitespace-nowrap">{dictionary.columns.startTime}</Header>
+              <Header className="w-36 whitespace-nowrap">{dictionary.columns.startReading}</Header>
+              <Header className="w-32 whitespace-nowrap">{dictionary.columns.startPhoto}</Header>
+              <Header className="w-44 whitespace-nowrap">{dictionary.columns.startReviewStatus}</Header>
+              <Header className="w-44 whitespace-nowrap">{dictionary.columns.endTime}</Header>
+              <Header className="w-36 whitespace-nowrap">{dictionary.columns.endReading}</Header>
+              <Header className="w-32 whitespace-nowrap">{dictionary.columns.endPhoto}</Header>
+              <Header className="w-44 whitespace-nowrap">{dictionary.columns.endReviewStatus}</Header>
+              <Header className="w-36 whitespace-nowrap">{dictionary.columns.distance}</Header>
+              <Header className="w-32 whitespace-nowrap">{dictionary.actions}</Header>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.map((row) => (
               <tr key={row.id}>
-                <Cell>
-                  {row.driverPhotoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={row.driverPhotoUrl} alt="" className="h-10 w-10 rounded-full object-cover" />
-                  ) : (
-                    <span className="inline-grid h-10 w-10 place-items-center rounded-full bg-primary-soft text-xs font-bold text-primary">
-                      {row.driverName.slice(0, 1) || "-"}
-                    </span>
-                  )}
+                <Cell strong>
+                  <DriverNameCell name={row.driverName} identifier={row.driverIdentifier} />
                 </Cell>
-                <Cell strong>{row.driverName}</Cell>
-                <Cell>{row.driverIdentifier ?? dictionary.notAvailable}</Cell>
-                <Cell>{formatVehicleLabel(row.vehicleLabel, dictionary)}</Cell>
-                <Cell>{row.vehiclePlate ?? dictionary.notAvailable}</Cell>
-                <Cell>{formatDateTime(row.shiftDate, locale, "Asia/Riyadh")}</Cell>
-                <Cell>{row.startedAt ? formatDateTime(row.startedAt, locale, "Asia/Riyadh") : dictionary.notAvailable}</Cell>
-                <Cell>{row.startReading === null ? dictionary.notAvailable : row.startReading.toLocaleString(locale)}</Cell>
+                <Cell nowrap>{row.driverIdentifier ?? dictionary.notAvailable}</Cell>
+                <Cell truncate title={formatVehicleLabel(row.vehicleLabel, dictionary)}>
+                  {formatVehicleLabel(row.vehicleLabel, dictionary)}
+                </Cell>
+                <Cell nowrap>{row.vehiclePlate ?? dictionary.notAvailable}</Cell>
+                <Cell>
+                  <DateTimeStack value={row.shiftDate} locale={locale} timeZone="Asia/Riyadh" fallback={dictionary.notAvailable} />
+                </Cell>
+                <Cell>
+                  <DateTimeStack value={row.startedAt} locale={locale} timeZone="Asia/Riyadh" fallback={dictionary.notAvailable} />
+                </Cell>
+                <Cell nowrap>{row.startReading === null ? dictionary.notAvailable : row.startReading.toLocaleString(locale)}</Cell>
                 <Cell>
                   <PhotoLink
                     url={row.startPhotoUrl}
                     hasPhoto={row.startPhotoPathPresent}
                     label={dictionary.columns.startPhoto}
                     dictionary={dictionary}
+                    thumbnail
+                    onPreview={() => {
+                      if (!row.startPhotoUrl) return;
+                      setPreview({
+                        url: row.startPhotoUrl,
+                        title: locale === "ar" ? "صورة بداية العداد" : "Start odometer photo",
+                        subtitle: row.driverName,
+                      });
+                    }}
                   />
                 </Cell>
-                <Cell><ReviewBadge status={row.startReviewStatus} dictionary={dictionary} /></Cell>
-                <Cell>{row.endedAt ? formatDateTime(row.endedAt, locale, "Asia/Riyadh") : dictionary.notAvailable}</Cell>
-                <Cell>{row.endReading === null ? dictionary.notAvailable : row.endReading.toLocaleString(locale)}</Cell>
+                <Cell nowrap><ReviewBadge status={row.startReviewStatus} dictionary={dictionary} /></Cell>
+                <Cell>
+                  <DateTimeStack value={row.endedAt} locale={locale} timeZone="Asia/Riyadh" fallback={dictionary.notAvailable} />
+                </Cell>
+                <Cell nowrap>{row.endReading === null ? dictionary.notAvailable : row.endReading.toLocaleString(locale)}</Cell>
                 <Cell>
                   <PhotoLink
                     url={row.endPhotoUrl}
                     hasPhoto={row.endPhotoPathPresent}
                     label={dictionary.columns.endPhoto}
                     dictionary={dictionary}
+                    thumbnail
+                    onPreview={() => {
+                      if (!row.endPhotoUrl) return;
+                      setPreview({
+                        url: row.endPhotoUrl,
+                        title: locale === "ar" ? "صورة نهاية العداد" : "End odometer photo",
+                        subtitle: row.driverName,
+                      });
+                    }}
                   />
                 </Cell>
-                <Cell><ReviewBadge status={row.endReviewStatus} dictionary={dictionary} /></Cell>
-                <Cell>{row.distance === null ? dictionary.notAvailable : row.distance.toLocaleString(locale)}</Cell>
-                <Cell>
+                <Cell nowrap><ReviewBadge status={row.endReviewStatus} dictionary={dictionary} /></Cell>
+                <Cell nowrap>{row.distance === null ? dictionary.notAvailable : row.distance.toLocaleString(locale)}</Cell>
+                <Cell nowrap>
                   {row.status === "not_started" ? null : (
                     <button
                       type="button"
@@ -261,6 +269,15 @@ export function OdometerTable({
           }}
         />
       ) : null}
+      {preview ? (
+        <SecureImagePreviewDialog
+          imageUrl={preview.url}
+          title={preview.title}
+          subtitle={preview.subtitle}
+          errorText={dictionary.imageLoadFailed}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
     </>
   );
 }
@@ -270,19 +287,168 @@ function PhotoLink({
   hasPhoto,
   label,
   dictionary,
+  thumbnail = false,
+  onPreview,
 }: {
   url: string | null;
   hasPhoto: boolean;
   label: string;
   dictionary: AppRequestsDictionary;
+  thumbnail?: boolean;
+  onPreview?: () => void;
 }) {
-  if (!hasPhoto) return <span>{dictionary.notAvailable}</span>;
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  if (!hasPhoto) {
+    return (
+      <span className={thumbnail ? "inline-flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-border bg-background text-center text-[10px] font-bold leading-tight text-muted" : ""}>
+        {dictionary.photoNotUploaded}
+      </span>
+    );
+  }
   if (!url) return <span className="text-xs font-bold text-red-600">{dictionary.imageLoadFailed}</span>;
+  if (thumbnail) {
+    const content = (
+      <>
+        {!loaded && !failed ? (
+          <span className="absolute inset-0 grid place-items-center bg-background px-1 text-center leading-tight">
+            {label}
+          </span>
+        ) : null}
+        {failed ? (
+          <span className="px-1 text-center leading-tight text-red-600">{dictionary.imageLoadFailed}</span>
+        ) : (
+          // Authenticated internal image endpoint; keep native img to avoid optimizer/proxy issues.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt={label}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            onError={() => {
+              setLoaded(true);
+              setFailed(true);
+            }}
+            className={`h-full w-full object-cover transition ${loaded ? "opacity-100" : "opacity-0"}`}
+          />
+        )}
+      </>
+    );
+
+    if (onPreview) {
+      return (
+        <button
+          type="button"
+          onClick={onPreview}
+          aria-label={label}
+          title={label}
+          className="group relative inline-flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-[10px] font-bold text-muted transition hover:border-primary hover:shadow-sm"
+        >
+          {content}
+        </button>
+      );
+    }
+
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={label}
+        title={label}
+        className="group relative inline-flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-[10px] font-bold text-muted transition hover:border-primary"
+      >
+        {content}
+      </a>
+    );
+  }
 
   return (
     <a href={url} target="_blank" rel="noreferrer" className="rounded-xl border border-border px-3 py-2 text-xs font-bold text-primary">
       {label}
     </a>
+  );
+}
+
+function SecureImagePreviewDialog({
+  imageUrl,
+  title,
+  subtitle,
+  errorText,
+  onClose,
+}: {
+  imageUrl: string;
+  title: string;
+  subtitle: string;
+  errorText: string;
+  onClose: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-h-[92vh] w-full max-w-[92vw] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-bold text-navy">{title}</h2>
+            <p className="mt-0.5 truncate text-xs font-semibold text-muted">{subtitle}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-xl font-bold text-navy hover:bg-primary-soft"
+          >
+            X
+          </button>
+        </div>
+        <div className="relative grid min-h-[280px] place-items-center bg-black p-3">
+          {!loaded && !failed ? (
+            <div className="absolute inset-0 grid place-items-center text-sm font-bold text-white">
+              <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+            </div>
+          ) : null}
+          {failed ? (
+            <div className="grid min-h-[280px] place-items-center text-sm font-bold text-white">
+              {errorText}
+            </div>
+          ) : (
+            // Authenticated internal image endpoint; keep native img to avoid optimizer/proxy issues.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageUrl}
+              alt={title}
+              onLoad={() => setLoaded(true)}
+              onError={() => {
+                setLoaded(true);
+                setFailed(true);
+              }}
+              className={`max-h-[85vh] max-w-[90vw] object-contain transition ${loaded ? "opacity-100" : "opacity-0"}`}
+            />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -294,7 +460,7 @@ function ReviewBadge({
   dictionary: AppRequestsDictionary;
 }) {
   if (!status) return <span>{dictionary.notAvailable}</span>;
-  return <span className="rounded-full border border-border px-2 py-1 text-xs font-bold">{dictionary.reviewStatuses[status]}</span>;
+  return <span className="whitespace-nowrap rounded-full border border-border px-2 py-1 text-xs font-bold">{dictionary.reviewStatuses[status]}</span>;
 }
 
 function OdometerReviewDialog({
@@ -317,10 +483,18 @@ function OdometerReviewDialog({
   onSuccess: () => void;
 }) {
   const [state, formAction] = useActionState(reviewOdometerShiftAction, initialState);
+  const router = useRouter();
 
   useEffect(() => {
     if (state.status === "success") onSuccess();
-  }, [onSuccess, state.status]);
+    if (
+      state.status === "error" &&
+      (state.code === "unauthorized" ||
+        state.code === "review_permission_denied")
+    ) {
+      router.refresh();
+    }
+  }, [onSuccess, router, state.code, state.status]);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4">
@@ -391,6 +565,7 @@ function ReviewPhasePanel({
   const reading = isStart ? shift.startReading : shift.endReading;
   const submittedAt = isStart ? shift.startPhotoCapturedAt : shift.endPhotoCapturedAt;
   const photoUrl = isStart ? shift.startPhotoUrl : shift.endPhotoUrl;
+  const hasPhoto = isStart ? shift.startPhotoPathPresent : shift.endPhotoPathPresent;
   const reviewStatus = isStart ? shift.startReviewStatus : shift.endReviewStatus;
   const reviewerName = isStart ? shift.startReviewerName : shift.endReviewerName;
   const reviewedAt = isStart ? shift.startReviewedAt : shift.endReviewedAt;
@@ -402,6 +577,7 @@ function ReviewPhasePanel({
       <dl className="mt-3 space-y-2 text-sm">
         <Detail label={dictionary.columns.odometerReading} value={reading === null ? dictionary.notAvailable : reading.toLocaleString(locale)} />
         <Detail label={dictionary.columns.captureTime} value={submittedAt ? formatDateTime(submittedAt, locale, "Asia/Riyadh") : dictionary.notAvailable} />
+        <Detail label={isStart ? dictionary.startPhotoEvidence : dictionary.endPhotoEvidence} value={hasPhoto ? dictionary.photoUploaded : dictionary.photoNotUploaded} />
         <Detail label={dictionary.status} value={reviewStatus ? dictionary.reviewStatuses[reviewStatus] : dictionary.notAvailable} />
         <Detail label={dictionary.reviewer} value={reviewerName ?? dictionary.notAvailable} />
         <Detail label={dictionary.columns.reviewTime} value={reviewedAt ? formatDateTime(reviewedAt, locale, "Asia/Riyadh") : dictionary.notAvailable} />
@@ -410,7 +586,7 @@ function ReviewPhasePanel({
       <div className="mt-3">
         <PhotoLink
           url={photoUrl}
-          hasPhoto={isStart ? shift.startPhotoPathPresent : shift.endPhotoPathPresent}
+          hasPhoto={hasPhoto}
           label={dictionary.openImage}
           dictionary={dictionary}
         />
@@ -570,10 +746,18 @@ function ReviewDialog({
     reviewDriverAppRequestAction,
     initialState,
   );
+  const router = useRouter();
 
   useEffect(() => {
     if (state.status === "success") onSuccess();
-  }, [onSuccess, state.status]);
+    if (
+      state.status === "error" &&
+      (state.code === "unauthorized" ||
+        state.code === "review_permission_denied")
+    ) {
+      router.refresh();
+    }
+  }, [onSuccess, router, state.code, state.status]);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4">
@@ -693,10 +877,10 @@ function renderRequestCells(
 
     return (
       <>
-        <Cell>{dictionary.leaveTypes[asLeaveType(row.detail.leave_type)]}</Cell>
-        <Cell>{start}</Cell>
-        <Cell>{end}</Cell>
-        <Cell>{start && end ? countDays(start, end).toLocaleString(locale) : dictionary.notAvailable}</Cell>
+        <Cell nowrap>{dictionary.leaveTypes[asLeaveType(row.detail.leave_type)]}</Cell>
+        <Cell nowrap>{start}</Cell>
+        <Cell nowrap>{end}</Cell>
+        <Cell nowrap>{start && end ? countDays(start, end).toLocaleString(locale) : dictionary.notAvailable}</Cell>
       </>
     );
   }
@@ -714,10 +898,10 @@ function renderRequestCells(
   if (requestType === "meeting") {
     return (
       <>
-        <Cell>{formatRequestedManager(row, dictionary)}</Cell>
-        <Cell>{row.detail.subject ?? dictionary.notAvailable}</Cell>
-        <Cell>{row.detail.preferred_date ?? dictionary.notAvailable}</Cell>
-        <Cell>{row.detail.scheduled_at ?? dictionary.notAvailable}</Cell>
+        <Cell className="whitespace-normal leading-5">{formatRequestedManager(row, dictionary)}</Cell>
+        <Cell className="whitespace-normal leading-5">{row.detail.subject ?? dictionary.notAvailable}</Cell>
+        <Cell nowrap>{row.detail.preferred_date ?? dictionary.notAvailable}</Cell>
+        <Cell nowrap>{row.detail.scheduled_at ?? dictionary.notAvailable}</Cell>
       </>
     );
   }
@@ -730,23 +914,57 @@ function renderRequestCells(
   );
 }
 
-function Header({ children }: { children: React.ReactNode }) {
-  return <th className="px-4 py-3 text-start">{children}</th>;
+function Header({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <th className={`px-4 py-3 text-start ${className}`}>{children}</th>;
 }
 
 function Cell({
   children,
   strong,
+  nowrap,
+  truncate,
+  title,
+  className = "",
 }: {
   children: React.ReactNode;
   strong?: boolean;
+  nowrap?: boolean;
+  truncate?: boolean;
+  title?: string;
+  className?: string;
 }) {
   return (
     <td
-      className={`px-4 py-3 text-sm ${strong ? "font-bold text-navy" : "text-muted"}`}
+      title={title}
+      className={`px-4 py-3 text-sm ${strong ? "font-bold text-navy" : "text-muted"} ${nowrap ? "whitespace-nowrap" : ""} ${truncate ? "truncate" : ""} ${className}`}
     >
       {children}
     </td>
+  );
+}
+
+function DriverNameCell({
+  name,
+  identifier,
+}: {
+  name: string;
+  identifier: string | null;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="whitespace-normal leading-5" title={name}>{name}</div>
+      {identifier ? (
+        <div className="mt-0.5 whitespace-nowrap text-xs font-semibold text-muted" dir="ltr">
+          {identifier}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -771,8 +989,44 @@ function StatusBadge({
   dictionary: AppRequestsDictionary;
 }) {
   return (
-    <span className="rounded-full border border-border px-2 py-1 text-xs font-bold">
+    <span className="whitespace-nowrap rounded-full border border-border px-2 py-1 text-xs font-bold">
       {dictionary.statuses[status]}
+    </span>
+  );
+}
+
+function DateTimeStack({
+  value,
+  locale,
+  timeZone,
+  fallback,
+}: {
+  value: string | null;
+  locale: Locale;
+  timeZone: string;
+  fallback: string;
+}) {
+  if (!value) return <span>{fallback}</span>;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return <span>{fallback}</span>;
+
+  const dateText = new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone,
+  }).format(date);
+  const timeText = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  }).format(date);
+
+  return (
+    <span className="flex flex-col gap-0.5 whitespace-nowrap leading-tight">
+      <span className="font-semibold text-navy">{dateText}</span>
+      <span className="text-xs font-semibold text-muted" dir="ltr">{timeText}</span>
     </span>
   );
 }

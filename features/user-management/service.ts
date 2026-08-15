@@ -38,9 +38,7 @@ export async function createManagedUser(
   if (!validation.valid) {
     return {
       success: false,
-      code: hasPrimaryOrganizationInAdditionalAccess(input)
-        ? "additional_organization_invalid"
-        : "validation_error",
+      code: "validation_error",
     };
   }
 
@@ -379,6 +377,17 @@ export async function updateManagedUserPermissions(
     return { success: false, code: "update_failed" };
   }
 
+  const { error: deleteError } = await admin.from("user_global_permissions").delete().eq("user_id", normalizedInput.targetUserId);
+  if (!deleteError && normalizedInput.globalPermissions.length > 0) {
+    await admin.from("user_global_permissions").insert(
+      normalizedInput.globalPermissions.map(key => ({
+        user_id: normalizedInput.targetUserId,
+        permission_key: key,
+        created_by: currentUser.user.id
+      }))
+    );
+  }
+
   return { success: true, userId: normalizedInput.targetUserId };
 }
 
@@ -655,14 +664,6 @@ function logManagedUserProfileCreationFailure(
     ),
     error: getSupabaseErrorDiagnostic(error),
   });
-}
-
-function hasPrimaryOrganizationInAdditionalAccess(input: CreateManagedUserInput) {
-  const homeOrganizationId = input.homeOrganizationId.trim();
-
-  return input.additionalAccess.some(
-    (access) => access.organizationId.trim() === homeOrganizationId,
-  );
 }
 
 function isAdditionalOrganizationUnavailableError(error: { message?: string }) {

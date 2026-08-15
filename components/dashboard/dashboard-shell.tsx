@@ -5,10 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname } from "next/navigation";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { PermissionRevisionSync } from "@/components/dashboard/permission-revision-sync";
 import { RealtimeRefresh } from "@/components/dashboard/realtime-refresh";
 import { DashboardSidebar } from "@/components/dashboard/dashboard-sidebar";
 import type { AccessibleOrganization } from "@/features/organizations/types";
 import type { AppNotification } from "@/features/notifications/types";
+import type { SystemExpiryAlertsResult } from "@/features/expiry-alerts/types";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
 import type { ProfileRole } from "@/types/profile";
@@ -21,7 +23,10 @@ type DashboardShellProps = {
     fullName: string | null;
     jobTitle: string | null;
     role: ProfileRole;
+    hasGlobalFleetPermission: boolean;
+    hasGlobalHousingPermission: boolean;
   };
+  authorizationRevision: string;
   organizations: AccessibleOrganization[];
   appNotifications:
     | {
@@ -36,6 +41,7 @@ type DashboardShellProps = {
         unreadCount: 0;
         canViewNotifications: false;
       };
+  systemExpiryAlerts: SystemExpiryAlertsResult;
   children?: React.ReactNode;
 };
 
@@ -43,8 +49,10 @@ export function DashboardShell({
   locale,
   dictionary,
   user,
+  authorizationRevision,
   organizations,
   appNotifications,
+  systemExpiryAlerts,
   children,
 }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -210,6 +218,8 @@ export function DashboardShell({
           locale={locale}
           dictionary={dictionary.dashboard}
           userRole={user.role}
+          hasGlobalFleetPermission={user.hasGlobalFleetPermission}
+          hasGlobalHousingPermission={user.hasGlobalHousingPermission}
           organizations={organizations}
           collapsed={collapsed}
           mobileOpen={mobileOpen}
@@ -227,12 +237,17 @@ export function DashboardShell({
             enabled={canSubscribeToRequestNotifications}
             onRefresh={refreshAppNotifications}
           />
+          <PermissionRevisionSync
+            initialRevision={authorizationRevision}
+            message="تم تحديث صلاحيات حسابك. يتم تحديث الواجهة الآن."
+          />
           <DashboardHeader
             locale={locale}
             dictionary={dictionary}
             user={user}
             organizations={organizations}
             appNotifications={displayedAppNotifications}
+            systemExpiryAlerts={systemExpiryAlerts}
             onOpenSidebar={() => setMobileOpen(true)}
           />
           <main className="min-h-[calc(100vh-4rem)] w-full">{children}</main>

@@ -10,6 +10,8 @@ import {
   isOrganizationPermissionKey,
   normalizePermissionKeys,
 } from "@/features/permissions/registry";
+import { applyGlobalPermissionDependencies, isGlobalPermissionKey } from "@/features/permissions/global-registry";
+import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 
 const allowedRoles = new Set<ManagedUserRole>([
   "manager",
@@ -178,6 +180,7 @@ export function normalizeAndValidatePermissionsInput(
     organizationId: entry.organizationId.trim(),
     permissionKeys: applyPermissionDependencies(entry.permissionKeys),
   }));
+  const globalPermissions = applyGlobalPermissionDependencies(input.globalPermissions);
   const seenOrganizationIds = new Set<string>();
 
   for (const entry of additionalAccess) {
@@ -200,11 +203,16 @@ export function normalizeAndValidatePermissionsInput(
     seenOrganizationIds.add(entry.organizationId);
   }
 
+  if (globalPermissions.some((key) => !isGlobalPermissionKey(key))) {
+    return { valid: false };
+  }
+
   return {
     valid: true,
     input: {
       targetUserId,
       additionalAccess,
+      globalPermissions,
     },
   };
 }
@@ -327,4 +335,33 @@ export function parseGranularAdditionalAccess(value: FormDataEntryValue | null) 
   }
 
   return access;
+}
+
+export function parseGranularGlobalAccess(value: FormDataEntryValue | null) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return [] satisfies GlobalPermissionKey[];
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+
+  const permissions: GlobalPermissionKey[] = [];
+
+  for (const item of parsed) {
+    if (typeof item !== "string" || !isGlobalPermissionKey(item)) {
+      return null;
+    }
+    permissions.push(item);
+  }
+
+  return permissions;
 }
