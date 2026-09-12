@@ -39,7 +39,10 @@ export function normalizeAndValidateFleetInput(input: FleetMutationInput) {
     ...input,
     vehicleType: input.vehicleType.trim(),
     plateNumber: input.plateNumber.trim(),
+    serialNumber: nullableTrimmed(input.serialNumber),
+    brand: nullableTrimmed(input.brand),
     manualOwnerName: nullableTrimmed(input.manualOwnerName),
+    ownerIdentifier: nullableTrimmed(input.ownerIdentifier),
     ownershipType: nullableTrimmed(input.ownershipType) as FleetOwnershipType | null,
     ownerName: nullableTrimmed(input.ownerName),
     ownerDriverId: nullableTrimmed(input.ownerDriverId),
@@ -57,8 +60,9 @@ export function normalizeAndValidateFleetInput(input: FleetMutationInput) {
     authorizedDriverId: nullableTrimmed(input.authorizedDriverId),
     authorizedManualName: nullableTrimmed(input.authorizedManualName),
     authorizedManualIqama: nullableTrimmed(input.authorizedManualIqama),
+    authorizationNumber: nullableTrimmed(input.authorizationNumber),
     authorizationExpiryDate: nullableDate(input.authorizationExpiryDate),
-    faultLocation: input.technicalStatus === "fault" ? input.faultLocation : null,
+    faultLocation: (input.technicalStatus === "fault" || input.technicalStatus === "accident") ? input.faultLocation : null,
     technicalStatusNote: nullableTrimmed(input.technicalStatusNote),
     notes: nullableTrimmed(input.notes),
     normalizedPlateNumber: normalizePlateForFleet(input.plateNumber),
@@ -120,7 +124,7 @@ export function normalizeAndValidateFleetInput(input: FleetMutationInput) {
   }
   if (!isFleetTechnicalStatus(normalized.technicalStatus)) fields.push("technicalStatus");
   if (
-    normalized.technicalStatus === "fault" &&
+    (normalized.technicalStatus === "fault" || normalized.technicalStatus === "accident") &&
     !isFleetFaultLocation(normalized.faultLocation)
   ) {
     fields.push("faultLocation");

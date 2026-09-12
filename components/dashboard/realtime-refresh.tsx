@@ -2,26 +2,40 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { RealtimePostgresChangesPayload } from "@supabase/realtime-js";
 import { createClient } from "@/lib/supabase/client";
+
+type RealtimeRefreshRow = Record<string, unknown>;
+export type RealtimeRefreshPayload =
+  RealtimePostgresChangesPayload<RealtimeRefreshRow>;
 
 type RealtimeRefreshProps = {
   channelName: string;
   table:
+    | "drivers"
     | "driver_app_requests"
-    | "driver_entitlement_transactions"
-    | "driver_entitlement_statements"
     | "app_notifications"
     | "driver_warnings"
     | "driver_shifts"
+    | "fleet_vehicle_oil_change_events"
+    | "maintenance_jobs"
+    | "maintenance_job_materials"
+    | "maintenance_inventory_records"
+    | "maintenance_stock_allocations"
+    | "maintenance_stock_items"
+    | "maintenance_stock_movements"
     | "fleet_vehicles"
     | "housing_units"
     | "housing_driver_assignments"
     | "organization_shift_templates"
-    | "organization_shift_assignments";
+    | "organization_shift_assignments"
+    | "organization_order_period_templates"
+    | "organization_order_period_assignments";
   filter?: string;
   toast: string;
   enabled?: boolean;
   onRefresh?: () => void | Promise<void>;
+  shouldSuppressRefresh?: (payload: RealtimeRefreshPayload) => boolean;
 };
 
 type RealtimeRefreshSubscriber = {
@@ -80,6 +94,7 @@ export function RealtimeRefresh({
   toast,
   enabled = true,
   onRefresh,
+  shouldSuppressRefresh,
 }: RealtimeRefreshProps) {
   const router = useRouter();
   const subscriberId = useId();
@@ -117,7 +132,11 @@ export function RealtimeRefresh({
         table,
         ...(filter ? { filter } : {}),
       },
-      () => {
+      (payload) => {
+        if (shouldSuppressRefresh?.(payload)) {
+          return;
+        }
+
         scheduleRealtimeRefresh(subscriberId);
       },
     );
@@ -128,7 +147,7 @@ export function RealtimeRefresh({
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [channelName, enabled, filter, subscriberId, table]);
+  }, [channelName, enabled, filter, shouldSuppressRefresh, subscriberId, table]);
 
   if (!visible) return null;
 

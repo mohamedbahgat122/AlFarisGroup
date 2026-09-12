@@ -9,6 +9,7 @@ type LocalizedNotificationContent = {
 };
 
 const requestTypes = new Set(["leave", "maintenance", "meeting", "oil_change"]);
+const maintenanceJobTypes = new Set(["maintenance", "oil_change"]);
 
 export function getLocalizedNotificationContent({
   notification,
@@ -78,6 +79,21 @@ export function getLocalizedNotificationContent({
     };
   }
 
+  const maintenanceJobStatus = getMaintenanceJobStatus(notification.type);
+  const maintenanceJobType = getMaintenanceJobType(notification);
+
+  if (maintenanceJobStatus && maintenanceJobType) {
+    const localized = dictionary.localized[`maintenance_job_${maintenanceJobStatus}`][
+      maintenanceJobType
+    ];
+
+    return {
+      title: localized.title,
+      message: localized.message,
+      actionLabel: dictionary.open,
+    };
+  }
+
   return {
     title: notification.title,
     message: notification.message,
@@ -91,4 +107,21 @@ function formatTemplate(template: string, values: Record<string, string>) {
 
 function isRequestType(value: string | null): value is "leave" | "maintenance" | "meeting" | "oil_change" {
   return Boolean(value && requestTypes.has(value));
+}
+
+function getMaintenanceJobStatus(value: string) {
+  if (value === "maintenance_job_assigned") return "assigned";
+  if (value === "maintenance_job_started") return "started";
+  if (value === "maintenance_job_completed") return "completed";
+  if (value === "maintenance_job_cancelled") return "cancelled";
+  return null;
+}
+
+function getMaintenanceJobType(
+  notification: AppNotification,
+): "maintenance" | "oil_change" | null {
+  const value = notification.maintenanceJobType ?? notification.requestType;
+  return value && maintenanceJobTypes.has(value)
+    ? (value as "maintenance" | "oil_change")
+    : null;
 }

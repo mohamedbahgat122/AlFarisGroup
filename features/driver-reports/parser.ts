@@ -384,8 +384,16 @@ const performanceHeaderRules: Record<PerformanceField, HeaderAliasRule> = {
 };
 
 const performanceTimelineRule: HeaderAliasRule = {
-  full: ["ملخص الاتصال", "فترة الوردية_ملخص الاتصال"],
-  leaf: ["ملخص الاتصال", "فترة الوردية"],
+  full: [
+    "ملخص الاتصال",
+    "فترة الوردية_ملخص الاتصال",
+    "فترة الوردية_schedule_valid_online_attendance_summary",
+  ],
+  leaf: [
+    "ملخص الاتصال",
+    "فترة الوردية",
+    "schedule_valid_online_attendance_summary",
+  ],
 };
 
 const performanceFieldOrder = Object.keys(performanceHeaders) as PerformanceField[];
@@ -1383,6 +1391,8 @@ function normalizeHeaderKey(value: unknown) {
     .replace(/^\ufeff/, "")
     .replace(/\u00a0/g, " ")
     .replace(/[\u200b-\u200f\u202a-\u202e\u061c]/g, "")
+    .replace(/[؟?]/g, "?")
+    .replace(/[،؛]/g, ",")
     .replace(/[\u064b-\u065f\u0670]/g, "")
     .replace(/[ط£ط¥ط¢]/g, "ط§")
     .replace(/ظ‰/g, "ظٹ")

@@ -20,9 +20,12 @@ type DriverExpirySourceRow = Pick<
   | "iqama_expiry_date"
   | "driving_license_expiry_date"
   | "driver_card_expiry_date"
-  | "vehicle_authorization_expiry_date"
-  | "operating_card_expiry_date"
->;
+> & {
+  fleet_vehicles: {
+    authorization_expiry_date: string | null;
+    operating_card_expiry_date: string | null;
+  } | null;
+};
 
 type DocumentSource = {
   documentType: DriverExpiryDocumentType;
@@ -47,6 +50,25 @@ type RequestRow = Pick<
   Database["public"]["Tables"]["driver_app_requests"]["Row"],
   "id" | "request_type" | "status" | "driver_id"
 >;
+
+type MaintenanceJobRow = {
+  id: string;
+  request_id: string;
+  job_type: "maintenance" | "oil_change";
+};
+
+type NotificationDatabase = Database & {
+  public: Database["public"] & {
+    Tables: Database["public"]["Tables"] & {
+      maintenance_jobs: {
+        Row: MaintenanceJobRow;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+    };
+  };
+};
 
 type DriverRow = Pick<
   Database["public"]["Tables"]["drivers"]["Row"],
@@ -81,8 +103,7 @@ export async function getDriverExpiryAlertsForOrganizations({
       iqama_expiry_date,
       driving_license_expiry_date,
       driver_card_expiry_date,
-      vehicle_authorization_expiry_date,
-      operating_card_expiry_date
+      fleet_vehicles(authorization_expiry_date, operating_card_expiry_date)
     `,
     )
     .in("organization_id", organizations.map((organization) => organization.id))
@@ -188,17 +209,40 @@ async function enrichAppNotifications(
   const organizationById = new Map(
     organizations.map((organization) => [organization.id, organization]),
   );
-  const requestIds = rows
+  const directRequestIds = rows
     .filter((row) => row.entity_type === "driver_app_request" && row.entity_id)
     .map((row) => row.entity_id as string);
+  const maintenanceJobIds = rows
+    .filter((row) => row.entity_type === "maintenance_job" && row.entity_id)
+    .map((row) => row.entity_id as string);
   const requestsById = new Map<string, RequestRow>();
+  const maintenanceJobsById = new Map<string, MaintenanceJobRow>();
   const driversById = new Map<string, DriverRow>();
+  const notificationSupabase = supabase as SupabaseClient<NotificationDatabase>;
+
+  if (maintenanceJobIds.length > 0) {
+    const { data: maintenanceJobs } = await notificationSupabase
+      .from("maintenance_jobs")
+      .select("id, request_id, job_type")
+      .in("id", Array.from(new Set(maintenanceJobIds)));
+
+    for (const job of maintenanceJobs ?? []) {
+      maintenanceJobsById.set(job.id, job);
+    }
+  }
+
+  const requestIds = Array.from(
+    new Set([
+      ...directRequestIds,
+      ...Array.from(maintenanceJobsById.values()).map((job) => job.request_id),
+    ]),
+  );
 
   if (requestIds.length > 0) {
     const { data: requests } = await supabase
       .from("driver_app_requests")
       .select("id, request_type, status, driver_id")
-      .in("id", Array.from(new Set(requestIds)));
+      .in("id", requestIds);
 
     for (const request of (requests ?? []) as RequestRow[]) {
       requestsById.set(request.id, request);
@@ -224,7 +268,15 @@ async function enrichAppNotifications(
     const organization = row.organization_id
       ? organizationById.get(row.organization_id)
       : null;
-    const request = row.entity_id ? requestsById.get(row.entity_id) : null;
+    const maintenanceJob =
+      row.entity_type === "maintenance_job" && row.entity_id
+        ? maintenanceJobsById.get(row.entity_id)
+        : null;
+    const requestId =
+      row.entity_type === "driver_app_request"
+        ? row.entity_id
+        : maintenanceJob?.request_id ?? null;
+    const request = requestId ? requestsById.get(requestId) : null;
     const driver = request ? driversById.get(request.driver_id) : null;
 
     return {
@@ -237,8 +289,10 @@ async function enrichAppNotifications(
       organizationId: row.organization_id,
       organizationName: organization?.name ?? null,
       organizationCode: organization?.code ?? null,
-      requestType: request?.request_type ?? null,
+      requestId,
+      requestType: request?.request_type ?? maintenanceJob?.job_type ?? null,
       requestStatus: request?.status ?? null,
+      maintenanceJobType: maintenanceJob?.job_type ?? null,
       driverName: driver?.full_name ?? null,
       isRead: Boolean(row.read_at),
       readAt: row.read_at,
@@ -267,11 +321,11 @@ function buildDriverAlerts(
     { documentType: "driver_card", expiryDate: driver.driver_card_expiry_date },
     {
       documentType: "vehicle_authorization",
-      expiryDate: driver.vehicle_authorization_expiry_date,
+      expiryDate: driver.fleet_vehicles?.authorization_expiry_date ?? null,
     },
     {
       documentType: "operating_card",
-      expiryDate: driver.operating_card_expiry_date,
+      expiryDate: driver.fleet_vehicles?.operating_card_expiry_date ?? null,
     },
   ];
 

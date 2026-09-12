@@ -40,3 +40,29 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Temporary & Debug Files
+scratch/
+db-check.ts
+test_foldername.js
+test_supabase.js
+test_upload.js
+get-db-error.mjs
+dashboard-sidebar-original.txt
+remote_rpc.json
+remote_rpc_utf8.json
+remote_types.ts
+.tmp-remote-schema.sql
+
+# Local Supabase CLI
+.supabase-home/
+
+# Temporary fix/patch scripts
+fix*.js
+patch-queries.js
+scratch-queries.js
+test-queries.ts
+test-rpc-run.js
+
+# Temporary database/schema dumps
+supabase-schema-temp.sql
+tmp-remote-public-schema-*.sql

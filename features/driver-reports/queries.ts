@@ -22,6 +22,7 @@ type DriverExpiryRow = Pick<
   Database["public"]["Tables"]["drivers"]["Row"],
   | "id"
   | "is_company_sponsored"
+  | "nfc_number"
   | "keeta_vehicle_plate_number"
   | "vehicle_number"
   | "iqama_expiry_date"
@@ -43,6 +44,20 @@ type DriverFuelMetricSelection = {
   dailyFuelAmountSar: number;
   monthlyFuelAmountSar: number;
 };
+type DriverDistanceMetricSelection = {
+  dailyDistanceKm: number;
+  monthlyDistanceKm: number;
+};
+type DriverShiftDistanceRow = Pick<
+  Database["public"]["Tables"]["driver_shifts"]["Row"],
+  | "driver_id"
+  | "started_at"
+  | "status"
+  | "start_odometer_reading"
+  | "end_odometer_reading"
+  | "start_review_status"
+  | "end_review_status"
+>;
 
 export async function getDriverReportsForOrganization({
   organizationId,
@@ -172,6 +187,7 @@ export async function getDriverReportsForOrganization({
   const [
     driverExpiries,
     fuelMetrics,
+    distanceMetrics,
     monthlyMetricsResponse,
     importedByFullName,
   ] = await Promise.all([
@@ -181,6 +197,12 @@ export async function getDriverReportsForOrganization({
       supabase: admin.supabase,
     }),
     getDriverFuelMetricsForReport({
+      organizationId,
+      reportDate: report.report_date,
+      driverIds,
+      supabase: admin.supabase,
+    }),
+    getDriverDistanceMetricsForReport({
       organizationId,
       reportDate: report.report_date,
       driverIds,
@@ -224,11 +246,85 @@ export async function getDriverReportsForOrganization({
       driverExpiries,
       fuelMetrics.available,
       fuelMetrics.metricsByDriverId,
+      distanceMetrics.available,
+      distanceMetrics.metricsByDriverId,
       monthlyMetrics.metricsByDriverId,
     ),
     dates,
     selectedDateUnavailable: selectedDate ? !selectedDateAvailable : false,
   };
+}
+
+async function getDriverDistanceMetricsForReport({
+  organizationId,
+  reportDate,
+  driverIds,
+  supabase,
+}: {
+  organizationId: string;
+  reportDate: string;
+  driverIds: string[];
+  supabase: Awaited<ReturnType<typeof getAuthenticatedAdmin>>["supabase"];
+}): Promise<{
+  available: boolean;
+  metricsByDriverId: Map<string, DriverDistanceMetricSelection>;
+}> {
+  const uniqueDriverIds = Array.from(new Set(driverIds));
+  const metricsByDriverId = new Map<string, DriverDistanceMetricSelection>();
+  const monthlyRange = getMonthToDateRange(reportDate);
+
+  for (const driverId of uniqueDriverIds) {
+    metricsByDriverId.set(driverId, {
+      dailyDistanceKm: 0,
+      monthlyDistanceKm: 0,
+    });
+  }
+
+  if (uniqueDriverIds.length === 0) {
+    return { available: true, metricsByDriverId };
+  }
+
+  const { data, error } = await supabase
+    .from("driver_shifts")
+    .select(
+      "driver_id, started_at, status, start_odometer_reading, end_odometer_reading, start_review_status, end_review_status",
+    )
+    .eq("organization_id", organizationId)
+    .in("driver_id", uniqueDriverIds)
+    .gte("started_at", toRiyadhDayStartIso(monthlyRange.fromDate))
+    .lt("started_at", toRiyadhDayStartIso(getNextDateString(monthlyRange.toDate)));
+
+  if (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[driver-reports:distance-metrics:load-failed]", {
+        code: error.code,
+        message: error.message,
+      });
+    }
+
+    return { available: false, metricsByDriverId };
+  }
+
+  for (const shift of (data ?? []) as DriverShiftDistanceRow[]) {
+    if (!isValidOdometerDistanceShift(shift)) {
+      continue;
+    }
+
+    const metric = metricsByDriverId.get(shift.driver_id);
+
+    if (!metric) {
+      continue;
+    }
+
+    const distance = shift.end_odometer_reading - shift.start_odometer_reading;
+    metric.monthlyDistanceKm += distance;
+
+    if (formatRiyadhDate(shift.started_at) === reportDate) {
+      metric.dailyDistanceKm += distance;
+    }
+  }
+
+  return { available: true, metricsByDriverId };
 }
 
 
@@ -255,6 +351,7 @@ async function getDriverExpiriesById({
       [
         "id",
         "is_company_sponsored",
+        "nfc_number",
         "keeta_vehicle_plate_number",
         "vehicle_number",
         "iqama_expiry_date",
@@ -274,6 +371,7 @@ async function getDriverExpiriesById({
   for (const driver of (data ?? []) as unknown as DriverExpiryRow[]) {
     expiries.set(driver.id, {
       isCompanySponsored: driver.is_company_sponsored,
+      nfcNumber: driver.nfc_number,
       actualVehiclePlateNumber: driver.vehicle_number,
       keetaDashboardPlateNumber: driver.keeta_vehicle_plate_number,
       iqamaExpiryDate: driver.iqama_expiry_date,
@@ -420,6 +518,7 @@ function createMonthlyMetrics({
     monthlyWorkingSeconds: 0,
     averageDailyWorkingSeconds: elapsedCalendarDays > 0 ? 0 : null,
     monthlyFuelRateSar: null,
+    monthlyDistanceKm: null,
   };
 }
 
@@ -441,6 +540,8 @@ function mapReport(
   driverExpiries: Map<string, DriverReportDriverExpiries>,
   fuelMetricsAvailable: boolean,
   fuelMetricsByDriverId: Map<string, DriverFuelMetricSelection>,
+  distanceMetricsAvailable: boolean,
+  distanceMetricsByDriverId: Map<string, DriverDistanceMetricSelection>,
   monthlyMetricsByDriverId: Map<string, DriverMonthlyReportMetrics>,
 ): DriverReport {
   return {
@@ -450,6 +551,7 @@ function mapReport(
     importedAt: report.imported_at,
     importedByFullName,
     fuelMetricsAvailable,
+    distanceMetricsAvailable,
     registeredActiveDrivers: report.registered_active_drivers,
     presentDrivers: report.present_drivers,
     absentDrivers: report.absent_drivers,
@@ -458,7 +560,14 @@ function mapReport(
     unmatchedRankingIds: report.unmatched_ranking_ids,
     driversMissingKeetaId: report.drivers_missing_keeta_id,
     rows: rows.map((row) =>
-      mapReportRow(row, driverExpiries, fuelMetricsByDriverId, monthlyMetricsByDriverId),
+      mapReportRow(
+        row,
+        driverExpiries,
+        fuelMetricsByDriverId,
+        distanceMetricsAvailable,
+        distanceMetricsByDriverId,
+        monthlyMetricsByDriverId,
+      ),
     ),
   };
 }
@@ -467,9 +576,12 @@ function mapReportRow(
   row: ReportMetricRow,
   driverExpiries: Map<string, DriverReportDriverExpiries>,
   fuelMetricsByDriverId: Map<string, DriverFuelMetricSelection>,
+  distanceMetricsAvailable: boolean,
+  distanceMetricsByDriverId: Map<string, DriverDistanceMetricSelection>,
   monthlyMetricsByDriverId: Map<string, DriverMonthlyReportMetrics>,
 ): DriverReportRow {
   const fuelMetrics = fuelMetricsByDriverId.get(row.driver_id);
+  const distanceMetrics = distanceMetricsByDriverId.get(row.driver_id);
   const driverMetadata = driverExpiries.get(row.driver_id);
   const baseMonthlyMetrics = monthlyMetricsByDriverId.get(row.driver_id);
   const evaluationTotalOrders = toNullableInteger(row.evaluation_total_orders);
@@ -491,10 +603,12 @@ function mapReportRow(
     driverFullName: row.driver_full_name,
     keetaDriverId: row.keeta_driver_id,
     isCompanySponsored: driverMetadata?.isCompanySponsored ?? null,
+    nfcNumber: driverMetadata?.nfcNumber ?? null,
     actualVehiclePlateNumber: driverMetadata?.actualVehiclePlateNumber ?? null,
     keetaDashboardPlateNumber: driverMetadata?.keetaDashboardPlateNumber ?? null,
     driverExpiries: driverMetadata ?? {
       isCompanySponsored: null,
+      nfcNumber: null,
       actualVehiclePlateNumber: null,
       keetaDashboardPlateNumber: null,
       iqamaExpiryDate: null,
@@ -525,11 +639,61 @@ function mapReportRow(
     eligibilityStatus: row.eligibility_status,
     dailyFuelQuantityLitres: fuelMetrics?.dailyFuelQuantityLitres ?? 0,
     dailyFuelAmountSar: fuelMetrics?.dailyFuelAmountSar ?? 0,
-    monthlyMetrics: monthlyMetrics ?? createMonthlyMetrics({
-      monthlyFuelAmountSar: fuelMetrics?.monthlyFuelAmountSar ?? 0,
-      elapsedCalendarDays: 0,
-    }),
+    dailyDistanceKm: distanceMetricsAvailable
+      ? distanceMetrics?.dailyDistanceKm ?? 0
+      : null,
+    monthlyMetrics: {
+      ...(monthlyMetrics ?? createMonthlyMetrics({
+        monthlyFuelAmountSar: fuelMetrics?.monthlyFuelAmountSar ?? 0,
+        elapsedCalendarDays: 0,
+      })),
+      monthlyDistanceKm: distanceMetricsAvailable
+        ? distanceMetrics?.monthlyDistanceKm ?? 0
+        : null,
+    },
   };
+}
+
+function isValidOdometerDistanceShift(
+  shift: DriverShiftDistanceRow,
+): shift is DriverShiftDistanceRow & {
+  start_odometer_reading: number;
+  end_odometer_reading: number;
+} {
+  return (
+    shift.status === "completed" &&
+    shift.start_odometer_reading !== null &&
+    shift.end_odometer_reading !== null &&
+    shift.end_odometer_reading >= shift.start_odometer_reading &&
+    shift.start_review_status !== "rejected" &&
+    shift.end_review_status !== "rejected"
+  );
+}
+
+function toRiyadhDayStartIso(date: string) {
+  return `${date}T00:00:00+03:00`;
+}
+
+function getNextDateString(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const nextDate = new Date(Date.UTC(year, month - 1, day + 1));
+  return nextDate.toISOString().slice(0, 10);
+}
+
+function formatRiyadhDate(value: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(new Date(value))
+      .map((part) => [part.type, part.value]),
+  );
+
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function toNullableNumber(value: unknown) {

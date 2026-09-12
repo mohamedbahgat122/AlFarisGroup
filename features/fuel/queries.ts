@@ -73,6 +73,17 @@ type ProfileRow = Pick<
 
 type KafaratplusOperationsResponse = Record<string, unknown>;
 
+export type KafaratplusFuelOperationRowsResult =
+  | {
+      status: "success";
+      rows: KafaratplusFuelOperationRow[];
+    }
+  | {
+      status: Exclude<KafaratplusIntegrationStatus, "success">;
+      rows: [];
+      message: string;
+    };
+
 type FuelReportAccumulator = FuelReportRow & {
   fuelDates: Set<string>;
   vehiclePlates: Set<string>;
@@ -149,6 +160,68 @@ function toKafaratplusEndOfDay(date: string) {
   return date.includes("T") || date.includes(" ")
     ? date
     : `${date}T23:59:59`;
+}
+
+export async function getKafaratplusFuelOperationRowsForRange({
+  fromDate,
+  toDate,
+}: {
+  fromDate: string;
+  toDate: string;
+}): Promise<KafaratplusFuelOperationRowsResult> {
+  const operations = await fetchAllKafaratplusOperations(
+    toKafaratplusStartOfDay(fromDate),
+    toKafaratplusEndOfDay(toDate),
+  );
+
+  if (!operations.success) {
+    return {
+      status: operations.code,
+      rows: [],
+      message: operations.message,
+    };
+  }
+
+  return {
+    status: "success",
+    rows: operations.records
+      .filter((record) => classifyOperation(record) === "fuel")
+      .map((record) => mapKafaratplusOperation(record)),
+  };
+}
+
+export function getKafaratplusFuelOperationDate(
+  operation: Pick<KafaratplusFuelOperationRow, "date">,
+) {
+  const date = operation.date?.trim();
+
+  if (!date) {
+    return null;
+  }
+
+  return formatRiyadhDate(date);
+}
+
+function formatRiyadhDate(value: string) {
+  const parsedDate = new Date(value);
+
+  if (!Number.isFinite(parsedDate.getTime())) {
+    return null;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(parsedDate)
+      .map((part) => [part.type, part.value]),
+  );
+
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 async function getLocalVehiclePlateScope(
@@ -1622,6 +1695,12 @@ function mapKafaratplusOperation(
     localDriverIqama: local?.driverIqama ?? null,
     kafaratplusDriver,
     vehicle: stringFrom(record, ["customerVehicle.name", "customerVehicle.number", "vehicle", "vehicleName", "vehicleNumber", "vehicle.name"]) ?? local?.vehicle ?? null,
+    nfcIdentifier: stringFrom(record, [
+      "customerVehicle.NFCSerialNumber",
+      "customerVehicle.nfcIdentifier",
+      "NFCSerialNumber",
+      "nfcIdentifier",
+    ]),
     licencePlate: local?.plate ?? getOperationDisplayPlate(record),
     brandModel: joinNonEmpty([
       stringFrom(record, ["customerVehicle.brand.name", "customerVehicle.brand", "brand", "vehicleBrand", "vehicle.brand"]),

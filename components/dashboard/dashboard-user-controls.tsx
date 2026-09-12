@@ -15,6 +15,10 @@ import type {
   DriverExpiryAlertSeverity,
 } from "@/features/notifications/types";
 import type {
+  OilMaintenanceAlert,
+  OilMaintenanceAlertsResult,
+} from "@/features/app-requests/types";
+import type {
   SystemExpiryAlert,
   SystemExpiryAlertsResult,
   SystemExpiryAlertSeverity,
@@ -28,6 +32,7 @@ type DashboardUserControlsProps = {
   user: {
     id: string;
     fullName: string | null;
+    avatarUrl?: string | null;
     jobTitle: string | null;
   };
   appNotifications:
@@ -44,6 +49,7 @@ type DashboardUserControlsProps = {
         canViewNotifications: false;
       };
   systemExpiryAlerts: SystemExpiryAlertsResult;
+  oilMaintenanceAlerts: OilMaintenanceAlertsResult;
 };
 
 export function DashboardUserControls({
@@ -52,6 +58,7 @@ export function DashboardUserControls({
   user,
   appNotifications,
   systemExpiryAlerts,
+  oilMaintenanceAlerts,
 }: DashboardUserControlsProps) {
   const pathname = usePathname();
   const nextLocale: Locale = locale === "ar" ? "en" : "ar";
@@ -62,19 +69,26 @@ export function DashboardUserControls({
 
   return (
     <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-      <div className="flex size-11 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary-soft text-sm font-bold text-primary shadow-sm">
-        {initials ? (
-          <span>{initials}</span>
-        ) : (
-          <UserIcon />
-        )}
-      </div>
-      <div className="hidden min-w-0 max-w-[160px] sm:block lg:max-w-[220px]">
-        <p className="truncate text-sm font-semibold leading-5 text-navy">
-          {fullName}
-        </p>
-        <p className="truncate text-xs leading-5 text-muted">{jobTitle}</p>
-      </div>
+      <Link
+        href={`/${locale}/dashboard/profile`}
+        className="flex min-w-0 items-center gap-2 sm:gap-3 rounded-xl p-1 transition hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      >
+        <div className="flex size-11 shrink-0 overflow-hidden items-center justify-center rounded-full border border-primary/20 bg-primary-soft text-sm font-bold text-primary shadow-sm">
+          {user.avatarUrl ? (
+            <img src={user.avatarUrl} alt={fullName} className="size-full object-cover" />
+          ) : initials ? (
+            <span>{initials}</span>
+          ) : (
+            <UserIcon />
+          )}
+        </div>
+        <div className="hidden min-w-0 max-w-[160px] sm:block lg:max-w-[220px]">
+          <p className="truncate text-sm font-semibold leading-5 text-navy">
+            {fullName}
+          </p>
+          <p className="truncate text-xs leading-5 text-muted">{jobTitle}</p>
+        </div>
+      </Link>
       <HeaderIconButton
         label={dictionary.dashboard.tasks}
         icon={<TasksIcon />}
@@ -84,6 +98,13 @@ export function DashboardUserControls({
           locale={locale}
           dictionary={dictionary}
           result={systemExpiryAlerts}
+        />
+      ) : null}
+      {oilMaintenanceAlerts.status === "success" ? (
+        <OilMaintenanceAlertBell
+          locale={locale}
+          dictionary={dictionary}
+          result={oilMaintenanceAlerts}
         />
       ) : null}
       {appNotifications.canViewNotifications ? (
@@ -105,6 +126,195 @@ export function DashboardUserControls({
       </Link>
       <SignOutButton locale={locale} label={dictionary.dashboard.signOut} />
     </div>
+  );
+}
+
+function OilMaintenanceAlertBell({
+  locale,
+  dictionary,
+  result,
+}: {
+  locale: Locale;
+  dictionary: Dictionary;
+  result: Extract<OilMaintenanceAlertsResult, { status: "success" }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const panelDictionary = dictionary.dashboard.oilMaintenancePanel;
+  const badgeText = result.totalCount > 99 ? "99+" : String(result.totalCount);
+  const accessibleLabel =
+    result.totalCount > 0
+      ? panelDictionary.openWithCount.replace("{count}", String(result.totalCount))
+      : panelDictionary.openEmpty;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (buttonRef.current?.contains(target) || popoverRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      buttonRef.current?.focus();
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={accessibleLabel}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={panelDictionary.title}
+        className={`${iconButtonClassName} relative ${result.hasDue ? "text-danger hover:text-danger" : result.hasDueSoon ? "text-amber-700 hover:text-amber-700" : ""}`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <OilCanIcon />
+        {result.totalCount > 0 ? (
+          <span
+            dir="ltr"
+            className={`absolute -end-1.5 -top-1.5 inline-flex min-w-5 items-center justify-center rounded-full border-2 border-surface px-1 text-[10px] font-bold leading-4 text-white ${
+              result.hasDue ? "bg-danger" : "bg-amber-500"
+            }`}
+          >
+            {badgeText}
+          </span>
+        ) : null}
+      </button>
+
+      {open ? (
+        <div
+          role="dialog"
+          aria-label={panelDictionary.title}
+          className="absolute end-0 top-[calc(100%+0.65rem)] z-50 w-[min(92vw,440px)] overflow-hidden rounded-xl border border-border bg-surface text-start shadow-[0_24px_70px_rgba(16,35,63,0.16)]"
+        >
+          <div className="border-b border-border px-4 py-3">
+            <p className="text-sm font-bold text-navy">{panelDictionary.title}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <OilSummaryPill label={panelDictionary.dueCount} value={result.dueCount} tone="danger" />
+              <OilSummaryPill label={panelDictionary.dueSoonCount} value={result.dueSoonCount} tone="warning" />
+            </div>
+          </div>
+
+          {result.alerts.length === 0 ? (
+            <div className="px-4 py-6 text-center">
+              <p className="text-sm font-bold text-navy">
+                {panelDictionary.emptyTitle}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-muted">
+                {panelDictionary.emptyDescription}
+              </p>
+            </div>
+          ) : (
+            <div className="max-h-[min(68vh,540px)] overflow-y-auto p-2">
+              {result.alerts.map((alert) => (
+                <OilMaintenanceAlertItem
+                  key={alert.id}
+                  locale={locale}
+                  dictionary={dictionary}
+                  alert={alert}
+                  onNavigate={() => setOpen(false)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function OilSummaryPill({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "danger" | "warning";
+}) {
+  const className =
+    tone === "danger"
+      ? "border-red-200 bg-red-50 text-danger"
+      : "border-amber-200 bg-amber-50 text-amber-800";
+
+  return (
+    <div className={`rounded-lg border px-2.5 py-2 ${className}`}>
+      <p className="text-[11px] font-bold leading-4">{label}</p>
+      <p className="mt-0.5 text-base font-bold leading-none" dir="ltr">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function OilMaintenanceAlertItem({
+  locale,
+  dictionary,
+  alert,
+  onNavigate,
+}: {
+  locale: Locale;
+  dictionary: Dictionary;
+  alert: OilMaintenanceAlert;
+  onNavigate: () => void;
+}) {
+  const panelDictionary = dictionary.dashboard.oilMaintenancePanel;
+  const statusLabel =
+    alert.oilStatus === "due" ? panelDictionary.due : panelDictionary.dueSoon;
+  const vehicleLabel =
+    [alert.vehicleLabel, alert.vehiclePlate].filter(Boolean).join(" - ") ||
+    panelDictionary.vehicleFallback;
+
+  return (
+    <Link
+      href={alert.href}
+      onClick={onNavigate}
+      className="group flex gap-3 rounded-lg px-3 py-3 transition hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    >
+      <span
+        className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border ${getOilStatusIconClassName(alert.oilStatus)}`}
+        aria-hidden="true"
+      >
+        <OilCanIcon small />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-bold text-navy">
+          {alert.driverName}
+        </span>
+        <span className="mt-0.5 block text-xs leading-5 text-muted">
+          {vehicleLabel}
+          {alert.organizationName ? ` - ${alert.organizationName}` : ""}
+        </span>
+        <span className="mt-1 block text-xs leading-5 text-muted">
+          {formatOilRemaining(alert.remainingKm, locale, panelDictionary)}
+        </span>
+        <span
+          className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-xs font-bold ${getOilStatusBadgeClassName(alert.oilStatus)}`}
+        >
+          {statusLabel}
+        </span>
+      </span>
+    </Link>
   );
 }
 
@@ -494,7 +704,7 @@ function PersistentNotificationItem({
     if (ok || notification.isRead) {
       onRead(notification.id);
     } else {
-      setErrorMessage("تعذر تعليم الإشعار كمقروء. حاول مرة أخرى.");
+      setErrorMessage(panelDictionary.readFailed);
     }
 
     setPendingAction(null);
@@ -518,15 +728,19 @@ function PersistentNotificationItem({
 
     setPendingAction("open");
 
-    const ok = await markNotificationRead(notification.id);
+    const ok = notification.isRead
+      ? true
+      : await markNotificationRead(notification.id);
 
-    if (!ok && process.env.NODE_ENV !== "production") {
-      console.info("[notifications:open] Continuing navigation after read failure", {
-        notificationId: notification.id,
-      });
+    if (!ok) {
+      setErrorMessage(panelDictionary.readFailed);
+      setPendingAction(null);
+      return;
     }
 
-    onRead(notification.id);
+    if (!notification.isRead) {
+      onRead(notification.id);
+    }
     onNavigate();
     router.push(href);
   }
@@ -609,9 +823,12 @@ function getRequestNotificationHref(locale: Locale, notification: AppNotificatio
   const baseHref = `/${locale}/dashboard/organizations/${notification.organizationCode}/app-requests/${getRequestPath(
     notification.requestType ?? "",
   )}`;
+  const requestId =
+    notification.requestId ??
+    (notification.entityType === "driver_app_request" ? notification.entityId : null);
 
-  return notification.entityType === "driver_app_request" && notification.entityId
-    ? `${baseHref}?requestId=${encodeURIComponent(notification.entityId)}`
+  return requestId
+    ? `${baseHref}?requestId=${encodeURIComponent(requestId)}`
     : baseHref;
 }
 
@@ -625,7 +842,12 @@ async function markNotificationRead(notificationId: string) {
       body: JSON.stringify({ notificationId }),
     });
 
-    return response.ok;
+    if (!response.ok) {
+      return false;
+    }
+
+    const body = (await response.json()) as { status?: unknown };
+    return body.status === "success" || body.status === "already_read";
   } catch {
     return false;
   }
@@ -775,6 +997,37 @@ function BellIcon() {
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function OilCanIcon({ small = false }: { small?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className={small ? "size-4" : "size-5"}
+      fill="none"
+    >
+      <path
+        d="M4.5 14.5h9.2l2.1-5.2H7.3L4.5 14.5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7.5 9.3 6.2 6.5h4.2l1.2 2.8M14.8 12l3.5-1.6 2.2 3.1M4.5 14.5V18h7.8l1.4-3.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M19.4 16.2c.6.8 1.1 1.5 1.1 2.3a1.9 1.9 0 0 1-3.8 0c0-.8.5-1.5 1.1-2.3l.8-1.1.8 1.1Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
         strokeLinejoin="round"
       />
     </svg>
@@ -941,6 +1194,18 @@ function getSystemSeverityTextClassName(severity: SystemExpiryAlertSeverity) {
   }
 }
 
+function getOilStatusIconClassName(status: OilMaintenanceAlert["oilStatus"]) {
+  return status === "due"
+    ? "border-red-200 bg-red-50 text-danger"
+    : "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+function getOilStatusBadgeClassName(status: OilMaintenanceAlert["oilStatus"]) {
+  return status === "due"
+    ? "border-red-200 bg-red-50 text-danger"
+    : "border-amber-200 bg-amber-50 text-amber-800";
+}
+
 function formatExpiryDateLine(
   expiryDate: string,
   daysRemaining: number,
@@ -954,6 +1219,24 @@ function formatExpiryDateLine(
     daysRemaining < 0 ? dictionary.expiredOnDate : dictionary.expiresOnDate;
 
   return template.replace("{date}", formattedDate);
+}
+
+function formatOilRemaining(
+  remainingKm: number,
+  locale: Locale,
+  dictionary: Dictionary["dashboard"]["oilMaintenancePanel"],
+) {
+  if (remainingKm === 0) {
+    return dictionary.dueNow;
+  }
+
+  const formattedKm = new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US", {
+    maximumFractionDigits: 0,
+  }).format(Math.abs(remainingKm));
+
+  return remainingKm < 0
+    ? dictionary.overdueKm.replace("{km}", formattedKm)
+    : dictionary.remainingKm.replace("{km}", formattedKm);
 }
 
 function formatSystemAlertStatus(

@@ -36,9 +36,6 @@ export type DriverListItem = {
   vehicleId: string | null;
   vehicleNumber: string;
   keetaVehiclePlateNumber: string | null;
-  vehicleSerialNumber: string | null;
-  vehicleOwnerIdentifier: string | null;
-  vehicleBrand: string | null;
   organizationName: string;
   status: DriverStatus;
   keetaUsername: string;
@@ -53,22 +50,19 @@ export type DriverListItem = {
   drivingLicenseExpiryDate: string | null;
   driverCardNumber: string;
   driverCardExpiryDate: string;
-  vehicleAuthorizationNumber: string;
   vehicleAuthorizationExpiryDate: string;
+  operatingCardExpiryDate: string | null;
   iban: string | null;
   bankName: string | null;
   accountNumber: string | null;
   profilePhotoUrl: string | null;
   profilePhotoPreview: DriverFilePreview | null;
-  operatingCardNumber: string | null;
-  operatingCardExpiryDate: string | null;
-  operatingCardFileUrl: string | null;
-  operatingCardFilePreview: DriverFilePreview | null;
   documents: DriverDocumentMetadata[];
   createdBy: DriverActor | null;
   updatedBy: DriverActor | null;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 };
 
 export type DriverAppAccountStatus =
@@ -103,6 +97,7 @@ export type DriverActivityLog = {
     | "driver_suspended"
     | "driver_reactivated"
     | "driver_archived"
+    | "driver_restored"
     | string;
   actor: DriverActor | null;
   createdAt: string;
@@ -110,7 +105,6 @@ export type DriverActivityLog = {
     previousStatus?: DriverStatus;
     newStatus?: DriverStatus;
     replacedDocumentCount?: number;
-    vehicleOwnerIdentifierChanged?: boolean;
   };
 };
 
@@ -119,6 +113,8 @@ export type DriverSummary = {
   active: number;
   inactive: number;
   archived: number;
+  expiringSoon: number;
+  expired: number;
 };
 
 export type DriversQueryResult =
@@ -157,9 +153,6 @@ export type DriverMutationInput = {
   vehicleId?: string;
   vehicleNumber: string;
   keetaVehiclePlateNumber: string;
-  vehicleSerialNumber: string;
-  vehicleOwnerIdentifier: string;
-  vehicleBrand: string;
   keetaUsername: string;
   keetaDriverId: string;
   isCompanySponsored: boolean;
@@ -171,10 +164,6 @@ export type DriverMutationInput = {
   drivingLicenseExpiryDate: string;
   driverCardNumber: string;
   driverCardExpiryDate: string;
-  vehicleAuthorizationNumber: string;
-  vehicleAuthorizationExpiryDate: string;
-  operatingCardNumber: string;
-  operatingCardExpiryDate: string;
   iban: string | null;
   bankName: string | null;
   accountNumber: string | null;
@@ -189,9 +178,6 @@ export type DriverFormFieldName =
   | "vehicleId"
   | "vehicleNumber"
   | "keetaVehiclePlateNumber"
-  | "vehicleSerialNumber"
-  | "vehicleOwnerIdentifier"
-  | "vehicleBrand"
   | "keetaUsername"
   | "keetaDriverId"
   | "isCompanySponsored"
@@ -206,12 +192,7 @@ export type DriverFormFieldName =
   | "driverCardNumber"
   | "driverCardExpiryDate"
   | "driverCardDocument"
-  | "vehicleAuthorizationNumber"
-  | "vehicleAuthorizationExpiryDate"
-  | "operatingCardNumber"
-  | "operatingCardExpiryDate"
   | "profilePhoto"
-  | "operatingCardFile"
   | "iban"
   | "bankName"
   | "accountNumber";
@@ -227,6 +208,7 @@ export type DriverMutationErrorCode =
   | "invalid_driver"
   | "driver_wrong_organization"
   | "already_archived"
+  | "not_archived"
   | "duplicate_iqama"
   | "duplicate_keeta_driver_id"
   | "upload_failed"

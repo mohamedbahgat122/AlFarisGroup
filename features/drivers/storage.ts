@@ -183,6 +183,32 @@ export async function createDriverDocumentSignedUrl(path: string) {
   }
 }
 
+export async function createDriverDocumentSignedUrls(paths: string[]) {
+  if (paths.length === 0) return new Map<string, string>();
+  
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.storage
+      .from(bucketName)
+      .createSignedUrls(paths, 300);
+
+    if (error || !data) {
+      return new Map<string, string>();
+    }
+
+    const urlMap = new Map<string, string>();
+    for (const item of data) {
+      if (item.path && item.signedUrl) {
+        urlMap.set(item.path, item.signedUrl);
+      }
+    }
+    
+    return urlMap;
+  } catch {
+    return new Map<string, string>();
+  }
+}
+
 export async function createDriverDocumentDownloadSignedUrl(
   path: string,
   fileName: string,

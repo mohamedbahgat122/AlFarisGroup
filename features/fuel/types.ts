@@ -94,6 +94,7 @@ export type KafaratplusFuelOperationRow = {
   localDriverIqama: string | null;
   kafaratplusDriver: string | null;
   vehicle: string | null;
+  nfcIdentifier: string | null;
   licencePlate: string | null;
   brandModel: string | null;
   odometer: string | null;

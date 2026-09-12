@@ -36,8 +36,10 @@ export type AppNotification = {
   organizationId: string | null;
   organizationName: string | null;
   organizationCode: string | null;
+  requestId: string | null;
   requestType: string | null;
   requestStatus: string | null;
+  maintenanceJobType: "maintenance" | "oil_change" | null;
   driverName: string | null;
   isRead: boolean;
   readAt: string | null;

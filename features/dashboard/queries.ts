@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 import { getBusinessDateString } from "@/features/drivers/expiry";
 import { getSystemExpiryAlertsForDashboard } from "@/features/expiry-alerts/queries";
 import type { AccessibleOrganization } from "@/features/organizations/types";
@@ -12,6 +12,7 @@ import type { Locale } from "@/types/locale";
 import type {
   DashboardActivityLeader,
   DashboardDriverPerformance,
+  DashboardDriverReportSummary,
   DashboardMetric,
   DashboardOrganizationOverview,
   DashboardTrendPoint,
@@ -65,20 +66,7 @@ type ShiftRow = Pick<
   | "start_photo_path"
   | "end_photo_path"
 >;
-type ReportRow = Pick<
-  Database["public"]["Tables"]["driver_daily_report_rows"]["Row"],
-  | "driver_id"
-  | "driver_full_name"
-  | "organization_id"
-  | "report_date"
-  | "attendance_status"
-  | "delivered_tasks"
-  | "accepted_tasks"
-  | "delivery_rate"
-  | "evaluation_completion_rate"
-  | "mandatory_assignment_score"
-  | "not_early_delivery_confirmation_rate"
->;
+
 type FuelTransactionRow = Pick<
   Database["public"]["Tables"]["fuel_transactions"]["Row"],
   "driver_id" | "driver_name_snapshot" | "organization_id" | "amount_sar" | "fuel_date"
@@ -156,7 +144,7 @@ export async function getOrganizationDashboardData({
   const housingMetrics = buildHousingMetrics(housing.units, housing.rooms, housingAssignmentsForOrganization);
   const requestMetrics = {
     ...buildRequestMetrics(appRequests.rows, period.dates, today),
-    pending: pendingRequests.rows.length,
+    pending: pendingRequests.count,
   };
   const shiftMetrics = buildShiftMetrics(shifts.rows);
   const topPerformanceDrivers = buildTopPerformanceDrivers(reports.rows, organizationById);
@@ -326,7 +314,7 @@ export async function getExecutiveDashboardData({
   const fleetMetrics = buildFleetMetrics(fleet.rows, today);
   const requestMetrics = {
     ...buildRequestMetrics(appRequests.rows, period.dates, today),
-    pending: pendingRequests.rows.length,
+    pending: pendingRequests.count,
   };
   const shiftMetrics = buildShiftMetrics(shifts.rows);
   const fuelMetrics = buildFuelMetrics(fuel.rows, organizationById);
@@ -594,16 +582,16 @@ async function loadAppRequests(
 }
 
 async function loadPendingRequests(supabase: Supabase, organizationIds: string[]) {
-  if (organizationIds.length === 0) return { rows: [] as Pick<AppRequestRow, "organization_id" | "status">[] };
+  if (organizationIds.length === 0) return { count: 0 };
 
-  const { data, error } = await supabase
+  const { count, error } = await supabase
     .from("driver_app_requests")
-    .select("organization_id, status")
+    .select("*", { count: "exact", head: true })
     .in("organization_id", organizationIds)
     .eq("status", "pending");
 
-  if (error) return { rows: [] as Pick<AppRequestRow, "organization_id" | "status">[] };
-  return { rows: data ?? [] };
+  if (error) return { count: 0 };
+  return { count: count ?? 0 };
 }
 
 async function loadShifts(supabase: Supabase, organizationIds: string[], today: string) {
@@ -628,19 +616,16 @@ async function loadDriverReports(
   fromDate: string,
   toDate: string,
 ) {
-  if (organizationIds.length === 0) return { rows: [] as ReportRow[] };
+  if (organizationIds.length === 0) return { rows: [] as DashboardDriverReportSummary[] };
 
-  const { data, error } = await supabase
-    .from("driver_daily_report_rows")
-    .select(
-      "driver_id, driver_full_name, organization_id, report_date, attendance_status, delivered_tasks, accepted_tasks, delivery_rate, evaluation_completion_rate, mandatory_assignment_score, not_early_delivery_confirmation_rate",
-    )
-    .in("organization_id", organizationIds)
-    .gte("report_date", fromDate)
-    .lte("report_date", toDate);
+  const { data, error } = (await supabase.rpc("get_dashboard_driver_report_summary" as never, {
+    p_organization_ids: organizationIds,
+    p_from: fromDate,
+    p_to: toDate,
+  } as never)) as { data: DashboardDriverReportSummary[] | null; error: PostgrestError | null };
 
-  if (error) return { rows: [] as ReportRow[] };
-  return { rows: (data ?? []) as ReportRow[] };
+  if (error) return { rows: [] as DashboardDriverReportSummary[] };
+  return { rows: (data ?? []) as DashboardDriverReportSummary[] };
 }
 
 async function loadLocalFuel(
@@ -775,7 +760,7 @@ function buildShiftMetrics(rows: ShiftRow[]) {
     activeNow: rows.filter((shift) => Boolean(shift.started_at) && !shift.ended_at).length,
     incomplete: rows.filter((shift) => !shift.ended_at).length,
     totalDistanceToday: rows.reduce((total, shift) => {
-      if (shift.end_odometer_reading === null) return total;
+      if (shift.end_odometer_reading === null || shift.start_odometer_reading === null) return total;
       return total + Math.max(shift.end_odometer_reading - shift.start_odometer_reading, 0);
     }, 0),
     missingStartProof: rows.filter((shift) => !shift.start_photo_path).length,
@@ -809,46 +794,29 @@ function buildFuelMetrics(rows: FuelTransactionRow[], organizationById: Map<stri
 }
 
 function buildTopPerformanceDrivers(
-  rows: ReportRow[],
+  rows: DashboardDriverReportSummary[],
   organizationById: Map<string, AccessibleOrganization>,
 ): DashboardDriverPerformance[] {
-  const grouped = new Map<string, ReportRow[]>();
-  for (const row of rows) {
-    const current = grouped.get(row.driver_id) ?? [];
-    current.push(row);
-    grouped.set(row.driver_id, current);
-  }
-
-  return Array.from(grouped.entries())
-    .map(([driverId, driverRows]) => {
-      const scores = driverRows.flatMap((row) =>
-        [
-          row.delivery_rate,
-          row.evaluation_completion_rate,
-          row.mandatory_assignment_score,
-          row.not_early_delivery_confirmation_rate,
-        ].filter((value): value is number => typeof value === "number"),
-      );
-      return {
-        driverId,
-        driverName: driverRows[0]?.driver_full_name ?? "",
-        organizationName: organizationById.get(driverRows[0]?.organization_id ?? "")?.name ?? "",
-        score: scores.length > 0 ? Math.round(scores.reduce((total, value) => total + value, 0) / scores.length) : 0,
-        deliveredTasks: sum(driverRows, "delivered_tasks"),
-        acceptedTasks: sum(driverRows, "accepted_tasks"),
-        reportDays: new Set(driverRows.map((row) => row.report_date)).size,
-        deliveryRate: average(driverRows.map((row) => row.delivery_rate)),
-        completionRate: average(driverRows.map((row) => row.evaluation_completion_rate)),
-        attendanceDays: driverRows.filter((row) => row.attendance_status === "present").length,
-      };
-    })
+  return rows
+    .map((row) => ({
+      driverId: row.driver_id,
+      driverName: row.driver_full_name,
+      organizationName: organizationById.get(row.organization_id)?.name ?? "",
+      score: Number(row.score ?? 0),
+      deliveredTasks: Number(row.delivered_tasks ?? 0),
+      acceptedTasks: Number(row.accepted_tasks ?? 0),
+      reportDays: Number(row.report_days ?? 0),
+      deliveryRate: row.delivery_rate !== null ? Number(row.delivery_rate) : null,
+      completionRate: row.evaluation_completion_rate !== null ? Number(row.evaluation_completion_rate) : null,
+      attendanceDays: Number(row.attendance_days ?? 0),
+    }))
     .filter((row) => row.score > 0)
     .sort((first, second) => second.score - first.score || second.deliveredTasks - first.deliveredTasks)
     .slice(0, 10);
 }
 
 function buildActivityLeaders(
-  reports: ReportRow[],
+  reports: DashboardDriverReportSummary[],
   shifts: ShiftRow[],
   requests: AppRequestRow[],
   organizationById: Map<string, AccessibleOrganization>,
@@ -858,8 +826,9 @@ function buildActivityLeaders(
 
   for (const report of reports) {
     const current = getActivityRow(rows, report.driver_id, report.driver_full_name, organizationById.get(report.organization_id)?.name ?? "");
-    current.deliveredTasks += report.delivered_tasks;
-    current.activityCount += report.delivered_tasks;
+    const deliveredTasks = Number(report.delivered_tasks ?? 0);
+    current.deliveredTasks += deliveredTasks;
+    current.activityCount += deliveredTasks;
   }
 
   for (const shift of shifts) {

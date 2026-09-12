@@ -1,7 +1,9 @@
 "use client";
 
 import { useActionState, useState, useTransition, useEffect, useRef, type ChangeEvent, type FormEvent, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { UserToast, type ToastState } from "@/components/dashboard/users/user-toast";
+import { RealtimeRefresh } from "@/components/dashboard/realtime-refresh";
 import {
   createGlobalFleetVehicleAction,
   setGlobalFleetArchiveStatusAction,
@@ -10,6 +12,7 @@ import {
   updateGlobalFleetVehicleAction,
   getGlobalFleetActivityLogsAction,
   getGlobalFleetBaselinePhotoUrlsAction,
+  getGlobalFleetDocumentPreviewUrlAction,
   searchGlobalDriversAction,
 } from "@/features/fleet/global-actions";
 import { getFleetDownloadUrlAction } from "@/features/fleet/actions";
@@ -25,7 +28,6 @@ import {
   EntityTableContainer,
   FormSection,
   RowActionButton,
-  SecureFileField,
   SelectField,
   TableHeader,
   TextAreaField,
@@ -41,6 +43,7 @@ import type {
   FleetSummaryCounts,
   FleetVehicle,
   FleetVehicleCategory,
+  FleetTechnicalStatus,
 } from "@/features/fleet/types";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
@@ -50,6 +53,12 @@ const baselinePhotoSectionTitle = "\u0635\u0648\u0631 \u062d\u0627\u0644\u0629 \
 const baselinePhotoLoadingLabel = "\u062c\u0627\u0631\u064a \u062a\u062d\u0645\u064a\u0644 \u0627\u0644\u0635\u0648\u0631\u0629...";
 const baselinePhotoEmptyLabel = "\u0644\u0627 \u062a\u0648\u062c\u062f \u0635\u0648\u0631\u0629";
 const baselinePhotoRemoveSelectionLabel = "\u0625\u0632\u0627\u0644\u0629 \u0627\u0644\u0635\u0648\u0631\u0629 \u0627\u0644\u0645\u062d\u062f\u062f\u0629";
+const documentPreviewLabel = "\u0639\u0631\u0636";
+const documentPreviewLoadingLabel = "\u062c\u0627\u0631\u064a \u062a\u062c\u0647\u064a\u0632 \u0627\u0644\u0645\u0639\u0627\u064a\u0646\u0629...";
+const documentPreviewErrorLabel = "\u062a\u0639\u0630\u0631 \u062a\u062c\u0647\u064a\u0632 \u0645\u0639\u0627\u064a\u0646\u0629 \u0627\u0644\u0645\u0644\u0641";
+const documentPreviewCloseLabel = "\u0625\u063a\u0644\u0627\u0642";
+const pdfFileLabel = "PDF";
+const acceptedFleetDocumentTypes = ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf";
 const baselinePhotoSlots: {
   slot: FleetBaselinePhotoSlot;
   name: string;
@@ -81,6 +90,12 @@ export type GlobalFleetClientProps = {
   vehicles: FleetVehicle[];
   drivers?: FleetDriverOption[]; // Global fleet might not have organization drivers loaded yet, or it loads all? We didn't load them in page.
   summary: FleetSummaryCounts;
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalRows: number;
+    totalPages: number;
+  };
   today: string;
   filters: FleetListFilters;
   organizationsMap: Record<string, string>;
@@ -103,6 +118,7 @@ export function GlobalFleetClient({
   vehicles,
   drivers = [],
   summary,
+  pagination,
   today,
   filters,
   organizationsMap,
@@ -110,6 +126,8 @@ export function GlobalFleetClient({
   permissions,
 }: GlobalFleetClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [editingVehicle, setEditingVehicle] = useState<FleetVehicle | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [conditionVehicle, setConditionVehicle] = useState<FleetVehicle | null>(null);
@@ -139,6 +157,13 @@ export function GlobalFleetClient({
     setShowForm(true);
   }
 
+  function handleSuccess(message: string) {
+    setShowForm(false);
+    setConditionVehicle(null);
+    setToast({ tone: "success", message });
+    router.refresh();
+  }
+
   function openActivity(vehicle: FleetVehicle) {
     setActivityVehicle(vehicle);
     setActivityLogs([]);
@@ -151,6 +176,13 @@ export function GlobalFleetClient({
 
   return (
     <>
+      <RealtimeRefresh 
+        channelName={`fleet-vehicles-${category}`}
+        table="fleet_vehicles" 
+        filter={`vehicle_category=eq.${category}`} 
+        toast={locale === "ar" ? "تم تحديث البيانات تلقائياً" : "Data updated automatically"}
+      />
+      <UserToast locale={locale} toast={toast} onDismiss={() => setToast(null)} />
       <EntityPageHeader
         title={title}
         description={dictionary.description}
@@ -164,16 +196,45 @@ export function GlobalFleetClient({
           </a>
         }
         primaryAction={
-          actionPermissions.create ? (
-            <Button
-              type="button"
-              onClick={openCreate}
-              className="w-full gap-2 sm:w-auto"
-            >
-              <PlusIcon />
-              {dictionary.addVehicle}
-            </Button>
-          ) : null
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {actionPermissions.create ? (
+              <Button
+                type="button"
+                onClick={openCreate}
+                className="w-full gap-2 sm:w-auto"
+              >
+                <PlusIcon />
+                {dictionary.addVehicle}
+              </Button>
+            ) : null}
+            <div className="relative group">
+              <button type="button" className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary">
+                <DownloadIcon />
+                {/* @ts-ignore */}
+                {dictionary.exportExcel}
+              </button>
+              <div className="absolute top-full right-0 mt-2 w-48 rounded-xl border border-border bg-white shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 p-2 space-y-1">
+                <a
+                  href={`${fleetPath}/export?${searchParams.toString()}`}
+                  download
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-navy hover:bg-surface transition"
+                >
+                  <DownloadIcon />
+                  {/* @ts-ignore */}
+                  {dictionary.exportFiltered}
+                </a>
+                <a
+                  href={`${fleetPath}/export`}
+                  download
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-navy hover:bg-surface transition"
+                >
+                  <DownloadIcon />
+                  {/* @ts-ignore */}
+                  {dictionary.exportAll}
+                </a>
+              </div>
+            </div>
+          </div>
         }
       />
 
@@ -244,6 +305,7 @@ export function GlobalFleetClient({
             </table>
           </EntityTableContainer>
         )}
+        {pagination && <PaginationControls pagination={pagination} />}
       </EntityContent>
 
       {showForm ? (
@@ -255,6 +317,7 @@ export function GlobalFleetClient({
           drivers={drivers}
           vehicle={editingVehicle}
           onClose={() => setShowForm(false)}
+          onSuccess={handleSuccess}
         />
       ) : null}
 
@@ -264,6 +327,7 @@ export function GlobalFleetClient({
           dictionary={dictionary}
           vehicle={conditionVehicle}
           onClose={() => setConditionVehicle(null)}
+          onSuccess={handleSuccess}
         />
       ) : null}
 
@@ -368,6 +432,11 @@ function FleetFilterBar({
                 vehicleType: "",
                 ownershipType: "all",
                 archive: "active",
+                page: 1,
+                pageSize: 25,
+                driver: "",
+                authorization: "all",
+                linkedDriver: "all",
               })
             }
             className="inline-flex min-h-12 items-center justify-center whitespace-nowrap rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -487,6 +556,13 @@ function buildFleetFilterHref(path: string, filters: FleetListFilters) {
   if (filters.vehicleType) params.set("vehicleType", filters.vehicleType);
   if (filters.ownershipType !== "all") params.set("ownership", filters.ownershipType);
   if (filters.archive !== "active") params.set("archive", filters.archive);
+  
+  if (filters.driver?.trim()) params.set("driver", filters.driver.trim());
+  if (filters.authorization && filters.authorization !== "all") params.set("authorization", filters.authorization);
+  if (filters.linkedDriver && filters.linkedDriver !== "all") params.set("linkedDriver", filters.linkedDriver);
+  
+  // reset page to 1 on any filter change
+  params.set("page", "1");
 
   const query = params.toString();
   return query ? `${path}?${query}` : path;
@@ -563,13 +639,6 @@ function FleetRow({
       </td>
       <td className="whitespace-nowrap px-4 py-4">
         <div className="inline-flex items-center justify-center gap-1">
-          {vehicle.operatingCardFilePath && permissions.downloadOperatingCard ? (
-            <DownloadButton
-              dictionary={dictionary}
-              path={vehicle.operatingCardFilePath}
-              fileName={vehicle.operatingCardFileName ?? "operating-card"}
-            />
-          ) : null}
           {permissions.activity ? (
             <RowActionButton label={dictionary.activity} onClick={() => onActivity(vehicle)}>
               <ActivityIcon />
@@ -646,6 +715,7 @@ function VehicleDialog({
   drivers,
   vehicle,
   onClose,
+  onSuccess,
 }: {
   locale: Locale;
   dictionary: FleetDictionary;
@@ -654,6 +724,7 @@ function VehicleDialog({
   drivers: FleetDriverOption[];
   vehicle: FleetVehicle | null;
   onClose: () => void;
+  onSuccess: (message: string) => void;
 }) {
   const action = vehicle ? updateGlobalFleetVehicleAction : createGlobalFleetVehicleAction;
   const [state, formAction] = useActionState(action, initialFleetActionState);
@@ -687,10 +758,12 @@ function VehicleDialog({
   }, [vehicle]);
 
   useEffect(() => {
-    if (state.status === "error" && state.code === "unauthorized") {
+    if (state.status === "success") {
+      onSuccess(dictionary.success);
+    } else if (state.status === "error" && state.code === "unauthorized") {
       router.refresh();
     }
-  }, [router, state.code, state.status]);
+  }, [router, state.code, state.status, onSuccess, dictionary.success]);
 
   return (
     <EntityFormDialog
@@ -712,11 +785,6 @@ function VehicleDialog({
         <input type="hidden" name="technicalStatusNote" value={vehicle?.technicalStatusNote ?? ""} />
 
         <EntityFormBody>
-          {state.status === "success" ? (
-            <p className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
-              {dictionary.success}
-            </p>
-          ) : null}
           {state.status === "validation_error" || state.status === "error" ? (
             <p className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
               {getErrorMessage(dictionary, state.code)}
@@ -744,6 +812,23 @@ function VehicleDialog({
                 error={state.fieldErrors?.plateNumber}
                 required
                 dir="ltr"
+                autoComplete="off"
+              />
+              <FormField
+                id="fleetSerialNumber"
+                label={dictionary.vehicleSerialNumber ?? "الرقم التسلسلي"}
+                name="serialNumber"
+                defaultValue={vehicle?.serialNumber ?? ""}
+                error={state.fieldErrors?.serialNumber}
+                dir="ltr"
+                autoComplete="off"
+              />
+              <FormField
+                id="fleetBrand"
+                label={dictionary.vehicleBrand ?? "العلامة التجارية"}
+                name="brand"
+                defaultValue={vehicle?.brand ?? ""}
+                error={state.fieldErrors?.brand}
                 autoComplete="off"
               />
             </FormSection>
@@ -804,6 +889,18 @@ function VehicleDialog({
                   name="ownerName"
                   defaultValue={vehicle?.currentOwnerName ?? ""}
                   error={state.fieldErrors?.ownerName}
+                  autoComplete="off"
+                />
+              ) : null}
+
+              {ownershipType && ownershipType !== "company_owned" && ownershipType !== "driver_owned" ? (
+                <FormField
+                  id="fleetOwnerIdentifier"
+                  label={dictionary.vehicleOwnerIdentifier ?? "معرف المالك"}
+                  name="ownerIdentifier"
+                  defaultValue={vehicle?.ownerIdentifier ?? ""}
+                  error={state.fieldErrors?.ownerIdentifier}
+                  dir="ltr"
                   autoComplete="off"
                 />
               ) : null}
@@ -898,6 +995,9 @@ function VehicleDialog({
               <div className="md:col-span-2">
                 <FileField dictionary={dictionary} vehicle={vehicle} error={state.fieldErrors?.operatingCardFile} />
               </div>
+              <div className="md:col-span-2 mt-4 border-t border-border pt-4">
+                <RegistrationFileField dictionary={dictionary} vehicle={vehicle} error={state.fieldErrors?.registrationFile} />
+              </div>
             </FormSection>
 
             <FormSection title={baselinePhotoSectionTitle}>
@@ -966,7 +1066,18 @@ function VehicleDialog({
                 </>
               ) : null}
               {authorizedPersonSource !== "none" ? (
-                <FormField id="fleetAuthorizationExpiryDate" label={dictionary.authorizationExpiryDate} name="authorizationExpiryDate" type="date" defaultValue={vehicle?.authorizationExpiryDate ?? ""} error={state.fieldErrors?.authorizationExpiryDate} />
+                <>
+                  <FormField
+                    id="fleetAuthorizationNumber"
+                    label={dictionary.vehicleAuthorizationNumber ?? "رقم التفويض"}
+                    name="authorizationNumber"
+                    defaultValue={vehicle?.authorizationNumber ?? ""}
+                    error={state.fieldErrors?.authorizationNumber}
+                    dir="ltr"
+                    autoComplete="off"
+                  />
+                  <FormField id="fleetAuthorizationExpiryDate" label={dictionary.authorizationExpiryDate} name="authorizationExpiryDate" type="date" defaultValue={vehicle?.authorizationExpiryDate ?? ""} error={state.fieldErrors?.authorizationExpiryDate} />
+                </>
               ) : null}
             </FormSection>
 
@@ -997,20 +1108,25 @@ function ConditionDialog({
   dictionary,
   vehicle,
   onClose,
+  onSuccess,
 }: {
   locale: Locale;
   dictionary: FleetDictionary;
   vehicle: FleetVehicle;
   onClose: () => void;
+  onSuccess: (message: string) => void;
 }) {
   const [state, formAction] = useActionState(updateGlobalFleetTechnicalStatusAction, initialFleetActionState);
   const router = useRouter();
+  const [technicalStatus, setTechnicalStatus] = useState<FleetTechnicalStatus>(vehicle.technicalStatus);
 
   useEffect(() => {
-    if (state.status === "error" && state.code === "unauthorized") {
+    if (state.status === "success") {
+      onSuccess(dictionary.success);
+    } else if (state.status === "error" && state.code === "unauthorized") {
       router.refresh();
     }
-  }, [router, state.code, state.status]);
+  }, [router, state.code, state.status, onSuccess, dictionary.success]);
 
   return (
     <EntityFormDialog
@@ -1024,9 +1140,9 @@ function ConditionDialog({
         <input type="hidden" name="locale" value={locale} />
         <input type="hidden" name="vehicleId" value={vehicle.id} />
         <EntityFormBody>
-          {state.status === "success" ? (
-            <p className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
-              {dictionary.success}
+          {state.status === "validation_error" || state.status === "error" ? (
+            <p className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+              {getErrorMessage(dictionary, state.code)}
             </p>
           ) : null}
           <FormSection title={dictionary.technicalStatus}>
@@ -1034,19 +1150,22 @@ function ConditionDialog({
               id="fleetTechnicalStatus"
               label={dictionary.technicalStatus}
               name="technicalStatus"
-              defaultValue={vehicle.technicalStatus}
+              value={technicalStatus}
+              onChange={(val) => setTechnicalStatus(val as FleetTechnicalStatus)}
             >
               {renderOptions(dictionary.technicalStatuses)}
             </SelectField>
-            <SelectField
-              id="fleetFaultLocation"
-              label={dictionary.faultLocation}
-              name="faultLocation"
-              defaultValue={vehicle.faultLocation ?? ""}
-              error={state.fieldErrors?.faultLocation}
-            >
-              {renderOptions({ "": dictionary.selectPlaceholder, ...dictionary.faultLocations })}
-            </SelectField>
+            {technicalStatus === "fault" || technicalStatus === "accident" ? (
+              <SelectField
+                id="fleetFaultLocation"
+                label={dictionary.faultLocation}
+                name="faultLocation"
+                defaultValue={vehicle.faultLocation ?? ""}
+                error={state.fieldErrors?.faultLocation}
+              >
+                {renderOptions({ "": dictionary.selectPlaceholder, ...dictionary.faultLocations })}
+              </SelectField>
+            ) : null}
             <TextAreaField
               id="fleetTechnicalStatusNote"
               name="technicalStatusNote"
@@ -1161,36 +1280,6 @@ function LifecycleForm({
         </form>
       ) : null}
     </>
-  );
-}
-
-function DownloadButton({
-  dictionary,
-  path,
-  fileName,
-}: {
-  dictionary: FleetDictionary;
-  path: string;
-  fileName: string;
-}) {
-  const [pending, startTransition] = useTransition();
-
-  return (
-    <RowActionButton
-      disabled={pending}
-      label={dictionary.download}
-      onClick={() => {
-        const formData = new FormData();
-        formData.set("path", path);
-        formData.set("fileName", fileName);
-        startTransition(async () => {
-          const url = await getFleetDownloadUrlAction(formData);
-          if (url) window.open(url, "_blank", "noopener,noreferrer");
-        });
-      }}
-    >
-      <DownloadIcon />
-    </RowActionButton>
   );
 }
 
@@ -1435,46 +1524,375 @@ function FileField({
   vehicle: FleetVehicle | null;
   error?: string;
 }) {
-  const [selectedFileName, setSelectedFileName] = useState("");
-  const [pending, startTransition] = useTransition();
-
-  const currentFile =
-    vehicle?.operatingCardFileName && vehicle.operatingCardFilePath
-      ? {
-          fileName: vehicle.operatingCardFileName,
-          onDownload: () => {
-            const formData = new FormData();
-            formData.set("path", vehicle.operatingCardFilePath ?? "");
-            formData.set("fileName", vehicle.operatingCardFileName ?? "operating-card");
-            startTransition(async () => {
-              const url = await getFleetDownloadUrlAction(formData);
-              if (url) window.open(url, "_blank", "noopener,noreferrer");
-            });
-          },
-        }
-      : vehicle?.operatingCardFileName
-        ? { fileName: vehicle.operatingCardFileName }
-        : null;
-
   return (
-    <SecureFileField
+    <DocumentFileField
       id="operatingCardFile"
       name="operatingCardFile"
       label={dictionary.operatingCardFile}
-      required={false}
       help={dictionary.fileHelp}
-      selectedFileName={selectedFileName}
-      currentFile={currentFile}
-      accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+      currentFile={
+        vehicle?.operatingCardFileName
+          ? {
+              fileName: vehicle.operatingCardFileName,
+              path: vehicle.operatingCardFilePath,
+              mimeType: vehicle.operatingCardMimeType,
+            }
+          : null
+      }
       currentLabel={dictionary.currentFile}
       selectedLabel={dictionary.chooseFile}
-      noFileSelectedLabel={pending ? dictionary.loading : dictionary.chooseFile}
+      noFileSelectedLabel={dictionary.chooseFile}
       removeSelectedLabel={dictionary.removeSelectedFile}
       downloadLabel={dictionary.download}
       error={error}
-      onChange={setSelectedFileName}
     />
   );
+}
+
+function RegistrationFileField({
+  dictionary,
+  vehicle,
+  error,
+}: {
+  dictionary: FleetDictionary;
+  vehicle: FleetVehicle | null;
+  error?: string;
+}) {
+  return (
+    <DocumentFileField
+      id="registrationFile"
+      name="registrationFile"
+      label={dictionary.registrationFile ?? "رخصة السير"}
+      help={dictionary.fileHelp}
+      currentFile={
+        vehicle?.registrationFileName
+          ? {
+              fileName: vehicle.registrationFileName,
+              path: vehicle.registrationFilePath,
+              mimeType: vehicle.registrationMimeType,
+            }
+          : null
+      }
+      currentLabel={dictionary.currentFile}
+      selectedLabel={dictionary.chooseFile}
+      noFileSelectedLabel={dictionary.chooseFile}
+      removeSelectedLabel={dictionary.removeSelectedFile}
+      downloadLabel={dictionary.download}
+      error={error}
+    />
+  );
+}
+
+function DocumentFileField({
+  id,
+  name,
+  label,
+  help,
+  currentFile,
+  currentLabel,
+  selectedLabel,
+  noFileSelectedLabel,
+  removeSelectedLabel,
+  downloadLabel,
+  error,
+}: {
+  id: string;
+  name: string;
+  label: string;
+  help: string;
+  currentFile: {
+    fileName: string;
+    path: string | null;
+    mimeType: string | null;
+  } | null;
+  currentLabel: string;
+  selectedLabel: string;
+  noFileSelectedLabel: string;
+  removeSelectedLabel: string;
+  downloadLabel: string;
+  error?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<{
+    fileName: string;
+    previewUrl: string | null;
+  } | null>(null);
+  const [preview, setPreview] = useState<{ fileName: string; url: string } | null>(null);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [thumbnailPending, setThumbnailPending] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [signingAction, setSigningAction] = useState<"preview" | "download" | null>(null);
+  const errorId = error ? `${id}-error` : undefined;
+  const currentFileIsImage = isPreviewableImageMimeType(currentFile?.mimeType);
+
+  useEffect(() => {
+    return () => {
+      if (selectedFile?.previewUrl) {
+        URL.revokeObjectURL(selectedFile.previewUrl);
+      }
+    };
+  }, [selectedFile]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadThumbnail() {
+      if (!currentFileIsImage || !currentFile?.path) {
+        setThumbnailUrl(null);
+        setThumbnailPending(false);
+        return;
+      }
+
+      setThumbnailPending(true);
+      const formData = new FormData();
+      formData.set("path", currentFile.path);
+      const url = await getGlobalFleetDocumentPreviewUrlAction(formData);
+
+      if (!active) return;
+      setThumbnailUrl(url);
+      setThumbnailPending(false);
+    }
+
+    loadThumbnail();
+
+    return () => {
+      active = false;
+    };
+  }, [currentFile?.path, currentFileIsImage]);
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0] ?? null;
+    setSelectedFile((previousFile) => {
+      if (previousFile?.previewUrl) {
+        URL.revokeObjectURL(previousFile.previewUrl);
+      }
+
+      if (!file) return null;
+
+      return {
+        fileName: file.name,
+        previewUrl: isPreviewableImageMimeType(file.type) ? URL.createObjectURL(file) : null,
+      };
+    });
+  }
+
+  function clearSelectedFile() {
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+
+    setSelectedFile((previousFile) => {
+      if (previousFile?.previewUrl) {
+        URL.revokeObjectURL(previousFile.previewUrl);
+      }
+
+      return null;
+    });
+  }
+
+  async function signPreviewUrl(path: string | null | undefined) {
+    if (!path) return null;
+    const formData = new FormData();
+    formData.set("path", path);
+    return getGlobalFleetDocumentPreviewUrlAction(formData);
+  }
+
+  async function openSavedPreview() {
+    if (!currentFile?.path) return;
+
+    setPreviewError(null);
+    setSigningAction("preview");
+    const url = await signPreviewUrl(currentFile.path);
+    setSigningAction(null);
+
+    if (!url) {
+      setPreviewError(documentPreviewErrorLabel);
+      return;
+    }
+
+    if (currentFileIsImage) {
+      setPreview({ fileName: currentFile.fileName, url });
+      return;
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  async function downloadSavedFile() {
+    if (!currentFile?.path) return;
+
+    setPreviewError(null);
+    setSigningAction("download");
+    const formData = new FormData();
+    formData.set("path", currentFile.path);
+    formData.set("fileName", currentFile.fileName);
+    const url = await getFleetDownloadUrlAction(formData);
+    setSigningAction(null);
+
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    setPreviewError(documentPreviewErrorLabel);
+  }
+
+  return (
+    <div className="space-y-2">
+      <label htmlFor={id} className="block text-sm font-semibold text-navy">
+        {label}
+      </label>
+
+      {currentFile ? (
+        <div className="space-y-2">
+          <p className="text-xs font-bold uppercase text-muted">{currentLabel}</p>
+          <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-white p-3">
+            {currentFileIsImage && currentFile.path ? (
+              <button
+                type="button"
+                onClick={openSavedPreview}
+                className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-xs font-bold text-muted transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary"
+              >
+                {thumbnailUrl ? (
+                  // Signed image thumbnail for the document field currently open in the edit dialog.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={thumbnailUrl}
+                    alt={currentFile.fileName}
+                    className="h-full w-full object-cover"
+                  />
+                ) : thumbnailPending || signingAction === "preview" ? (
+                  documentPreviewLoadingLabel
+                ) : (
+                  documentPreviewLabel
+                )}
+              </button>
+            ) : (
+              <div className="flex size-16 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-sm font-bold text-muted">
+                {pdfFileLabel}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-navy" dir="auto" title={currentFile.fileName}>
+                {currentFile.fileName}
+              </p>
+              {previewError ? (
+                <p className="mt-1 text-xs font-semibold text-danger">{previewError}</p>
+              ) : null}
+            </div>
+            {currentFile.path ? (
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={openSavedPreview}
+                  disabled={signingAction !== null}
+                  className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {signingAction === "preview" ? documentPreviewLoadingLabel : documentPreviewLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadSavedFile}
+                  disabled={signingAction !== null}
+                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <DownloadIcon />
+                  {signingAction === "download" ? documentPreviewLoadingLabel : downloadLabel}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedFile ? (
+        <div className="space-y-2">
+          <p className="text-xs font-bold uppercase text-muted">{selectedLabel}</p>
+          <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-white p-3">
+            {selectedFile.previewUrl ? (
+              // Local object URL for an unsaved user-selected image.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={selectedFile.previewUrl}
+                alt={selectedFile.fileName}
+                className="size-16 shrink-0 rounded-lg border border-border object-cover"
+              />
+            ) : (
+              <div className="flex size-16 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-sm font-bold text-muted">
+                {pdfFileLabel}
+              </div>
+            )}
+            <p className="min-w-0 flex-1 truncate text-sm font-semibold text-navy" dir="auto" title={selectedFile.fileName}>
+              {selectedFile.fileName}
+            </p>
+            <button
+              type="button"
+              onClick={clearSelectedFile}
+              className="shrink-0 text-sm font-semibold text-danger transition hover:text-danger/80"
+            >
+              {removeSelectedLabel}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <input
+        ref={inputRef}
+        id={id}
+        name={name}
+        type="file"
+        accept={acceptedFleetDocumentTypes}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
+        onChange={handleFileChange}
+        className={`block w-full rounded-xl border bg-white px-4 py-3 text-sm text-navy file:me-4 file:rounded-lg file:border-0 file:bg-primary-soft file:px-3 file:py-2 file:text-sm file:font-semibold file:text-primary focus:outline-none focus:ring-4 ${
+          error
+            ? "border-danger focus:border-danger focus:ring-danger/10"
+            : "border-border focus:border-primary focus:ring-primary/10"
+        }`}
+      />
+      {error ? (
+        <p id={errorId} className="text-sm font-medium text-danger">
+          {error}
+        </p>
+      ) : null}
+      <p className="text-xs leading-5 text-muted">
+        {selectedFile?.fileName || noFileSelectedLabel} · {help}
+      </p>
+
+      {preview ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <p className="min-w-0 truncate text-sm font-bold text-navy" dir="auto" title={preview.fileName}>
+                {preview.fileName}
+              </p>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary"
+              >
+                {documentPreviewCloseLabel}
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center bg-background p-4">
+              {/* Signed image preview; avoid Next image optimization for private expiring URLs. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={preview.url}
+                alt={preview.fileName}
+                className="max-h-[75vh] max-w-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function isPreviewableImageMimeType(mimeType: string | null | undefined) {
+  return mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/webp";
 }
 
 function getVehicleDialogTitle(
@@ -1643,4 +2061,77 @@ function formatDate(value: string | null) {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
+}
+
+function PaginationControls({
+  pagination,
+}: {
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalRows: number;
+    totalPages: number;
+  };
+}) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
+  if (!pagination) return null;
+
+  const from = pagination.totalRows === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
+  const to = Math.min(pagination.page * pagination.pageSize, pagination.totalRows);
+
+  function goToPage(page: number) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", page.toString());
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
+  }
+
+  return (
+    <div className={`mt-4 flex flex-col gap-3 text-sm font-semibold text-muted transition-opacity sm:flex-row sm:items-center sm:justify-between ${isPending ? "opacity-70" : ""}`}>
+      <div className="space-y-1">
+        <p>إجمالي {pagination.totalRows.toLocaleString("ar-SA")} مركبة</p>
+        <p>
+          عرض {from.toLocaleString("ar-SA")} إلى {to.toLocaleString("ar-SA")} من أصل {pagination.totalRows.toLocaleString("ar-SA")}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        {pagination.page > 1 ? (
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => goToPage(pagination.page - 1)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary disabled:opacity-60"
+          >
+            السابق
+          </button>
+        ) : (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
+            السابق
+          </span>
+        )}
+        <span className="whitespace-nowrap px-2">
+          الصفحة {pagination.page.toLocaleString("ar-SA")} من {pagination.totalPages.toLocaleString("ar-SA")}
+        </span>
+        {pagination.page < pagination.totalPages ? (
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => goToPage(pagination.page + 1)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary disabled:opacity-60"
+          >
+            التالي
+          </button>
+        ) : (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
+            التالي
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }

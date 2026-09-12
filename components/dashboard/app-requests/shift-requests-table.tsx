@@ -2,160 +2,239 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveShiftChangeRequestAction, rejectShiftChangeRequestAction } from "@/features/shift-requests/actions";
+import {
+  approveShiftChangeRequestAction,
+  rejectShiftChangeRequestAction,
+} from "@/features/shift-requests/actions";
 import type { ShiftChangeRequest } from "@/features/shift-requests/queries";
 
 export function ShiftRequestsTable({
- rows,
- canReview,
+  rows,
+  canReview,
 }: {
- rows: ShiftChangeRequest[];
- canReview: boolean;
+  rows: ShiftChangeRequest[];
+  canReview: boolean;
 }) {
- const [selected, setSelected] = useState<ShiftChangeRequest | null>(null);
- const [reviewNote, setReviewNote] = useState("");
- const [actionType, setActionType] = useState<"approve" | "reject" | null>(null);
- const [isPending, startTransition] = useTransition();
- const router = useRouter();
+  const [selected, setSelected] = useState<ShiftChangeRequest | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [actionType, setActionType] = useState<"approve" | "reject" | null>(
+    null,
+  );
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
- const handleAction = async () => {
- if (!selected || !actionType) return;
+  const handleAction = async () => {
+    if (!selected || !actionType) return;
 
- startTransition(async () => {
-  const action = actionType === "approve" 
-  ? approveShiftChangeRequestAction 
-  : rejectShiftChangeRequestAction;
+    setErrorMessage("");
+    startTransition(async () => {
+      const action =
+        actionType === "approve"
+          ? approveShiftChangeRequestAction
+          : rejectShiftChangeRequestAction;
 
-  const result = await action(selected.id, reviewNote);
+      const result = await action(selected.id, reviewNote);
 
-  if (result.success) {
-  setSelected(null);
-  setReviewNote("");
-  setActionType(null);
-  router.refresh();
-  } else {
-  alert(result.error || "حدث خطأ ما");
-  }
- });
- };
+      if (result.success) {
+        setSelected(null);
+        setReviewNote("");
+        setActionType(null);
+        router.refresh();
+      } else {
+        setErrorMessage(
+          result.error ||
+            "تعذر معالجة طلب تغيير الشيفت. حاول مرة أخرى.",
+        );
+      }
+    });
+  };
 
- return (
- <>
-  <div className="overflow-x-auto border border-border bg-surface rounded-xl shadow-sm">
-  <table className="w-full min-w-250 border-collapse text-start text-sm">
-   <thead className="bg-background text-xs font-bold uppercase text-muted border-b border-border">
-   <tr>
-    <th className="p-4 text-start font-bold text-navy">المندوب</th>
-    <th className="p-4 text-start font-bold text-navy">معرف المندوب</th>
-    <th className="p-4 text-start font-bold text-navy">الشيفت الحالي</th>
-    <th className="p-4 text-start font-bold text-navy">الشيفت المطلوب</th>
-    <th className="p-4 text-start font-bold text-navy">الأسبوع المطلوب له</th>
-    <th className="p-4 text-start font-bold text-navy">تاريخ تقديم الطلب</th>
-    <th className="p-4 text-start font-bold text-navy">حالة الطلب</th>
-    <th className="p-4 text-start font-bold text-navy">ملاحظة المندوب</th>
-    {canReview && <th className="p-4 text-start font-bold text-navy">الإجراءات</th>}
-   </tr>
-   </thead>
-   <tbody className="divide-y divide-border">
-   {rows.map((row) => (
-    <tr key={row.id} className="hover:bg-slate-50 transition-colors">
-    <td className="p-4 font-semibold text-navy">{row.driver_name}</td>
-    <td className="p-4 text-slate-500 font-mono">{row.driver_identifier || "غير متاح"}</td>
-    <td className="p-4 text-slate-700 font-medium">{row.current_shift_name}</td>
-    <td className="p-4 font-bold text-primary">{row.requested_shift_name}</td>
-    <td className="p-4 text-slate-600 font-semibold">{row.requested_week_start_date}</td>
-    <td className="p-4 text-slate-500 font-mono">
-     {new Date(row.created_at).toLocaleDateString("ar-EG")}
-    </td>
-    <td className="p-4">
-     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold shadow-sm ${
-     row.status === "pending" ? "bg-amber-100 text-amber-800" :
-     row.status === "approved" ? "bg-emerald-100 text-emerald-800" :
-     "bg-rose-100 text-rose-800"
-     }`}>
-     {row.status === "pending" ? "قيد الانتظار" :
-      row.status === "approved" ? "مقبول" : "مرفوض"}
-     </span>
-    </td>
-    <td className="p-4 text-slate-600 max-w-50 truncate" title={row.driver_note || ""}>
-     {row.driver_note || "-"}
-    </td>
-    {canReview && (
-     <td className="p-4 space-x-2 rtl:space-x-reverse">
-     {row.status === "pending" ? (
-      <>
-      <button
-       onClick={() => { setSelected(row); setActionType("approve"); }}
-       className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow transition-all cursor-pointer"
-      >
-       موافقة
-      </button>
-      <button
-       onClick={() => { setSelected(row); setActionType("reject"); }}
-       className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 shadow transition-all cursor-pointer"
-      >
-       رفض
-      </button>
-      </>
-     ) : (
-      <span className="text-xs text-slate-400 font-semibold">تمت مراجعته</span>
-     )}
-     </td>
-    )}
-    </tr>
-   ))}
-   </tbody>
-  </table>
-  </div>
+  return (
+    <>
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
+        <table className="w-full min-w-[1200px] border-collapse text-start text-sm">
+          <thead className="border-b border-border bg-background text-xs font-bold uppercase text-muted">
+            <tr>
+              <th className="p-4 text-start font-bold text-navy">المندوب</th>
+              <th className="p-4 text-start font-bold text-navy">معرف المندوب</th>
+              <th className="p-4 text-start font-bold text-navy">الشيفت الحالي</th>
+              <th className="p-4 text-start font-bold text-navy">الشيفت المطلوب</th>
+              <th className="p-4 text-start font-bold text-navy">تاريخ التنفيذ</th>
+              <th className="p-4 text-start font-bold text-navy">تاريخ الطلب</th>
+              <th className="p-4 text-start font-bold text-navy">تاريخ المراجعة</th>
+              <th className="p-4 text-start font-bold text-navy">الحالة</th>
+              <th className="p-4 text-start font-bold text-navy">ملاحظة المندوب</th>
+              <th className="p-4 text-start font-bold text-navy">ملاحظة المراجعة</th>
+              {canReview ? (
+                <th className="p-4 text-start font-bold text-navy">الإجراءات</th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((row) => (
+              <tr key={row.id} className="transition-colors hover:bg-slate-50">
+                <td className="p-4 font-semibold text-navy">{row.driver_name}</td>
+                <td className="p-4 font-mono text-slate-500">
+                  {row.driver_identifier || "غير متاح"}
+                </td>
+                <td className="p-4 font-medium text-slate-700">
+                  {row.current_shift_name}
+                </td>
+                <td className="p-4 font-bold text-primary">
+                  {row.requested_shift_name}
+                </td>
+                <td className="p-4 font-semibold text-slate-600">
+                  {formatBusinessDate(row.requested_week_start_date)}
+                </td>
+                <td className="p-4 font-mono text-slate-500">
+                  {new Date(row.created_at).toLocaleDateString("ar-EG")}
+                </td>
+                <td className="p-4 font-mono text-slate-500">
+                  {row.reviewed_at
+                    ? new Date(row.reviewed_at).toLocaleDateString("ar-EG")
+                    : "-"}
+                </td>
+                <td className="p-4">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold shadow-sm ${getStatusTone(
+                      row.derived_status,
+                    )}`}
+                  >
+                    {row.derived_status_label}
+                  </span>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">
+                    {row.derived_status_message}
+                  </p>
+                </td>
+                <td
+                  className="max-w-50 truncate p-4 text-slate-600"
+                  title={row.driver_note || ""}
+                >
+                  {row.driver_note || "-"}
+                </td>
+                <td
+                  className="max-w-50 truncate p-4 text-slate-600"
+                  title={row.review_note || ""}
+                >
+                  {row.review_note || "-"}
+                </td>
+                {canReview ? (
+                  <td className="space-x-2 p-4 rtl:space-x-reverse">
+                    {row.status === "pending" ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setSelected(row);
+                            setActionType("approve");
+                            setErrorMessage("");
+                          }}
+                          className="cursor-pointer rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow transition-all hover:bg-emerald-700"
+                        >
+                          موافقة
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelected(row);
+                            setActionType("reject");
+                            setErrorMessage("");
+                          }}
+                          className="cursor-pointer rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white shadow transition-all hover:bg-rose-700"
+                        >
+                          رفض
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-400">
+                        تمت مراجعته
+                      </span>
+                    )}
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-  {/* Confirmation Modal */}
-  {selected && actionType && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm p-4">
-   <div className="bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-xl animate-in fade-in zoom-in duration-200">
-   <h3 className="text-lg font-bold text-navy mb-4">
-    {actionType === "approve" ? "تأكيد الموافقة على تغيير الشيفت" : "تأكيد رفض طلب التغيير"}
-   </h3>
-   <p className="text-sm font-semibold text-slate-600 mb-4">
-    أنت على وشك {actionType === "approve" ? "الموافقة على" : "رفض"} طلب تغيير شيفت المندوب{" "}
-    <span className="font-bold text-navy">{selected.driver_name}</span> إلى شيفت{" "}
-    <span className="font-bold text-navy">{selected.requested_shift_name}</span>.
-   </p>
+      {selected && actionType ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-navy">
+              {actionType === "approve"
+                ? "تأكيد الموافقة على تغيير الشيفت"
+                : "تأكيد رفض طلب التغيير"}
+            </h3>
+            <p className="mb-4 text-sm font-semibold text-slate-600">
+              أنت على وشك {actionType === "approve" ? "الموافقة على" : "رفض"} طلب تغيير شيفت المندوب{" "}
+              <span className="font-bold text-navy">{selected.driver_name}</span> إلى شيفت{" "}
+              <span className="font-bold text-navy">{selected.requested_shift_name}</span>.
+            </p>
 
-   <div className="mb-4">
-    <label htmlFor="review_note" className="block text-xs font-bold text-slate-500 mb-1.5">
-    ملاحظات المراجعة
-    </label>
-    <textarea
-    id="review_note"
-    rows={3}
-    value={reviewNote}
-    onChange={(e) => setReviewNote(e.target.value)}
-    placeholder="اكتب ملاحظات الإدارة هنا..."
-    className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-navy focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
-    />
-   </div>
+            <div className="mb-4">
+              <label
+                htmlFor="review_note"
+                className="mb-1.5 block text-xs font-bold text-slate-500"
+              >
+                ملاحظات المراجعة
+              </label>
+              <textarea
+                id="review_note"
+                rows={3}
+                value={reviewNote}
+                onChange={(event) => setReviewNote(event.target.value)}
+                placeholder="اكتب ملاحظات الإدارة هنا..."
+                className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-navy focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+            </div>
 
-   <div className="flex justify-end gap-2">
-    <button
-    disabled={isPending}
-    onClick={() => { setSelected(null); setActionType(null); setReviewNote(""); }}
-    className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
-    >
-    إلغاء
-    </button>
-    <button
-    disabled={isPending}
-    onClick={handleAction}
-    className={`px-4 py-2 text-sm font-bold text-white rounded-xl shadow-md transition-all cursor-pointer ${
-     actionType === "approve" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
-    } disabled:opacity-50`}
-    >
-    {isPending ? "جاري المعالجة..." : "تأكيد"}
-    </button>
-   </div>
-   </div>
-  </div>
-  )}
- </>
- );
+            {errorMessage ? (
+              <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+                {errorMessage}
+              </p>
+            ) : null}
+
+            <div className="flex justify-end gap-2">
+              <button
+                disabled={isPending}
+                onClick={() => {
+                  setSelected(null);
+                  setActionType(null);
+                  setReviewNote("");
+                  setErrorMessage("");
+                }}
+                className="cursor-pointer rounded-xl px-4 py-2 text-sm font-bold text-slate-500 transition-all hover:bg-slate-100"
+              >
+                إلغاء
+              </button>
+              <button
+                disabled={isPending}
+                onClick={handleAction}
+                className={`cursor-pointer rounded-xl px-4 py-2 text-sm font-bold text-white shadow-md transition-all disabled:opacity-50 ${
+                  actionType === "approve"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-rose-600 hover:bg-rose-700"
+                }`}
+              >
+                {isPending ? "جاري المعالجة..." : "تأكيد"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function getStatusTone(status: ShiftChangeRequest["derived_status"]) {
+  if (status === "scheduled") return "bg-sky-100 text-sky-800";
+  if (status === "completed") return "bg-emerald-100 text-emerald-800";
+  if (status === "review_needed") return "bg-orange-100 text-orange-800";
+  if (status === "rejected") return "bg-rose-100 text-rose-800";
+  return "bg-amber-100 text-amber-800";
+}
+
+function formatBusinessDate(value: string) {
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
 }

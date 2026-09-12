@@ -15,6 +15,7 @@ type DashboardSidebarProps = {
   userRole: ProfileRole;
   hasGlobalFleetPermission: boolean;
   hasGlobalHousingPermission: boolean;
+  hasGlobalSupervisorShiftsPermission: boolean;
   organizations: AccessibleOrganization[];
   collapsed: boolean;
   mobileOpen: boolean;
@@ -30,6 +31,7 @@ export function DashboardSidebar({
   userRole,
   hasGlobalFleetPermission,
   hasGlobalHousingPermission,
+  hasGlobalSupervisorShiftsPermission,
   organizations,
   collapsed,
   mobileOpen,
@@ -52,8 +54,12 @@ export function DashboardSidebar({
   }, [onSidebarLinkClick]);
 
   const dashboardHref = `/${locale}/dashboard`;
-  const globalFleetHref = `/${locale}/dashboard/fleet/cars`;
+  const globalFleetHref = `/${locale}/dashboard/fleet`;
+  const globalFleetCarsHref = `/${locale}/dashboard/fleet/cars`;
+  const globalFleetMotorcyclesHref = `/${locale}/dashboard/fleet/motorcycles`;
+  const globalFleetMaterialsHref = `/${locale}/dashboard/fleet/materials`;
   const globalHousingHref = `/${locale}/dashboard/housing`;
+  const globalSupervisorShiftsHref = `/${locale}/dashboard/supervisor-shifts`;
   const organizationsHref = `/${locale}/dashboard/organizations`;
   const usersHref = `/${locale}/dashboard/users`;
   const currentOrganizationCode = getCurrentOrganizationCode(pathname, locale);
@@ -73,6 +79,8 @@ export function DashboardSidebar({
     odometerManagement: true,
     driverWarnings: true,
     shifts: true,
+    orderPeriods: true,
+    maintenanceMaterials: true,
   };
   const organizationHomeHref = currentOrganizationCode
     ? `${organizationsHref}/${currentOrganizationCode}`
@@ -83,14 +91,8 @@ export function DashboardSidebar({
   const organizationDriversReportsHref = organizationDriversHref
     ? `${organizationDriversHref}/reports`
     : null;
-  const organizationFleetHref = currentOrganizationCode
-    ? `${organizationsHref}/${currentOrganizationCode}/fleet`
-    : null;
-  const organizationFleetCarsHref = organizationFleetHref
-    ? `${organizationFleetHref}/cars`
-    : null;
-  const organizationFleetMotorcyclesHref = organizationFleetHref
-    ? `${organizationFleetHref}/motorcycles`
+  const organizationDriversResignationsHref = organizationDriversHref
+    ? `${organizationDriversHref}/resignations`
     : null;
   const organizationFuelHref = currentOrganizationCode
     ? `${organizationsHref}/${currentOrganizationCode}/fuel`
@@ -128,8 +130,8 @@ export function DashboardSidebar({
   const organizationShiftsManagementHref = organizationShiftsHref
     ? `${organizationShiftsHref}/manage`
     : null;
-  const organizationShiftCalculationHref = organizationShiftsHref
-    ? `${organizationShiftsHref}/calculation`
+  const organizationOrderPeriodsHref = currentOrganizationCode
+    ? `${organizationsHref}/${currentOrganizationCode}/orders/manage`
     : null;
   const organizationDriverWarningsHref = currentOrganizationCode
     ? `${organizationsHref}/${currentOrganizationCode}/driver-warnings`
@@ -144,13 +146,8 @@ export function DashboardSidebar({
     Boolean(organizationDriversHref) && checkActive(organizationDriversHref, true);
   const isOrganizationDriversReportsActive =
     Boolean(organizationDriversReportsHref) && checkActive(organizationDriversReportsHref);
-  const isOrganizationFleetActive =
-    Boolean(organizationFleetHref) && checkActive(organizationFleetHref);
-  const isOrganizationFleetCarsActive =
-    Boolean(organizationFleetCarsHref) && checkActive(organizationFleetCarsHref, true);
-  const isOrganizationFleetMotorcyclesActive =
-    Boolean(organizationFleetMotorcyclesHref) &&
-    checkActive(organizationFleetMotorcyclesHref, true);
+  const isOrganizationDriversResignationsActive =
+    Boolean(organizationDriversResignationsHref) && checkActive(organizationDriversResignationsHref);
   const isOrganizationFuelActive =
     Boolean(organizationFuelHref) && checkActive(organizationFuelHref);
   const isOrganizationFuelManagementActive =
@@ -182,25 +179,31 @@ export function DashboardSidebar({
   const isOrganizationShiftsManagementActive =
     Boolean(organizationShiftsManagementHref) &&
     checkActive(organizationShiftsManagementHref, true);
-  const isOrganizationShiftCalculationActive =
-    Boolean(organizationShiftCalculationHref) &&
-    checkActive(organizationShiftCalculationHref, true);
+  const isOrganizationOrderPeriodsActive =
+    Boolean(organizationOrderPeriodsHref) &&
+    checkActive(organizationOrderPeriodsHref, true);
   const isOrganizationDriverWarningsActive =
     Boolean(organizationDriverWarningsHref) &&
     checkActive(organizationDriverWarningsHref, true);
   const isDashboardActive = checkActive(dashboardHref, true);
-  const isGlobalFleetActive = checkActive(`/${locale}/dashboard/fleet`);
+  const isGlobalFleetActive = checkActive(globalFleetHref);
+  const isGlobalFleetCarsActive = checkActive(globalFleetCarsHref, true);
+  const isGlobalFleetMotorcyclesActive = checkActive(globalFleetMotorcyclesHref, true);
+  const isGlobalFleetMaterialsActive = checkActive(globalFleetMaterialsHref, true);
   const isGlobalHousingActive = checkActive(globalHousingHref);
+  const isGlobalSupervisorShiftsActive = checkActive(globalSupervisorShiftsHref);
 
   const isDashboardPending = pendingHref === dashboardHref;
-  const isGlobalFleetPending = pendingHref === globalFleetHref;
+  const isGlobalFleetCarsPending = pendingHref === globalFleetCarsHref;
+  const isGlobalFleetMotorcyclesPending = pendingHref === globalFleetMotorcyclesHref;
+  const isGlobalFleetMaterialsPending = pendingHref === globalFleetMaterialsHref;
   const isGlobalHousingPending = pendingHref === globalHousingHref;
+  const isGlobalSupervisorShiftsPending = pendingHref === globalSupervisorShiftsHref;
   const isOrganizationsPending = pendingHref === organizationsHref;
   const isOrganizationHomePending = pendingHref === organizationHomeHref;
   const isOrganizationDriversPending = pendingHref === organizationDriversHref;
   const isOrganizationDriversReportsPending = pendingHref === organizationDriversReportsHref;
-  const isOrganizationFleetCarsPending = pendingHref === organizationFleetCarsHref;
-  const isOrganizationFleetMotorcyclesPending = pendingHref === organizationFleetMotorcyclesHref;
+  const isOrganizationDriversResignationsPending = pendingHref === organizationDriversResignationsHref;
   const isOrganizationFuelManagementPending = pendingHref === organizationFuelManagementHref;
   const isOrganizationFuelReportsPending = pendingHref === organizationFuelReportsHref;
   const isOrganizationOdometerPending = pendingHref === organizationOdometerHref;
@@ -210,13 +213,20 @@ export function DashboardSidebar({
   const isOrganizationOilChangeRequestsPending = pendingHref === organizationOilChangeRequestsHref;
   const isOrganizationShiftChangeRequestsPending = pendingHref === organizationShiftChangeRequestsHref;
   const isOrganizationShiftsManagementPending = pendingHref === organizationShiftsManagementHref;
-  const isOrganizationShiftCalculationPending = pendingHref === organizationShiftCalculationHref;
+  const isOrganizationOrderPeriodsPending = pendingHref === organizationOrderPeriodsHref;
   const isOrganizationDriverWarningsPending = pendingHref === organizationDriverWarningsHref;
   const isUsersPending = pendingHref === usersHref;
   const canSeeOrganizations = userRole !== "driver";
   const canSeeUserManagement = userRole === "system_owner";
+  const hasMaintenanceMaterialsPermission =
+    userRole === "system_owner" ||
+    organizations.some((organization) =>
+      organization.permissionKeys.includes("maintenance_materials.view") ||
+      organization.permissionKeys.includes("maintenance_materials.manage"),
+    );
+  const [manualGlobalFleetGroupOpen, setManualGlobalFleetGroupOpen] = useState(false);
+  const [manualGlobalSupervisorsGroupOpen, setManualGlobalSupervisorsGroupOpen] = useState(false);
   const [manualDriversGroupOpen, setManualDriversGroupOpen] = useState(false);
-  const [manualFleetGroupOpen, setManualFleetGroupOpen] = useState(false);
   const [manualFuelGroupOpen, setManualFuelGroupOpen] = useState(false);
   const [manualAppRequestsGroupOpen, setManualAppRequestsGroupOpen] =
     useState(false);
@@ -225,14 +235,16 @@ export function DashboardSidebar({
   const navigationRef = useRef<HTMLElement>(null);
   const driversFlyoutRef = useRef<HTMLDivElement>(null);
   const driversButtonRef = useRef<HTMLButtonElement>(null);
+  const globalFleetGroupId = "dashboard-sidebar-global-fleet-group";
+  const globalSupervisorsGroupId = "dashboard-sidebar-global-supervisors-group";
   const driversGroupId = "dashboard-sidebar-drivers-group";
-  const fleetGroupId = "dashboard-sidebar-fleet-group";
   const fuelGroupId = "dashboard-sidebar-fuel-group";
   const appRequestsGroupId = "dashboard-sidebar-app-requests-group";
   const shiftsGroupId = "dashboard-sidebar-shifts-group";
+  const globalFleetGroupOpen = isGlobalFleetActive || manualGlobalFleetGroupOpen;
+  const globalSupervisorsGroupOpen = isGlobalSupervisorShiftsActive || manualGlobalSupervisorsGroupOpen;
   const driversGroupOpen =
     isOrganizationDriversActive || manualDriversGroupOpen;
-  const fleetGroupOpen = isOrganizationFleetActive || manualFleetGroupOpen;
   const fuelGroupOpen = isOrganizationFuelActive || manualFuelGroupOpen;
   const appRequestsGroupOpen =
     isOrganizationAppRequestsActive || manualAppRequestsGroupOpen;
@@ -289,7 +301,8 @@ export function DashboardSidebar({
     appRequestsGroupOpen,
     collapsed,
     driversGroupOpen,
-    fleetGroupOpen,
+    globalFleetGroupOpen,
+    globalSupervisorsGroupOpen,
     fuelGroupOpen,
     shiftsGroupOpen,
     pathname,
@@ -363,21 +376,108 @@ export function DashboardSidebar({
               {dictionary.navLabel}
             </span>
           </Link>
-          {hasGlobalFleetPermission ? (
-            <Link
-              href={globalFleetHref}
-              aria-current={isGlobalFleetActive ? "page" : undefined}
-              title={collapsed ? dictionary.fleet.navLabel : undefined}
-              onClick={(e) => handleLinkClick(globalFleetHref, e)}
-              className={`${navItemClassName(isGlobalFleetActive, collapsed)} ${isGlobalFleetPending ? "pointer-events-none cursor-wait" : ""}`}
-            >
-              <span className={navIconClassName(isGlobalFleetActive)}>
-                {isGlobalFleetPending ? <SidebarSpinnerActive /> : <FleetIcon />}
-              </span>
-              <span className={collapsed ? "lg:hidden" : ""}>
-                {dictionary.fleet.navLabel}
-              </span>
-            </Link>
+          {hasGlobalFleetPermission || hasMaintenanceMaterialsPermission ? (
+            <>
+              <button
+                type="button"
+                aria-expanded={globalFleetGroupOpen}
+                aria-controls={globalFleetGroupId}
+                aria-label={
+                  globalFleetGroupOpen
+                    ? dictionary.fleet.collapseFleetMenu
+                    : dictionary.fleet.expandFleetMenu
+                }
+                onClick={() => setManualGlobalFleetGroupOpen((open) => !open)}
+                className={`${navItemClassName(isGlobalFleetActive, collapsed)} w-full`}
+              >
+                <span className={navIconClassName(isGlobalFleetActive)}>
+                  <FleetIcon />
+                </span>
+                <span className={collapsed ? "lg:hidden" : ""}>{dictionary.fleet.navLabel}</span>
+                <span
+                  className={`ms-auto transition-transform duration-200 ${collapsed ? "lg:hidden" : ""} ${
+                    globalFleetGroupOpen ? "rotate-180" : ""
+                  }`}
+                >
+                  <DownChevronIcon />
+                </span>
+              </button>
+              {globalFleetGroupOpen ? (
+                <div id={globalFleetGroupId} className={`space-y-1 ${collapsed ? "lg:hidden" : "ps-4"}`}>
+                  {hasGlobalFleetPermission ? (
+                    <>
+                      <Link
+                        href={globalFleetCarsHref}
+                        aria-current={
+                          isGlobalFleetCarsActive ? "page" : undefined
+                        }
+                        onClick={(e) => handleLinkClick(globalFleetCarsHref, e)}
+                        className={`${subNavItemClassName(
+                          isGlobalFleetCarsActive,
+                        )} ${isGlobalFleetCarsPending ? "pointer-events-none cursor-wait" : ""}`}
+                      >
+                        {isGlobalFleetCarsPending ? (
+                          <SidebarSpinnerActive className="size-3" />
+                        ) : (
+                          <span
+                            className={subNavDotClassName(
+                              isGlobalFleetCarsActive,
+                            )}
+                          />
+                        )}
+                        <span>{dictionary.fleet.carsNavLabel}</span>
+                      </Link>
+                      <Link
+                        href={globalFleetMotorcyclesHref}
+                        aria-current={
+                          isGlobalFleetMotorcyclesActive
+                            ? "page"
+                            : undefined
+                        }
+                        onClick={(e) => handleLinkClick(globalFleetMotorcyclesHref, e)}
+                        className={`${subNavItemClassName(
+                          isGlobalFleetMotorcyclesActive,
+                        )} ${isGlobalFleetMotorcyclesPending ? "pointer-events-none cursor-wait" : ""}`}
+                      >
+                        {isGlobalFleetMotorcyclesPending ? (
+                          <SidebarSpinnerActive className="size-3" />
+                        ) : (
+                          <span
+                            className={subNavDotClassName(
+                              isGlobalFleetMotorcyclesActive,
+                            )}
+                          />
+                        )}
+                        <span>{dictionary.fleet.motorcyclesNavLabel}</span>
+                      </Link>
+                    </>
+                  ) : null}
+                  {hasMaintenanceMaterialsPermission ? (
+                    <Link
+                      href={globalFleetMaterialsHref}
+                      aria-current={
+                        isGlobalFleetMaterialsActive ? "page" : undefined
+                      }
+                      onClick={(e) => handleLinkClick(globalFleetMaterialsHref, e)}
+                      className={`${subNavItemClassName(
+                        isGlobalFleetMaterialsActive,
+                      )} ${isGlobalFleetMaterialsPending ? "pointer-events-none cursor-wait" : ""}`}
+                    >
+                      {isGlobalFleetMaterialsPending ? (
+                        <SidebarSpinnerActive className="size-3" />
+                      ) : (
+                        <span
+                          className={subNavDotClassName(
+                            isGlobalFleetMaterialsActive,
+                          )}
+                        />
+                      )}
+                      <span>{dictionary.fleet.materialsNavLabel}</span>
+                    </Link>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : null}
           {hasGlobalHousingPermission ? (
             <Link
@@ -394,6 +494,84 @@ export function DashboardSidebar({
                 {dictionary.housing.navLabel}
               </span>
             </Link>
+          ) : null}
+          {hasGlobalSupervisorShiftsPermission ? (
+            <>
+              <button
+                type="button"
+                aria-expanded={globalSupervisorsGroupOpen}
+                aria-controls={globalSupervisorsGroupId}
+                aria-label={
+                  globalSupervisorsGroupOpen
+                    ? "طي قائمة المشرفين"
+                    : "فتح قائمة المشرفين"
+                }
+                onClick={() => setManualGlobalSupervisorsGroupOpen((open) => !open)}
+                className={`${navItemClassName(isGlobalSupervisorShiftsActive, collapsed)} w-full`}
+              >
+                <span className={navIconClassName(isGlobalSupervisorShiftsActive)}>
+                  <ShiftsIcon />
+                </span>
+                <span className={collapsed ? "lg:hidden" : ""}>{"المشرفين"}</span>
+                <span
+                  className={`ms-auto transition-transform duration-200 ${collapsed ? "lg:hidden" : ""} ${
+                    globalSupervisorsGroupOpen ? "rotate-180" : ""
+                  }`}
+                >
+                  <DownChevronIcon />
+                </span>
+              </button>
+              {globalSupervisorsGroupOpen ? (
+                <div id={globalSupervisorsGroupId} className={`space-y-1 ${collapsed ? "lg:hidden" : "ps-4"}`}>
+                  {hasGlobalSupervisorShiftsPermission ? (
+                    <Link
+                      href={globalSupervisorShiftsHref}
+                      aria-current={
+                        isGlobalSupervisorShiftsActive ? "page" : undefined
+                      }
+                      onClick={(e) => handleLinkClick(globalSupervisorShiftsHref, e)}
+                      className={`${subNavItemClassName(
+                        isGlobalSupervisorShiftsActive,
+                      )} ${isGlobalSupervisorShiftsPending ? "pointer-events-none cursor-wait" : ""}`}
+                    >
+                      {isGlobalSupervisorShiftsPending ? (
+                        <SidebarSpinnerActive className="size-3" />
+                      ) : (
+                        <span
+                          className={subNavDotClassName(
+                            isGlobalSupervisorShiftsActive,
+                          )}
+                        />
+                      )}
+                      <span>{"شيفتات المشرفين"}</span>
+                    </Link>
+                  ) : null}
+                  {/*
+                    <Link
+                      href={globalSupervisorEntitlementsHref}
+                      aria-current={
+                        isGlobalSupervisorEntitlementsActive ? "page" : undefined
+                      }
+                      onClick={(e) => handleLinkClick(globalSupervisorEntitlementsHref, e)}
+                      className={`${subNavItemClassName(
+                        isGlobalSupervisorEntitlementsActive,
+                      )} ${isGlobalSupervisorEntitlementsPending ? "pointer-events-none cursor-wait" : ""}`}
+                    >
+                      {isGlobalSupervisorEntitlementsPending ? (
+                        <SidebarSpinnerActive className="size-3" />
+                      ) : (
+                        <span
+                          className={subNavDotClassName(
+                            isGlobalSupervisorEntitlementsActive,
+                          )}
+                        />
+                      )}
+                      <span>{"مستحقات المشرفين"}</span>
+                    </Link>
+                  */}
+                </div>
+              ) : null}
+            </>
           ) : null}
           {canSeeOrganizations ? (
             <>
@@ -506,91 +684,56 @@ export function DashboardSidebar({
                           <span>{dictionary.drivers.reportsNavLabel}</span>
                         </Link>
                       ) : null}
-                    </div>
-                  ) : null}
-                  {(navigation.fleetCars || navigation.fleetMotorcycles) &&
-                  organizationFleetCarsHref &&
-                  organizationFleetMotorcyclesHref ? (
-                    <>
-                      <button
-                        type="button"
-                        aria-expanded={fleetGroupOpen}
-                        aria-controls={fleetGroupId}
-                        aria-label={
-                          fleetGroupOpen
-                            ? dictionary.fleet.collapseFleetMenu
-                            : dictionary.fleet.expandFleetMenu
-                        }
-                        onClick={() => setManualFleetGroupOpen((open) => !open)}
-                        className={`${subNavItemClassName(
-                          isOrganizationFleetActive,
-                        )} w-full`}
-                      >
-                        <span className={subNavIconClassName(isOrganizationFleetActive)}>
-                          <FleetIcon />
-                        </span>
-                        <span>{dictionary.fleet.navLabel}</span>
-                        <span
-                          className={`ms-auto transition-transform duration-200 ${
-                            fleetGroupOpen ? "rotate-180" : ""
-                          }`}
+                      {organizationDriversResignationsHref && navigation.drivers ? (
+                        <Link
+                          href={organizationDriversResignationsHref}
+                          aria-current={
+                            isOrganizationDriversResignationsActive
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={(e) => handleLinkClick(organizationDriversResignationsHref, e)}
+                          className={`${subNavItemClassName(
+                            isOrganizationDriversResignationsActive,
+                          )} ${isOrganizationDriversResignationsPending ? "pointer-events-none cursor-wait" : ""}`}
                         >
-                          <DownChevronIcon />
-                        </span>
-                      </button>
-                      {fleetGroupOpen ? (
-                        <div id={fleetGroupId} className="space-y-1 ps-9">
-                          {navigation.fleetCars ? (
-                            <Link
-                              href={organizationFleetCarsHref}
-                              aria-current={
-                                isOrganizationFleetCarsActive ? "page" : undefined
-                              }
-                              onClick={(e) => handleLinkClick(organizationFleetCarsHref, e)}
-                              className={`${subNavItemClassName(
-                                isOrganizationFleetCarsActive,
-                              )} ${isOrganizationFleetCarsPending ? "pointer-events-none cursor-wait" : ""}`}
-                            >
-                              {isOrganizationFleetCarsPending ? (
-                                <SidebarSpinnerActive className="size-3" />
-                              ) : (
-                                <span
-                                  className={subNavDotClassName(
-                                    isOrganizationFleetCarsActive,
-                                  )}
-                                />
+                          {isOrganizationDriversResignationsPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationDriversResignationsActive,
                               )}
-                              <span>{dictionary.fleet.carsNavLabel}</span>
-                            </Link>
-                          ) : null}
-                          {navigation.fleetMotorcycles ? (
-                            <Link
-                              href={organizationFleetMotorcyclesHref}
-                              aria-current={
-                                isOrganizationFleetMotorcyclesActive
-                                  ? "page"
-                                  : undefined
-                              }
-                              onClick={(e) => handleLinkClick(organizationFleetMotorcyclesHref, e)}
-                              className={`${subNavItemClassName(
-                                isOrganizationFleetMotorcyclesActive,
-                              )} ${isOrganizationFleetMotorcyclesPending ? "pointer-events-none cursor-wait" : ""}`}
-                            >
-                              {isOrganizationFleetMotorcyclesPending ? (
-                                <SidebarSpinnerActive className="size-3" />
-                              ) : (
-                                <span
-                                  className={subNavDotClassName(
-                                    isOrganizationFleetMotorcyclesActive,
-                                  )}
-                                />
-                              )}
-                              <span>{dictionary.fleet.motorcyclesNavLabel}</span>
-                            </Link>
-                          ) : null}
-                        </div>
+                            />
+                          )}
+                          <span>{dictionary.drivers.resignationsNavLabel}</span>
+                        </Link>
                       ) : null}
-                    </>
+                      {/*
+                        <Link
+                          href={organizationEntitlementsHref}
+                          aria-current={
+                            isOrganizationEntitlementsActive
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={(e) => handleLinkClick(organizationEntitlementsHref, e)}
+                          className={`${subNavItemClassName(
+                            isOrganizationEntitlementsActive,
+                          )} ${isOrganizationEntitlementsPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationEntitlementsPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationEntitlementsActive,
+                              )}
+                            />
+                          )}
+                        </Link>
+                      */}
+                    </div>
                   ) : null}
                   {(navigation.fuelManagement || navigation.fuelReports) &&
                   organizationFuelManagementHref &&
@@ -862,9 +1005,7 @@ export function DashboardSidebar({
                       ) : null}
                     </>
                   ) : null}
-                  {navigation.shifts &&
-                  organizationShiftsManagementHref &&
-                  organizationShiftCalculationHref ? (
+                  {(navigation.shifts || navigation.orderPeriods) && organizationShiftsManagementHref ? (
                     <>
                       <button
                         type="button"
@@ -896,7 +1037,7 @@ export function DashboardSidebar({
                       </button>
                       {shiftsGroupOpen ? (
                         <div id={shiftsGroupId} className="space-y-1 ps-9">
-                          <Link
+                          {navigation.shifts ? <Link
                             href={organizationShiftsManagementHref}
                             aria-current={
                               isOrganizationShiftsManagementActive
@@ -918,30 +1059,30 @@ export function DashboardSidebar({
                               />
                             )}
                             <span>{dictionary.shifts.managementNavLabel}</span>
-                          </Link>
-                          <Link
-                            href={organizationShiftCalculationHref}
-                            aria-current={
-                              isOrganizationShiftCalculationActive
-                                ? "page"
-                                : undefined
-                            }
-                            onClick={(e) => handleLinkClick(organizationShiftCalculationHref, e)}
-                            className={`${subNavItemClassName(
-                              isOrganizationShiftCalculationActive,
-                            )} ${isOrganizationShiftCalculationPending ? "pointer-events-none cursor-wait" : ""}`}
-                          >
-                            {isOrganizationShiftCalculationPending ? (
-                              <SidebarSpinnerActive className="size-3" />
-                            ) : (
-                              <span
-                                className={subNavDotClassName(
-                                  isOrganizationShiftCalculationActive,
-                                )}
-                              />
-                            )}
-                            <span>{dictionary.shifts.calculationNavLabel}</span>
-                          </Link>
+                          </Link> : null}
+                          {navigation.orderPeriods && organizationOrderPeriodsHref ? (
+                            <Link
+                              href={organizationOrderPeriodsHref}
+                              aria-current={
+                                isOrganizationOrderPeriodsActive ? "page" : undefined
+                              }
+                              onClick={(e) => handleLinkClick(organizationOrderPeriodsHref, e)}
+                              className={`${subNavItemClassName(
+                                isOrganizationOrderPeriodsActive,
+                              )} ${isOrganizationOrderPeriodsPending ? "pointer-events-none cursor-wait" : ""}`}
+                            >
+                              {isOrganizationOrderPeriodsPending ? (
+                                <SidebarSpinnerActive className="size-3" />
+                              ) : (
+                                <span
+                                  className={subNavDotClassName(
+                                    isOrganizationOrderPeriodsActive,
+                                  )}
+                                />
+                              )}
+                              <span>{dictionary.orderPeriods.navLabel}</span>
+                            </Link>
+                          ) : null}
                         </div>
                       ) : null}
                     </>
@@ -1051,39 +1192,35 @@ export function DashboardSidebar({
                           <span>{dictionary.drivers.reportsNavLabel}</span>
                         </Link>
                       ) : null}
+                      {/*
+                        <Link
+                          href={organizationEntitlementsHref!}
+                          aria-current={
+                            isOrganizationEntitlementsActive
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={(e) => {
+                            setDriversFlyoutOpen(false);
+                            handleLinkClick(organizationEntitlementsHref!, e);
+                          }}
+                          className={`${subNavItemClassName(
+                            isOrganizationEntitlementsActive,
+                          )} ${isOrganizationEntitlementsPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationEntitlementsPending ? (
+                            <SidebarSpinnerActive className="size-3" />
+                          ) : (
+                            <span
+                              className={subNavDotClassName(
+                                isOrganizationEntitlementsActive,
+                              )}
+                            />
+                          )}
+                        </Link>
+                      */}
                     </div>
                   ) : null}
-                </div>
-              ) : null}
-              {organizationFleetCarsHref && (navigation.fleetCars || navigation.fleetMotorcycles) ? (
-                <div className={collapsed ? "hidden lg:block" : "hidden"}>
-                  <Link
-                    href={
-                      navigation.fleetCars
-                        ? organizationFleetCarsHref
-                        : organizationFleetMotorcyclesHref ?? organizationFleetCarsHref
-                    }
-                    aria-current={isOrganizationFleetActive ? "page" : undefined}
-                    title={dictionary.fleet.navLabel}
-                    onClick={(e) => handleLinkClick(
-                      navigation.fleetCars
-                        ? organizationFleetCarsHref
-                        : organizationFleetMotorcyclesHref ?? organizationFleetCarsHref,
-                      e
-                    )}
-                    className={`${navItemClassName(
-                      isOrganizationFleetActive,
-                      true,
-                    )} ${isOrganizationFleetCarsPending || isOrganizationFleetMotorcyclesPending ? "pointer-events-none cursor-wait" : ""}`}
-                  >
-                    <span className={navIconClassName(isOrganizationFleetActive)}>
-                      {isOrganizationFleetCarsPending || isOrganizationFleetMotorcyclesPending ? (
-                        <SidebarSpinnerActive />
-                      ) : (
-                        <FleetIcon />
-                      )}
-                    </span>
-                  </Link>
                 </div>
               ) : null}
               {organizationFuelManagementHref && (navigation.fuelManagement || navigation.fuelReports) ? (
@@ -1155,9 +1292,7 @@ export function DashboardSidebar({
                   </Link>
                 </div>
               ) : null}
-              {navigation.shifts &&
-              organizationShiftsManagementHref &&
-              organizationShiftCalculationHref ? (
+              {navigation.shifts && organizationShiftsManagementHref ? (
                 <div className={collapsed ? "hidden lg:block" : "hidden"}>
                   <Link
                     href={organizationShiftsManagementHref}
@@ -1169,14 +1304,14 @@ export function DashboardSidebar({
                     className={`${navItemClassName(
                       isOrganizationShiftsActive,
                       true,
-                    )} ${isOrganizationShiftsManagementPending || isOrganizationShiftCalculationPending ? "pointer-events-none cursor-wait" : ""}`}
+                    )} ${isOrganizationShiftsManagementPending ? "pointer-events-none cursor-wait" : ""}`}
                   >
                     <span
                       className={navIconClassName(
                         isOrganizationShiftsActive,
                       )}
                     >
-                      {isOrganizationShiftsManagementPending || isOrganizationShiftCalculationPending ? (
+                      {isOrganizationShiftsManagementPending ? (
                         <SidebarSpinnerActive />
                       ) : (
                         <ShiftsIcon />

@@ -35,9 +35,9 @@ import type {
 import type { Database } from "@/types/database";
 
 type CreateDriverRecordArgs =
-  Database["public"]["Functions"]["create_driver_record"]["Args"];
+  Database["public"]["Functions"]["create_driver_record_v2"]["Args"];
 type UpdateDriverRecordArgs =
-  Database["public"]["Functions"]["update_driver_record"]["Args"];
+  Database["public"]["Functions"]["update_driver_record_v2"]["Args"];
 type SetDriverStatusArgs =
   Database["public"]["Functions"]["set_driver_status"]["Args"];
 type ArchiveDriverRecordArgs =
@@ -99,7 +99,6 @@ export async function createDriverForOrganization({
   drivingLicenseFile,
   driverCardFile,
   profilePhotoFile,
-  operatingCardFile,
 }: {
   organizationCode: string;
   input: Omit<DriverMutationInput, "organizationId">;
@@ -107,7 +106,6 @@ export async function createDriverForOrganization({
   drivingLicenseFile: File | null;
   driverCardFile: File | null;
   profilePhotoFile: File | null;
-  operatingCardFile: File | null;
 }): Promise<DriverMutationResult> {
   const access = await getManageAccess(organizationCode, "drivers.create");
 
@@ -216,27 +214,6 @@ export async function createDriverForOrganization({
     uploadedAssetPaths.push(profilePhotoUpload.path);
   }
 
-  const operatingCardUpload = operatingCardFile
-    ? await uploadDriverAsset({
-        file: operatingCardFile,
-        organizationId: access.organization.id,
-        driverId,
-        category: "operating-card",
-      })
-    : null;
-
-  if (operatingCardUpload && !operatingCardUpload.success) {
-    await deleteDriverDocuments([
-      ...uploaded.map((document) => document.storage_path),
-      ...uploadedAssetPaths,
-    ]);
-    return { success: false, code: operatingCardUpload.code };
-  }
-
-  if (operatingCardUpload?.success) {
-    uploadedAssetPaths.push(operatingCardUpload.path);
-  }
-
   const createPayload = {
     p_actor_user_id: access.actorUserId,
     p_driver_id: driverId,
@@ -246,9 +223,6 @@ export async function createDriverForOrganization({
     p_mobile_number: validation.input.mobileNumber,
     p_vehicle_type: validation.input.vehicleType,
     p_vehicle_number: vehicleResolution.vehicleNumber,
-    p_vehicle_serial_number: validation.input.vehicleSerialNumber,
-    p_vehicle_owner_identifier: validation.input.vehicleOwnerIdentifier,
-    p_vehicle_brand: validation.input.vehicleBrand,
     p_keeta_username: validation.input.keetaUsername,
     p_keeta_driver_id: validation.input.keetaDriverId,
     p_is_company_sponsored: validation.input.isCompanySponsored,
@@ -261,27 +235,22 @@ export async function createDriverForOrganization({
       validation.input.drivingLicenseExpiryDate,
     p_driver_card_number: validation.input.driverCardNumber,
     p_driver_card_expiry_date: validation.input.driverCardExpiryDate,
-    p_vehicle_authorization_number:
-      validation.input.vehicleAuthorizationNumber,
-    p_vehicle_authorization_expiry_date:
-      validation.input.vehicleAuthorizationExpiryDate,
     p_iban: validation.input.iban ?? "",
     p_bank_name: validation.input.bankName ?? "",
     p_account_number: validation.input.accountNumber ?? "",
     p_documents: uploaded,
-    p_vehicle_id: vehicleResolution.vehicleId,
+    p_vehicle_id: vehicleResolution.vehicleId ?? undefined,
     p_nfc_number: validation.input.nfcNumber,
   } satisfies CreateDriverRecordArgs;
 
-  const { error } = await admin.rpc("create_driver_record", createPayload);
+  const { error } = await admin.rpc("create_driver_record_v2", createPayload);
 
   if (error) {
-    logDriverRpcError("create_driver_record", error, createPayload, {
+    logDriverRpcError("create_driver_record_v2", error, createPayload, {
       iqama: Boolean(iqamaFile),
       drivingLicense: Boolean(drivingLicenseFile),
       driverCard: Boolean(driverCardFile),
       profilePhoto: Boolean(profilePhotoFile),
-      operatingCard: Boolean(operatingCardFile),
     });
     await deleteDriverDocuments([
       ...uploaded.map((document) => document.storage_path),
@@ -298,11 +267,6 @@ export async function createDriverForOrganization({
     organizationId: access.organization.id,
     keetaVehiclePlateNumber: validation.input.keetaVehiclePlateNumber,
     profilePhotoPath: profilePhotoUpload?.success ? profilePhotoUpload.path : null,
-    operatingCardNumber: validation.input.operatingCardNumber,
-    operatingCardExpiryDate: validation.input.operatingCardExpiryDate,
-    operatingCardFilePath: operatingCardUpload?.success
-      ? operatingCardUpload.path
-      : null,
   });
 
   if (!extensionUpdate.success) {
@@ -321,8 +285,6 @@ export async function updateDriverForOrganization({
   driverCardFile,
   profilePhotoFile,
   removeProfilePhoto,
-  operatingCardFile,
-  removeOperatingCardFile,
 }: {
   organizationCode: string;
   input: DriverMutationInput;
@@ -331,8 +293,6 @@ export async function updateDriverForOrganization({
   driverCardFile: File | null;
   profilePhotoFile: File | null;
   removeProfilePhoto: boolean;
-  operatingCardFile: File | null;
-  removeOperatingCardFile: boolean;
 }): Promise<DriverMutationResult> {
   const access = await getManageAccess(organizationCode, "drivers.update");
 
@@ -497,35 +457,6 @@ export async function updateDriverForOrganization({
     replacementAssetPaths.push(profilePhotoUpload.path);
   }
 
-  const operatingCardUpload = operatingCardFile
-    ? await uploadDriverAsset({
-        file: operatingCardFile,
-        organizationId: access.organization.id,
-        driverId: validation.input.driverId,
-        category: "operating-card",
-      })
-    : null;
-
-  if (operatingCardUpload && !operatingCardUpload.success) {
-    logDriverUpdateStageFailure("upload_operating_card_file", {
-      driverIdExists: true,
-      organizationResolved: true,
-      code: operatingCardUpload.code,
-      message: operatingCardUpload.message,
-      details: operatingCardUpload.details,
-      hint: operatingCardUpload.hint,
-    });
-    await deleteDriverDocuments([
-      ...replacementDocuments.map((document) => document.storage_path),
-      ...replacementAssetPaths,
-    ]);
-    return { success: false, code: operatingCardUpload.code };
-  }
-
-  if (operatingCardUpload?.success) {
-    replacementAssetPaths.push(operatingCardUpload.path);
-  }
-
   const updatePayload = {
     p_actor_user_id: access.actorUserId,
     p_driver_id: validation.input.driverId,
@@ -535,9 +466,6 @@ export async function updateDriverForOrganization({
     p_mobile_number: validation.input.mobileNumber,
     p_vehicle_type: validation.input.vehicleType,
     p_vehicle_number: vehicleResolution.vehicleNumber,
-    p_vehicle_serial_number: validation.input.vehicleSerialNumber,
-    p_vehicle_owner_identifier: validation.input.vehicleOwnerIdentifier,
-    p_vehicle_brand: validation.input.vehicleBrand,
     p_keeta_username: validation.input.keetaUsername,
     p_keeta_driver_id: validation.input.keetaDriverId,
     p_is_company_sponsored: validation.input.isCompanySponsored,
@@ -550,19 +478,15 @@ export async function updateDriverForOrganization({
       validation.input.drivingLicenseExpiryDate,
     p_driver_card_number: validation.input.driverCardNumber,
     p_driver_card_expiry_date: validation.input.driverCardExpiryDate,
-    p_vehicle_authorization_number:
-      validation.input.vehicleAuthorizationNumber,
-    p_vehicle_authorization_expiry_date:
-      validation.input.vehicleAuthorizationExpiryDate,
     p_iban: validation.input.iban ?? "",
     p_bank_name: validation.input.bankName ?? "",
     p_account_number: validation.input.accountNumber ?? "",
     p_documents: replacementDocuments,
-    p_vehicle_id: vehicleResolution.vehicleId,
+    p_vehicle_id: vehicleResolution.vehicleId ?? undefined,
     p_nfc_number: validation.input.nfcNumber,
   } satisfies UpdateDriverRecordArgs;
 
-  const { error } = await admin.rpc("update_driver_record", updatePayload);
+  const { error } = await admin.rpc("update_driver_record_v2", updatePayload);
 
   if (error) {
     logDriverUpdateStageFailure("update_driver_database", {
@@ -573,12 +497,11 @@ export async function updateDriverForOrganization({
       details: error.details,
       hint: error.hint,
     });
-    logDriverRpcError("update_driver_record", error, updatePayload, {
+    logDriverRpcError("update_driver_record_v2", error, updatePayload, {
       iqama: Boolean(iqamaFile),
       drivingLicense: Boolean(drivingLicenseFile),
       driverCard: Boolean(driverCardFile),
       profilePhoto: Boolean(profilePhotoFile),
-      operatingCard: Boolean(operatingCardFile),
     });
     await deleteDriverDocuments(
       [
@@ -594,26 +517,17 @@ export async function updateDriverForOrganization({
 
   const existingExtension = existingDriver as typeof existingDriver & {
     profile_photo_path: string | null;
-    operating_card_file_path: string | null;
   };
   const nextProfilePhotoPath = removeProfilePhoto
     ? null
     : profilePhotoUpload?.success
       ? profilePhotoUpload.path
       : existingExtension.profile_photo_path;
-  const nextOperatingCardFilePath = removeOperatingCardFile
-    ? null
-    : operatingCardUpload?.success
-      ? operatingCardUpload.path
-      : existingExtension.operating_card_file_path;
   const extensionUpdate = await updateDriverExtensionFields(admin, {
     driverId: validation.input.driverId,
     organizationId: access.organization.id,
     keetaVehiclePlateNumber: validation.input.keetaVehiclePlateNumber,
     profilePhotoPath: nextProfilePhotoPath,
-    operatingCardNumber: validation.input.operatingCardNumber,
-    operatingCardExpiryDate: validation.input.operatingCardExpiryDate,
-    operatingCardFilePath: nextOperatingCardFilePath,
   });
 
   if (!extensionUpdate.success) {
@@ -637,11 +551,6 @@ export async function updateDriverForOrganization({
       }),
       ...(profilePhotoUpload?.success || removeProfilePhoto
         ? [existingExtension.profile_photo_path].filter(
-            (path): path is string => Boolean(path),
-          )
-        : []),
-      ...(operatingCardUpload?.success || removeOperatingCardFile
-        ? [existingExtension.operating_card_file_path].filter(
             (path): path is string => Boolean(path),
           )
         : []),
@@ -766,6 +675,67 @@ export async function archiveDriverForOrganization({
 
   if (error) {
     logDriverLifecycleError("archive_driver_record", error, {
+      driverIdExists: Boolean(driverId),
+      organizationResolved: true,
+    });
+    return { success: false, code: "update_failed" };
+  }
+
+  return { success: true, driverId };
+}
+
+export async function restoreDriverForOrganization({
+  organizationCode,
+  driverId,
+}: {
+  organizationCode: string;
+  driverId: string;
+}): Promise<DriverMutationResult> {
+  const access = await getManageAccess(organizationCode, "drivers.archive");
+
+  if (!access.success) {
+    return access;
+  }
+
+  const admin = getAdminClientOrNull();
+
+  if (!admin) {
+    return { success: false, code: "configuration_error" };
+  }
+
+  const target = await loadTargetDriver(admin, driverId);
+
+  if (target.error) {
+    logDriverUpdateStageError("load_target_driver", target.error, {
+      driverIdExists: Boolean(driverId),
+      organizationResolved: true,
+    });
+    return { success: false, code: "update_failed" };
+  }
+
+  if (!target.driver) {
+    return { success: false, code: "invalid_driver" };
+  }
+
+  if (target.driver.organization_id !== access.organization.id) {
+    return { success: false, code: "driver_wrong_organization" };
+  }
+
+  if (!target.driver.deleted_at) {
+    return { success: false, code: "not_archived" };
+  }
+
+  const payload = {
+    p_actor_user_id: access.actorUserId,
+    p_driver_id: driverId,
+    p_organization_id: access.organization.id,
+  } as ArchiveDriverRecordArgs;
+
+  // Bypass TS since RPC is newly added in migration
+  const { error } = await (admin.rpc as any)("restore_driver_record", payload);
+
+  if (error) {
+    logDriverLifecycleError("restore_driver_record", error, {
       driverIdExists: Boolean(driverId),
       organizationResolved: true,
     });
@@ -1910,25 +1880,16 @@ async function updateDriverExtensionFields(
     organizationId,
     keetaVehiclePlateNumber,
     profilePhotoPath,
-    operatingCardNumber,
-    operatingCardExpiryDate,
-    operatingCardFilePath,
   }: {
     driverId: string;
     organizationId: string;
     keetaVehiclePlateNumber: string;
     profilePhotoPath: string | null;
-    operatingCardNumber: string;
-    operatingCardExpiryDate: string;
-    operatingCardFilePath: string | null;
   },
 ) {
   const extensionColumns = {
     keeta_vehicle_plate_number: nullableTrimmed(keetaVehiclePlateNumber),
     profile_photo_path: profilePhotoPath,
-    operating_card_number: nullableTrimmed(operatingCardNumber),
-    operating_card_expiry_date: nullableTrimmed(operatingCardExpiryDate),
-    operating_card_file_path: operatingCardFilePath,
     updated_at: new Date().toISOString(),
   };
 
@@ -2009,7 +1970,7 @@ function getDuplicateCode(message: string) {
 }
 
 function logDriverRpcError(
-  functionName: "create_driver_record" | "update_driver_record",
+  functionName: "create_driver_record_v2" | "update_driver_record_v2",
   error: {
     code?: string;
     message?: string;
@@ -2022,7 +1983,6 @@ function logDriverRpcError(
     drivingLicense: boolean;
     driverCard: boolean;
     profilePhoto: boolean;
-    operatingCard: boolean;
   },
 ) {
   if (process.env.NODE_ENV === "production") {
@@ -2077,7 +2037,7 @@ function logDriverUpdateStageFailure(
 }
 
 function logDriverLifecycleError(
-  rpcFunction: "set_driver_status" | "archive_driver_record",
+  rpcFunction: "set_driver_status" | "archive_driver_record" | "restore_driver_record",
   error: {
     code?: string;
     message?: string;
@@ -2152,15 +2112,9 @@ function getActivitySummary(metadata: Json, afterData: NullableJson) {
 
   if (isJsonRecord(afterData)) {
     const replacedDocuments = afterData.replaced_documents;
-    const vehicleOwnerIdentifierChanged =
-      afterData.vehicle_owner_identifier_changed;
-
+    
     if (Array.isArray(replacedDocuments)) {
       summary.replacedDocumentCount = replacedDocuments.length;
-    }
-
-    if (typeof vehicleOwnerIdentifierChanged === "boolean") {
-      summary.vehicleOwnerIdentifierChanged = vehicleOwnerIdentifierChanged;
     }
   }
 

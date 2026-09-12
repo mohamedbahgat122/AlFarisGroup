@@ -97,6 +97,9 @@ export default async function ShiftsManagementPage({ params }: RouteProps) {
         dictionary={dictionary}
         shifts={result.shifts}
         drivers={result.drivers}
+        scheduledChanges={result.scheduledChanges}
+        shiftChangeRequestDays={result.shiftChangeRequestDays}
+        weeks={result.weeks}
         permissions={result.permissions}
       />
     </>

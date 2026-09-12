@@ -78,11 +78,6 @@ export function ExecutiveDashboard({ data, locale }: ExecutiveDashboardProps) {
         table="housing_units"
         toast="تم تحديث لوحة التحكم"
       />
-      <RealtimeRefresh
-        channelName="executive-dashboard-notifications"
-        table="app_notifications"
-        toast="تم تحديث لوحة التحكم"
-      />
 
       <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">

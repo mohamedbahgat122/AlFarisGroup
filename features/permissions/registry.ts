@@ -32,31 +32,37 @@ export const organizationPermissionKeys = [
   "driver_warnings.view",
   "driver_warnings.issue",
   "driver_warnings.revoke",
-  "entitlements.view",
-  "entitlements.create_transaction",
-  "entitlements.view_transactions",
-  "entitlements.reverse_transaction",
-  "entitlements.publish",
   "shifts.view",
   "shifts.create",
   "shifts.update",
   "shifts.assign",
   "shifts.archive",
+  "maintenance_providers.view",
+  "maintenance_providers.manage",
+  "maintenance_jobs.view",
+  "maintenance_jobs.assign",
+  "maintenance_jobs.cancel",
+  "maintenance_materials.view",
+  "maintenance_materials.manage",
+  "order_periods.view",
+  "order_periods.manage",
+  "order_periods.assign",
 ] as const;
 
 export type OrganizationPermissionKey =
   (typeof organizationPermissionKeys)[number];
 
 export type OrganizationPermissionGroup = {
-  id:
+    id:
     | "organization"
     | "drivers"
     | "driver_reports"
     | "fleet"
     | "fuel"
     | "app_requests"
-    | "entitlements"
     | "shifts"
+    | "maintenance"
+    | "order_periods"
     | "driver_warnings"
     | "notifications";
   permissions: OrganizationPermissionKey[];
@@ -77,9 +83,11 @@ export const viewOnlyOrganizationPermissionKeys = [
   "odometer.manage",
   "notifications.view",
   "driver_warnings.view",
-  "entitlements.view",
-  "entitlements.view_transactions",
   "shifts.view",
+  "maintenance_providers.view",
+  "maintenance_jobs.view",
+  "maintenance_materials.view",
+  "order_periods.view",
 ] as const satisfies readonly OrganizationPermissionKey[];
 
 export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
@@ -149,16 +157,6 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
     ],
   },
   {
-    id: "entitlements",
-    permissions: [
-      "entitlements.view",
-      "entitlements.create_transaction",
-      "entitlements.view_transactions",
-      "entitlements.reverse_transaction",
-      "entitlements.publish",
-    ],
-  },
-  {
     id: "shifts",
     permissions: [
       "shifts.view",
@@ -166,6 +164,26 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
       "shifts.update",
       "shifts.assign",
       "shifts.archive",
+    ],
+  },
+  {
+    id: "maintenance",
+    permissions: [
+      "maintenance_providers.view",
+      "maintenance_providers.manage",
+      "maintenance_jobs.view",
+      "maintenance_jobs.assign",
+      "maintenance_jobs.cancel",
+      "maintenance_materials.view",
+      "maintenance_materials.manage",
+    ],
+  },
+  {
+    id: "order_periods",
+    permissions: [
+      "order_periods.view",
+      "order_periods.manage",
+      "order_periods.assign",
     ],
   },
   {
@@ -237,21 +255,34 @@ export function applyPermissionDependencies(
   }
 
   if (
-    permissions.has("entitlements.create_transaction") ||
-    permissions.has("entitlements.view_transactions") ||
-    permissions.has("entitlements.reverse_transaction") ||
-    permissions.has("entitlements.publish")
-  ) {
-    permissions.add("entitlements.view");
-  }
-
-  if (
     permissions.has("shifts.create") ||
     permissions.has("shifts.update") ||
     permissions.has("shifts.assign") ||
     permissions.has("shifts.archive")
   ) {
     permissions.add("shifts.view");
+  }
+
+  if (permissions.has("maintenance_providers.manage")) {
+    permissions.add("maintenance_providers.view");
+  }
+
+  if (permissions.has("maintenance_jobs.assign") || permissions.has("maintenance_jobs.cancel")) {
+    permissions.add("maintenance_jobs.view");
+    permissions.add("maintenance_providers.view");
+  }
+
+  if (permissions.has("maintenance_materials.manage")) {
+    permissions.add("maintenance_materials.view");
+    permissions.add("maintenance_jobs.view");
+    permissions.add("maintenance_providers.view");
+  }
+
+  if (
+    permissions.has("order_periods.manage") ||
+    permissions.has("order_periods.assign")
+  ) {
+    permissions.add("order_periods.view");
   }
 
   return Array.from(permissions).filter(isOrganizationPermissionKey);

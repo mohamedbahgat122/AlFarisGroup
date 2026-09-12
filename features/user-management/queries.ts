@@ -35,6 +35,7 @@ type ManagedUserProfileRow = Pick<
   | "updated_at"
   | "home_organization_id"
   | "deleted_at"
+  | "avatar_path"
 >;
 
 const managedUsersPageSize = 50;
@@ -92,7 +93,7 @@ export async function getManagedUsersForUserManagement({
   let profileQuery = currentUser.supabase
     .from("profiles")
     .select(
-      "id, full_name, role, job_title, status, created_at, updated_at, home_organization_id, deleted_at",
+      "id, full_name, role, job_title, status, created_at, updated_at, home_organization_id, deleted_at, avatar_path",
       { count: "exact" },
     )
     .is("deleted_at", null)
@@ -207,6 +208,25 @@ export async function getManagedUsersForUserManagement({
     globalPermissionsByUserId.set(row.user_id, keys);
   }
 
+  const avatarPaths = profileRows
+    .map((p) => p.avatar_path)
+    .filter((path): path is string => Boolean(path));
+
+  let signedUrlsMap = new Map<string, string>();
+  if (avatarPaths.length > 0) {
+    const { data: urlData } = await currentUser.supabase.storage
+      .from("profile-avatars")
+      .createSignedUrls(avatarPaths, 3600);
+
+    if (urlData) {
+      for (const item of urlData) {
+        if (!item.error && item.signedUrl && item.path) {
+          signedUrlsMap.set(item.path, item.signedUrl);
+        }
+      }
+    }
+  }
+
   const totalRows = count ?? profileRows.length;
   const totalPages = Math.max(Math.ceil(totalRows / managedUsersPageSize), 1);
 
@@ -261,6 +281,7 @@ export async function getManagedUsersForUserManagement({
         : normalizeGlobalPermissionKeys(globalPermissionsByUserId.get(profile.id) ?? []),
       createdAt: profile.created_at,
       isSystemOwner: profile.role === "system_owner",
+      avatarUrl: profile.avatar_path ? signedUrlsMap.get(profile.avatar_path) ?? null : null,
     })),
     pagination: {
       page: Math.min(normalizedPage, totalPages),

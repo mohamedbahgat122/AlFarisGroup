@@ -5,7 +5,12 @@ import { useFormStatus } from "react-dom";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
+import { DashboardMutationOverlay } from "@/components/dashboard/dashboard-loading-state";
 import { UserToast, type ToastState } from "@/components/dashboard/users/user-toast";
+import {
+  RealtimeRefresh,
+  type RealtimeRefreshPayload,
+} from "@/components/dashboard/realtime-refresh";
 import {
   archiveDriverAction,
   createDriverAppAccountAction,
@@ -17,6 +22,7 @@ import {
   setDriverStatusAction,
   updateDriverAppLoginIdentifierAction,
   updateDriverAction,
+  restoreDriverAction,
 } from "@/features/drivers/actions";
 import {
   initialDriverAccountActionState,
@@ -29,6 +35,7 @@ import type {
   DriverActivityLog,
   DriverAppAccountOption,
   DriverDocumentMetadata,
+  DriverFilePreview,
   DriverFormFieldName,
   DriverFormValues,
   DriverListItem,
@@ -68,6 +75,7 @@ type DialogState =
   | { mode: "suspend"; driver: DriverListItem }
   | { mode: "reactivate"; driver: DriverListItem }
   | { mode: "archive"; driver: DriverListItem }
+  | { mode: "restore"; driver: DriverListItem }
   | { mode: "activity"; driver: DriverListItem }
   | { mode: "create-app-account"; driver: DriverListItem }
   | { mode: "link-app-account"; driver: DriverListItem }
@@ -82,6 +90,21 @@ type DriverFormDialogState = Extract<
 
 const vehicleTypes: DriverVehicleType[] = ["motorcycle", "car"];
 const settlementTypes: DriverSettlementType[] = ["tiers", "per_order"];
+const localRealtimeEchoSuppressionMs = 1500;
+
+type LocalDriverRealtimeEcho = {
+  eventType: "INSERT" | "UPDATE";
+  driverId?: string;
+  expiresAt: number;
+};
+
+function getRealtimeRowString(
+  row: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = row[key];
+  return typeof value === "string" ? value : null;
+}
 
 export function DriversManagementClient({
   locale,
@@ -95,9 +118,14 @@ export function DriversManagementClient({
   fleetVehicles,
 }: DriversManagementClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [savingDriverForm, setSavingDriverForm] = useState(false);
+  const [hideDriverFormDialog, setHideDriverFormDialog] = useState(false);
   const permissions = new Set(organization.permissionKeys);
   const driverPermissions = {
+    view: permissions.has("drivers.view"),
     create: permissions.has("drivers.create"),
     update: permissions.has("drivers.update"),
     status: permissions.has("drivers.status"),
@@ -119,15 +147,123 @@ export function DriversManagementClient({
 
     return { mode: driverPermissions.update ? "edit" : "view", driver };
   });
+  const localRealtimeEchoRef = useRef<LocalDriverRealtimeEcho | null>(null);
+  const localRealtimeEchoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
-  function handleSuccess(message: string) {
+  const clearLocalRealtimeEchoSuppression = useCallback(() => {
+    localRealtimeEchoRef.current = null;
+
+    if (localRealtimeEchoTimeoutRef.current) {
+      clearTimeout(localRealtimeEchoTimeoutRef.current);
+      localRealtimeEchoTimeoutRef.current = null;
+    }
+  }, []);
+
+  const armLocalRealtimeEchoSuppression = useCallback(
+    (echo: Omit<LocalDriverRealtimeEcho, "expiresAt">) => {
+      clearLocalRealtimeEchoSuppression();
+
+      localRealtimeEchoRef.current = {
+        ...echo,
+        expiresAt: Date.now() + localRealtimeEchoSuppressionMs,
+      };
+      localRealtimeEchoTimeoutRef.current = setTimeout(
+        clearLocalRealtimeEchoSuppression,
+        localRealtimeEchoSuppressionMs,
+      );
+    },
+    [clearLocalRealtimeEchoSuppression],
+  );
+
+  const shouldSuppressDriverRealtimeRefresh = useCallback(
+    (payload: RealtimeRefreshPayload) => {
+      const pendingEcho = localRealtimeEchoRef.current;
+
+      if (!pendingEcho) {
+        return false;
+      }
+
+      if (Date.now() > pendingEcho.expiresAt) {
+        clearLocalRealtimeEchoSuppression();
+        return false;
+      }
+
+      if (payload.eventType !== pendingEcho.eventType) {
+        return false;
+      }
+
+      if (
+        getRealtimeRowString(payload.new, "organization_id") !== organization.id
+      ) {
+        return false;
+      }
+
+      if (
+        pendingEcho.driverId &&
+        getRealtimeRowString(payload.new, "id") !== pendingEcho.driverId
+      ) {
+        return false;
+      }
+
+      clearLocalRealtimeEchoSuppression();
+      return true;
+    },
+    [clearLocalRealtimeEchoSuppression, organization.id],
+  );
+
+  useEffect(() => clearLocalRealtimeEchoSuppression, [
+    clearLocalRealtimeEchoSuppression,
+  ]);
+
+  function handleSuccess(
+    message: string,
+    localEcho?: Omit<LocalDriverRealtimeEcho, "expiresAt">,
+  ) {
+    if (localEcho) {
+      armLocalRealtimeEchoSuppression(localEcho);
+    }
+
+    setSavingDriverForm(false);
+    setHideDriverFormDialog(false);
     setDialog(null);
     setToast({ tone: "success", message });
     router.refresh();
   }
 
+  function handleDriverFormSubmit() {
+    setSavingDriverForm(true);
+    setHideDriverFormDialog(true);
+  }
+
+  function handleDriverFormError(message: string) {
+    setSavingDriverForm(false);
+    setHideDriverFormDialog(false);
+    setToast({ tone: "error", message });
+  }
+
+  const isArchived = searchParams.get("archived") === "true";
+  const archivedParams = new URLSearchParams(searchParams.toString());
+  if (isArchived) {
+    archivedParams.delete("archived");
+  } else {
+    archivedParams.set("archived", "true");
+  }
+  archivedParams.delete("page");
+  const archivedHref = `${pathname}?${archivedParams.toString()}`;
+
   return (
     <>
+      <DashboardMutationOverlay active={savingDriverForm} />
+      <RealtimeRefresh
+        channelName={`drivers-${organization.id}`}
+        table="drivers"
+        filter={`organization_id=eq.${organization.id}`}
+        toast={locale === "ar" ? "تم تحديث البيانات تلقائياً" : "Data updated automatically"}
+        enabled={driverPermissions.view}
+        shouldSuppressRefresh={shouldSuppressDriverRealtimeRefresh}
+      />
       <UserToast locale={locale} toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex flex-col gap-4 border-b border-border bg-surface px-5 py-6 sm:px-7 lg:flex-row lg:items-center lg:justify-between">
         <div className="max-w-3xl">
@@ -143,26 +279,66 @@ export function DriversManagementClient({
             {dictionary.description}
           </p>
         </div>
-        {driverPermissions.create ? (
-          <Button
-            type="button"
-            onClick={() => setDialog({ mode: "create" })}
-            className="w-full gap-2 sm:w-auto"
+        <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+          <a
+            href={archivedHref}
+            className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
-            <PlusIcon />
-            {dictionary.addDriver}
-          </Button>
-        ) : null}
+            {isArchived ? dictionary.hideArchivedDrivers : dictionary.showArchivedDrivers}
+          </a>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {driverPermissions.create ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setHideDriverFormDialog(false);
+                  setDialog({ mode: "create" });
+                }}
+                className="w-full gap-2 sm:w-auto"
+              >
+                <PlusIcon />
+                {dictionary.addDriver}
+              </Button>
+            ) : null}
+            <div className="relative group">
+              <button type="button" className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary">
+                <DownloadIcon />
+                {dictionary.exportExcel}
+              </button>
+              <div className="absolute top-full right-0 mt-2 w-48 rounded-xl border border-border bg-white shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 p-2 space-y-1">
+                <a
+                  href={`${pathname}/export?${searchParams.toString()}`}
+                  download
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-navy hover:bg-surface transition"
+                >
+                  <DownloadIcon />
+                  {dictionary.exportFiltered}
+                </a>
+                <a
+                  href={`${pathname}/export`}
+                  download
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-navy hover:bg-surface transition"
+                >
+                  <DownloadIcon />
+                  {dictionary.exportAll}
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <DriversSummaryCards summary={summary} />
-      <DriversFilterBar />
+      <DriversSummaryCards summary={summary} dictionary={dictionary} />
+      <DriversFilterBar dictionary={dictionary} />
 
       <div className="px-5 py-6 sm:px-7">
         {drivers.length === 0 ? (
           <EmptyState
             dictionary={dictionary}
             canManage={driverPermissions.create}
-            onCreate={() => setDialog({ mode: "create" })}
+            onCreate={() => {
+              setHideDriverFormDialog(false);
+              setDialog({ mode: "create" });
+            }}
           />
         ) : (
           <DriversTable
@@ -171,9 +347,10 @@ export function DriversManagementClient({
             drivers={drivers}
             permissions={driverPermissions}
             today={today}
-            onSelect={(driver) =>
-              setDialog({ mode: driverPermissions.update ? "edit" : "view", driver })
-            }
+            onSelect={(driver) => {
+              setHideDriverFormDialog(false);
+              setDialog({ mode: driverPermissions.update ? "edit" : "view", driver });
+            }}
             onAction={setDialog}
           />
         )}
@@ -188,7 +365,9 @@ export function DriversManagementClient({
           state={dialog}
           onClose={() => setDialog(null)}
           onSuccess={handleSuccess}
-          onError={(message) => setToast({ tone: "error", message })}
+          onError={handleDriverFormError}
+          onSubmit={handleDriverFormSubmit}
+          hidden={hideDriverFormDialog}
           fleetVehicles={fleetVehicles}
         />
       ) : null}
@@ -218,6 +397,17 @@ export function DriversManagementClient({
           driver={dialog.driver}
           onClose={() => setDialog(null)}
           onSuccess={() => handleSuccess(dictionary.archiveSuccess)}
+          onError={(message) => setToast({ tone: "error", message })}
+        />
+      ) : null}
+      {dialog?.mode === "restore" ? (
+        <DriverRestoreDialog
+          locale={locale}
+          dictionary={dictionary}
+          organization={organization}
+          driver={dialog.driver}
+          onClose={() => setDialog(null)}
+          onSuccess={() => handleSuccess(dictionary.restoreSuccess)}
           onError={(message) => setToast({ tone: "error", message })}
         />
       ) : null}
@@ -321,9 +511,6 @@ function DriversTable({
               <TableHeader className="whitespace-nowrap">
                 {dictionary.tableVehiclePlateNumber}
               </TableHeader>
-              <TableHeader className="min-w-48">
-                {dictionary.tableOrganization}
-              </TableHeader>
               <TableHeader className="whitespace-nowrap text-center">
                 {dictionary.tableSponsorship}
               </TableHeader>
@@ -333,23 +520,8 @@ function DriversTable({
               <TableHeader className="min-w-44 whitespace-nowrap text-center">
                 {dictionary.tableAppAccount}
               </TableHeader>
-              <TableHeader className="min-w-36 whitespace-nowrap text-center">
-                {dictionary.tableIqamaExpiry}
-              </TableHeader>
               <TableHeader className="min-w-40 whitespace-nowrap text-center">
-                {dictionary.tableDrivingLicenseExpiry}
-              </TableHeader>
-              <TableHeader className="min-w-36 whitespace-nowrap text-center">
-                {dictionary.tableDriverCardExpiry}
-              </TableHeader>
-              <TableHeader className="min-w-40 whitespace-nowrap text-center">
-                {dictionary.tableAuthorizationExpiry}
-              </TableHeader>
-              <TableHeader className="min-w-44 whitespace-nowrap">
-                {dictionary.tableCreatedBy}
-              </TableHeader>
-              <TableHeader className="min-w-44 whitespace-nowrap">
-                {dictionary.tableUpdatedBy}
+                {dictionary.tableDocumentHealth}
               </TableHeader>
               <TableHeader className="min-w-48 whitespace-nowrap text-center">
                 {dictionary.tableActions}
@@ -394,19 +566,11 @@ function DriversTable({
                 </td>
                 <td className="whitespace-nowrap px-4 py-4 text-sm font-medium text-muted">
                   <p>{dictionary.vehicleTypes[driver.vehicleType]}</p>
-                  <p className="text-xs text-muted">
-                    {driver.vehicleBrand ?? dictionary.incomplete}
-                  </p>
                 </td>
                 <td className="whitespace-nowrap px-4 py-4 text-sm font-medium text-muted">
                   <p className="font-semibold text-navy">{driver.vehicleNumber}</p>
                   <p className="text-xs text-muted">
                     {driver.keetaVehiclePlateNumber ?? dictionary.incomplete}
-                  </p>
-                </td>
-                <td className="max-w-[220px] px-4 py-4">
-                  <p className="truncate text-sm font-semibold text-navy">
-                    {driver.organizationName}
                   </p>
                 </td>
                 <td className="whitespace-nowrap px-4 py-4 text-center text-sm font-medium text-muted">
@@ -423,33 +587,13 @@ function DriversTable({
                     onAction={onAction}
                   />
                 </td>
-                <DateCell
-                  value={driver.iqamaExpiryDate}
-                  locale={locale}
-                  dictionary={dictionary}
-                  today={today}
-                />
-                <DateCell
-                  value={driver.drivingLicenseExpiryDate}
-                  locale={locale}
-                  dictionary={dictionary}
-                  today={today}
-                  fallback={dictionary.incomplete}
-                />
-                <DateCell
-                  value={driver.driverCardExpiryDate}
-                  locale={locale}
-                  dictionary={dictionary}
-                  today={today}
-                />
-                <DateCell
-                  value={driver.vehicleAuthorizationExpiryDate}
-                  locale={locale}
-                  dictionary={dictionary}
-                  today={today}
-                />
-                <ActorCell actorName={driver.createdBy?.fullName} dictionary={dictionary} />
-                <ActorCell actorName={driver.updatedBy?.fullName} dictionary={dictionary} />
+                <td className="whitespace-nowrap px-4 py-4 text-center">
+                  <DocumentHealthCell
+                    driver={driver}
+                    today={today}
+                    dictionary={dictionary}
+                  />
+                </td>
                 <td className="whitespace-nowrap px-4 py-4 text-center">
                   <div className="inline-flex items-center justify-center gap-1">
                     {permissions.update || permissions.status || permissions.archive ? (
@@ -492,14 +636,14 @@ function DriversTable({
                         ) : null}
                         {permissions.archive ? (
                           <ActionButton
-                          label={dictionary.archive}
-                          destructive
+                          label={driver.deletedAt ? dictionary.restore : dictionary.archive}
+                          destructive={!driver.deletedAt}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onAction({ mode: "archive", driver });
+                            onAction({ mode: driver.deletedAt ? "restore" : "archive", driver });
                           }}
                           >
-                          <ArchiveIcon />
+                          {driver.deletedAt ? <ReactivateIcon /> : <ArchiveIcon />}
                           </ActionButton>
                         ) : null}
                       </>
@@ -528,6 +672,58 @@ function DriversTable({
         </p>
       ) : null}
     </div>
+  );
+}
+
+function DocumentHealthCell({
+  driver,
+  today,
+  dictionary,
+}: {
+  driver: DriverListItem;
+  today: string;
+  dictionary: DriversDictionary;
+}) {
+  const dates = [
+    driver.iqamaExpiryDate,
+    driver.drivingLicenseExpiryDate,
+    driver.driverCardExpiryDate,
+    driver.vehicleAuthorizationExpiryDate,
+    driver.operatingCardExpiryDate,
+  ];
+  
+  let overallStatus: "valid" | "expiring_soon" | "expired" = "valid";
+  
+  for (const date of dates) {
+    if (!date) continue;
+    const status = getExpiryStatus(date, today);
+    if (status.state === "expired") {
+      overallStatus = "expired";
+      break;
+    }
+    if (status.state === "today" || (status.state === "valid" && status.days <= 30)) {
+      overallStatus = "expiring_soon";
+    }
+  }
+
+  if (overallStatus === "expired") {
+    return (
+      <span className="inline-flex items-center rounded-md bg-danger/10 px-2 py-1 text-xs font-medium text-danger ring-1 ring-inset ring-danger/20">
+        {dictionary.filterExpiredDocuments}
+      </span>
+    );
+  }
+  if (overallStatus === "expiring_soon") {
+    return (
+      <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-600 ring-1 ring-inset ring-amber-500/20">
+        {dictionary.filterExpiringDocuments}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-md bg-success/10 px-2 py-1 text-xs font-medium text-success ring-1 ring-inset ring-success/20">
+      {dictionary.filterValidDocuments}
+    </span>
   );
 }
 
@@ -1028,6 +1224,8 @@ function DriverDialog({
   onClose,
   onSuccess,
   onError,
+  onSubmit,
+  hidden,
   fleetVehicles,
 }: {
   locale: Locale;
@@ -1035,8 +1233,13 @@ function DriverDialog({
   organization: AccessibleOrganization;
   state: Exclude<DialogState, null>;
   onClose: () => void;
-  onSuccess: (message: string) => void;
+  onSuccess: (
+    message: string,
+    localEcho?: Omit<LocalDriverRealtimeEcho, "expiresAt">,
+  ) => void;
   onError: (message: string) => void;
+  onSubmit: () => void;
+  hidden: boolean;
   fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -1066,8 +1269,11 @@ function DriverDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-navy/45 p-4"
+      className={`fixed inset-0 z-50 items-center justify-center bg-navy/45 p-4 ${
+        hidden ? "hidden" : "flex"
+      }`}
       role="presentation"
+      aria-hidden={hidden}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -1081,7 +1287,7 @@ function DriverDialog({
         aria-labelledby="driver-dialog-title"
         className="max-h-[calc(100vh-2rem)] w-full max-w-5xl overflow-y-auto overflow-x-hidden rounded-2xl border border-border bg-surface shadow-[0_24px_80px_rgba(16,35,63,0.22)]"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+        <div className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-border bg-surface px-5 py-4">
           <div>
             <h2 id="driver-dialog-title" className="text-xl font-bold text-navy">
               {title}
@@ -1117,9 +1323,13 @@ function DriverDialog({
                 state.mode === "create"
                   ? dictionary.successCreate
                   : dictionary.successUpdate,
+                state.mode === "create"
+                  ? { eventType: "INSERT" }
+                  : { eventType: "UPDATE", driverId: state.driver.id },
               )
             }
             onError={onError}
+            onSubmit={onSubmit}
             fleetVehicles={fleetVehicles}
           />
         )}
@@ -1236,6 +1446,52 @@ function DriverArchiveDialog({
   );
 }
 
+function DriverRestoreDialog({
+  locale,
+  dictionary,
+  organization,
+  driver,
+  onClose,
+  onSuccess,
+  onError,
+}: {
+  locale: Locale;
+  dictionary: DriversDictionary;
+  organization: AccessibleOrganization;
+  driver: DriverListItem;
+  onClose: () => void;
+  onSuccess: () => void;
+  onError: (message: string) => void;
+}) {
+  const [state, formAction] = useActionState(
+    restoreDriverAction,
+    initialDriverLifecycleActionState,
+  );
+
+  useDriverMutationFeedback(state, dictionary, onSuccess, onError);
+
+  return (
+    <ConfirmationFrame
+      title={dictionary.restoreDialogTitle}
+      description={dictionary.restoreDialogDescription}
+      driverName={driver.fullName}
+      warning={null}
+      onClose={onClose}
+    >
+      <form action={formAction} className="space-y-5">
+        <input type="hidden" name="locale" value={locale} />
+        <input type="hidden" name="organizationCode" value={organization.code} />
+        <input type="hidden" name="driverId" value={driver.id} />
+        <DialogActions
+          cancel={dictionary.cancel}
+          submit={dictionary.restoreConfirm}
+          onCancel={onClose}
+        />
+      </form>
+    </ConfirmationFrame>
+  );
+}
+
 function DriverActivityDialog({
   dictionary,
   locale,
@@ -1344,6 +1600,7 @@ function DriverForm({
   onCancel,
   onSuccess,
   onError,
+  onSubmit,
   fleetVehicles,
 }: {
   locale: Locale;
@@ -1353,6 +1610,7 @@ function DriverForm({
   onCancel: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
+  onSubmit: () => void;
   fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 }) {
   const [state, formAction] = useActionState(
@@ -1392,7 +1650,12 @@ function DriverForm({
   }, [state.fieldErrors, state.status]);
 
   return (
-    <form ref={formRef} action={formAction} className="space-y-6 px-5 py-5">
+    <form
+      ref={formRef}
+      action={formAction}
+      onSubmit={onSubmit}
+      className="space-y-6 px-5 py-5"
+    >
       <input type="hidden" name="locale" value={locale} />
       <input type="hidden" name="organizationCode" value={organization.code} />
       {driver ? <input type="hidden" name="driverId" value={driver.id} /> : null}
@@ -1653,20 +1916,6 @@ function DriverForm({
           maxLength={80}
           autoComplete="off"
         />
-        <FormField
-          id="driverVehicleBrand"
-          name="vehicleBrand"
-          label={dictionary.vehicleBrand}
-          defaultValue={getFieldValue(
-            values,
-            "vehicleBrand",
-            driver?.vehicleBrand ?? "",
-          )}
-          error={fieldErrors.vehicleBrand}
-          maxLength={120}
-          required
-          autoComplete="off"
-        />
       </FormSection>
 
       <FormSection title={dictionary.banking} description={dictionary.bankingOptional}>
@@ -1841,143 +2090,15 @@ function DriverForm({
             onChange={setDriverCardFileName}
           />
         </DocumentGroup>
-
-        <DocumentGroup title={dictionary.vehicleRegistration}>
-          <ReadOnlyField
-            label={dictionary.vehiclePlateNumber}
-            value={getFieldValue(
-              values,
-              "vehicleNumber",
-              driver?.vehicleNumber,
-            )}
-          />
-          <FormField
-            id="driverVehicleSerialNumber"
-            name="vehicleSerialNumber"
-            label={dictionary.vehicleSerialNumber}
-            defaultValue={getFieldValue(
-              values,
-              "vehicleSerialNumber",
-              driver?.vehicleSerialNumber ?? "",
-            )}
-            error={fieldErrors.vehicleSerialNumber}
-            maxLength={80}
-            required
-            autoComplete="off"
-          />
-          <FormField
-            id="driverVehicleOwnerIdentifier"
-            name="vehicleOwnerIdentifier"
-            label={dictionary.vehicleOwnerIdentifier}
-            defaultValue={getFieldValue(
-              values,
-              "vehicleOwnerIdentifier",
-              driver?.vehicleOwnerIdentifier ?? "",
-            )}
-            error={fieldErrors.vehicleOwnerIdentifier}
-            maxLength={80}
-            required
-            autoComplete="off"
-          />
-          <ReadOnlyField
-            label={dictionary.vehicleBrand}
-            value={getFieldValue(
-              values,
-              "vehicleBrand",
-              driver?.vehicleBrand ?? dictionary.incomplete,
-            )}
-          />
-        </DocumentGroup>
-
-        <DocumentGroup title={dictionary.vehicleAuthorization}>
-          <FormField
-            id="driverVehicleAuthorizationNumber"
-            name="vehicleAuthorizationNumber"
-            label={dictionary.vehicleAuthorizationNumber}
-            defaultValue={getFieldValue(
-              values,
-              "vehicleAuthorizationNumber",
-              driver?.vehicleAuthorizationNumber,
-            )}
-            error={fieldErrors.vehicleAuthorizationNumber}
-            maxLength={80}
-            required
-            autoComplete="off"
-          />
-          <FormField
-            id="driverVehicleAuthorizationExpiryDate"
-            name="vehicleAuthorizationExpiryDate"
-            type="date"
-            label={dictionary.vehicleAuthorizationExpiryDate}
-            defaultValue={getFieldValue(
-              values,
-              "vehicleAuthorizationExpiryDate",
-              driver?.vehicleAuthorizationExpiryDate,
-            )}
-            error={fieldErrors.vehicleAuthorizationExpiryDate}
-            required
-          />
-        </DocumentGroup>
-
-        <DocumentGroup title={dictionary.operatingCard}>
-          <FormField
-            id="driverOperatingCardNumber"
-            name="operatingCardNumber"
-            label={dictionary.operatingCardNumber}
-            defaultValue={getFieldValue(
-              values,
-              "operatingCardNumber",
-              driver?.operatingCardNumber ?? "",
-            )}
-            error={fieldErrors.operatingCardNumber}
-            maxLength={80}
-            autoComplete="off"
-          />
-          <FormField
-            id="driverOperatingCardExpiryDate"
-            name="operatingCardExpiryDate"
-            type="date"
-            label={dictionary.operatingCardExpiryDate}
-            defaultValue={getFieldValue(
-              values,
-              "operatingCardExpiryDate",
-              driver?.operatingCardExpiryDate ?? "",
-            )}
-            error={fieldErrors.operatingCardExpiryDate}
-          />
-          <FileField
-            id="driverOperatingCardFile"
-            name="operatingCardFile"
-            label={dictionary.operatingCardFile}
-            required={false}
-            help={dictionary.fileHelp}
-            fileName={operatingCardFileName}
-            error={fieldErrors.operatingCardFile}
-            currentUrl={driver?.operatingCardFileUrl ?? null}
-            currentLabel={dictionary.operatingCardFile}
-            currentPreview={driver?.operatingCardFilePreview ?? null}
-            dictionary={dictionary}
-            onChange={setOperatingCardFileName}
-          />
-          {driver?.operatingCardFileUrl ? (
-            <label className="flex items-center gap-2 text-sm font-semibold text-muted">
-              <input
-                type="checkbox"
-                name="removeOperatingCardFile"
-                value="true"
-                className="size-4 rounded border-border"
-              />
-              {dictionary.removePhoto}
-            </label>
-          ) : null}
-        </DocumentGroup>
       </FormSection>
 
-      <DialogActions
-        cancel={dictionary.cancel}
-        submit={driver ? dictionary.save : dictionary.create}
-        onCancel={onCancel}
-      />
+      <div className="sticky bottom-0 z-20 -mb-5 -mx-5 rounded-b-2xl bg-surface px-5 pb-5">
+        <DialogActions
+          cancel={dictionary.cancel}
+          submit={driver ? dictionary.save : dictionary.create}
+          onCancel={onCancel}
+        />
+      </div>
     </form>
   );
 }
@@ -2064,18 +2185,6 @@ function DriverDetails({
           value={driver.keetaVehiclePlateNumber ?? dictionary.notAvailable}
         />
         <Detail
-          label={dictionary.vehicleSerialNumber}
-          value={driver.vehicleSerialNumber ?? dictionary.incomplete}
-        />
-        <Detail
-          label={dictionary.vehicleOwnerIdentifier}
-          value={driver.vehicleOwnerIdentifier ?? dictionary.incomplete}
-        />
-        <Detail
-          label={dictionary.vehicleBrand}
-          value={driver.vehicleBrand ?? dictionary.incomplete}
-        />
-        <Detail
           label={dictionary.isVehicleOwner}
           value={
             driver.isVehicleOwner === null
@@ -2144,31 +2253,6 @@ function DriverDetails({
           document={driver.documents.find(
             (item) => item.documentType === "driver_card",
           )}
-          dictionary={dictionary}
-        />
-        <Detail
-          label={dictionary.vehicleAuthorizationNumber}
-          value={driver.vehicleAuthorizationNumber}
-        />
-        <Detail
-          label={dictionary.vehicleAuthorizationExpiryDate}
-          value={formatDate(driver.vehicleAuthorizationExpiryDate, locale)}
-        />
-        <Detail
-          label={dictionary.operatingCardNumber}
-          value={driver.operatingCardNumber ?? dictionary.notAvailable}
-        />
-        <Detail
-          label={dictionary.operatingCardExpiryDate}
-          value={formatOptionalDate(
-            driver.operatingCardExpiryDate,
-            locale,
-            dictionary.notAvailable,
-          )}
-        />
-        <DocumentLink
-          documentUrl={driver.operatingCardFileUrl}
-          documentLabel={dictionary.operatingCardFile}
           dictionary={dictionary}
         />
       </DetailsSection>
@@ -2296,10 +2380,6 @@ function ActivitySummary({
     );
   }
 
-  if (log.summary.vehicleOwnerIdentifierChanged) {
-    parts.push(dictionary.activityOwnerIdentifierChanged);
-  }
-
   if (parts.length === 0) {
     parts.push(dictionary.activitySafeSummary);
   }
@@ -2410,16 +2490,18 @@ function FileField({
   currentDocument?: DriverDocumentMetadata;
   currentUrl?: string | null;
   currentLabel?: string;
-  currentPreview?: {
-    fileName: string;
-    downloadUrl: string;
-  } | null;
+  currentPreview?: DriverFilePreview | null;
   accept?: string;
   dictionary: DriversDictionary;
   error?: string;
   onChange: (name: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<{
+    fileName: string;
+    previewUrl: string;
+    downloadUrl: string | null;
+  } | null>(null);
   const errorId = error ? `${id}-error` : undefined;
   const activeFile = getCurrentFileRow({
     document: currentDocument,
@@ -2452,7 +2534,16 @@ function FileField({
           label={dictionary.currentDocument}
           fileName={activeFile.fileName}
           downloadUrl={activeFile.downloadUrl}
+          previewUrl={activeFile.previewUrl}
+          isImage={activeFile.isImage}
           dictionary={dictionary}
+          onPreview={() =>
+            setPreview({
+              fileName: activeFile.fileName,
+              previewUrl: activeFile.previewUrl,
+              downloadUrl: activeFile.downloadUrl,
+            })
+          }
         />
       ) : null}
       {fileName ? (
@@ -2486,6 +2577,15 @@ function FileField({
       <p className="text-xs leading-5 text-muted">
         {fileName || dictionary.noFileSelected} · {help}
       </p>
+      {preview ? (
+        <DriverDocumentImagePreviewDialog
+          fileName={preview.fileName}
+          imageUrl={preview.previewUrl}
+          downloadUrl={preview.downloadUrl}
+          dictionary={dictionary}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2494,32 +2594,167 @@ function CurrentDriverFileRow({
   label,
   fileName,
   downloadUrl,
+  previewUrl,
+  isImage,
   dictionary,
+  onPreview,
 }: {
   label: string;
   fileName: string;
-  downloadUrl: string;
+  downloadUrl: string | null;
+  previewUrl: string;
+  isImage: boolean;
   dictionary: DriversDictionary;
+  onPreview: () => void;
 }) {
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const previewLabel = `${dictionary.openDocument}: ${fileName}`;
+
   return (
     <div className="space-y-2">
       <p className="text-xs font-bold uppercase text-muted">{label}</p>
-      <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border bg-white px-3 py-2">
-        <p
-          className="min-w-0 flex-1 truncate text-sm font-semibold text-navy"
-          dir="auto"
-          title={fileName}
-        >
-          {fileName}
-        </p>
-        <a
-          href={downloadUrl}
-          download={fileName}
-          className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        >
-          <DownloadIcon />
-          {dictionary.download}
-        </a>
+      <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-white px-3 py-2">
+        {isImage && !thumbnailFailed ? (
+          <button
+            type="button"
+            onClick={onPreview}
+            aria-label={previewLabel}
+            title={previewLabel}
+            className="group relative flex size-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-xs font-bold text-muted transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            {/* Authenticated internal image endpoint; avoid optimizer/proxy issues for private signed URLs. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewUrl}
+              alt={fileName}
+              loading="lazy"
+              onError={() => setThumbnailFailed(true)}
+              className="h-full w-full object-cover"
+            />
+          </button>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <p
+            className="truncate text-sm font-semibold text-navy"
+            dir="auto"
+            title={fileName}
+          >
+            {fileName}
+          </p>
+        </div>
+        {downloadUrl ? (
+          <a
+            href={downloadUrl}
+            download={fileName}
+            className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <DownloadIcon />
+            {dictionary.download}
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DriverDocumentImagePreviewDialog({
+  fileName,
+  imageUrl,
+  downloadUrl,
+  dictionary,
+  onClose,
+}: {
+  fileName: string;
+  imageUrl: string;
+  downloadUrl: string | null;
+  dictionary: DriversDictionary;
+  onClose: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={dictionary.openDocument}
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-bold text-navy">
+              {dictionary.openDocument}
+            </h2>
+            <p
+              className="mt-0.5 truncate text-xs font-semibold text-muted"
+              dir="auto"
+              title={fileName}
+            >
+              {fileName}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={dictionary.closeDialog}
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-border text-xl font-bold text-navy transition hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            X
+          </button>
+        </div>
+        <div className="relative grid min-h-[280px] place-items-center bg-black p-3">
+          {!loaded && !failed ? (
+            <div className="absolute inset-0 grid place-items-center text-sm font-bold text-white">
+              <span className="size-8 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+            </div>
+          ) : null}
+          {failed ? (
+            <div className="grid min-h-[280px] place-items-center text-sm font-bold text-white">
+              {dictionary.notAvailable}
+            </div>
+          ) : (
+            // Authenticated internal image endpoint; avoid optimizer/proxy issues for private signed URLs.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageUrl}
+              alt={fileName}
+              onLoad={() => setLoaded(true)}
+              onError={() => {
+                setLoaded(true);
+                setFailed(true);
+              }}
+              className={`max-h-[75vh] max-w-full object-contain transition ${loaded ? "opacity-100" : "opacity-0"}`}
+            />
+          )}
+        </div>
+        {downloadUrl ? (
+          <div className="flex justify-end border-t border-border px-4 py-3">
+            <a
+              href={downloadUrl}
+              download={fileName}
+              className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              <DownloadIcon />
+              {dictionary.download}
+            </a>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2567,22 +2802,23 @@ function getCurrentFileRow({
   fallbackLabel,
 }: {
   document?: DriverDocumentMetadata;
-  currentPreview?: {
-    fileName: string;
-    downloadUrl: string;
-  } | null;
+  currentPreview?: DriverFilePreview | null;
   currentUrl?: string | null;
   currentLabel?: string;
   fallbackLabel: string;
 }) {
-  const downloadUrl =
-    document?.preview?.downloadUrl ??
-    currentPreview?.downloadUrl ??
+  const previewUrl =
+    document?.preview?.previewUrl ??
+    currentPreview?.previewUrl ??
     document?.signedUrl ??
     currentUrl ??
     null;
+  const downloadUrl =
+    document?.preview?.downloadUrl || currentPreview?.downloadUrl || null;
 
-  if (!downloadUrl) {
+  const accessUrl = previewUrl ?? downloadUrl;
+
+  if (!accessUrl) {
     return null;
   }
 
@@ -2592,7 +2828,9 @@ function getCurrentFileRow({
       currentPreview?.fileName ??
       currentLabel ??
       fallbackLabel,
+    previewUrl: accessUrl,
     downloadUrl,
+    isImage: document?.preview?.isImage ?? currentPreview?.isImage ?? false,
   };
 }
 function DocumentLink({
@@ -3197,34 +3435,119 @@ function ActivityIcon() {
 
 function DriversSummaryCards({
   summary,
+  dictionary,
 }: {
   summary?: DriverSummary;
+  dictionary: DriversDictionary;
 }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
   if (!summary) return null;
 
+  const updateFilter = (key: string, value: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value === null) {
+      params.delete(key);
+    } else {
+      params.set(key, value);
+    }
+    params.delete("page");
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
+  };
+
+  const currentStatus = searchParams.get("status");
+  const currentArchived = searchParams.get("archived");
+  const currentDocumentStatus = searchParams.get("documentStatus");
+
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 px-5 py-2 sm:px-7">
-      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
-        <p className="text-sm font-medium text-muted">إجمالي المناديب</p>
-        <p className="mt-2 text-2xl font-bold text-navy">{summary.total}</p>
-      </div>
-      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
-        <p className="text-sm font-medium text-muted">النشط</p>
-        <p className="mt-2 text-2xl font-bold text-navy">{summary.active}</p>
-      </div>
-      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
-        <p className="text-sm font-medium text-muted">غير النشط</p>
-        <p className="mt-2 text-2xl font-bold text-navy">{summary.inactive}</p>
-      </div>
-      <div className="rounded-xl border border-border bg-surface p-4 shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
-        <p className="text-sm font-medium text-muted">المؤرشف</p>
-        <p className="mt-2 text-2xl font-bold text-navy">{summary.archived}</p>
-      </div>
+    <div className={`grid grid-cols-2 gap-3 sm:grid-cols-6 px-5 py-4 sm:px-7 ${isPending ? "opacity-70" : ""}`}>
+      <button 
+        onClick={() => {
+          const params = new URLSearchParams(searchParams.toString());
+          params.delete("status");
+          params.delete("archived");
+          params.delete("documentStatus");
+          params.delete("page");
+          startTransition(() => router.push(`${pathname}?${params.toString()}`));
+        }}
+        className="flex flex-col items-start rounded-xl border border-border bg-surface p-3 transition hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <div className="flex w-full items-center justify-between text-muted mb-2">
+          <span className="text-xs font-semibold">{dictionary.kpiTotal}</span>
+          <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>
+        </div>
+        <p className="text-xl font-bold text-navy">{summary.total}</p>
+      </button>
+
+      <button
+        onClick={() => updateFilter("status", "active")}
+        className={`flex flex-col items-start rounded-xl border ${currentStatus === "active" ? "border-primary bg-primary-soft/50 ring-1 ring-primary" : "border-border bg-surface"} p-3 transition hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20`}
+      >
+        <div className={`flex w-full items-center justify-between mb-2 ${currentStatus === "active" ? "text-primary" : "text-muted"}`}>
+          <span className="text-xs font-semibold">{dictionary.kpiActive}</span>
+          <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <p className="text-xl font-bold text-navy">{summary.active}</p>
+      </button>
+
+      <button
+        onClick={() => updateFilter("status", "suspended")}
+        className={`flex flex-col items-start rounded-xl border ${currentStatus === "suspended" ? "border-orange-500 bg-orange-50 ring-1 ring-orange-500" : "border-border bg-surface"} p-3 transition hover:border-orange-500/40 focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+      >
+        <div className={`flex w-full items-center justify-between mb-2 ${currentStatus === "suspended" ? "text-orange-600" : "text-muted"}`}>
+          <span className="text-xs font-semibold">{dictionary.kpiSuspended}</span>
+          <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+        </div>
+        <p className="text-xl font-bold text-navy">{summary.inactive}</p>
+      </button>
+
+      <button
+        onClick={() => updateFilter("archived", "true")}
+        className={`flex flex-col items-start rounded-xl border ${currentArchived === "true" ? "border-gray-500 bg-gray-100 ring-1 ring-gray-500" : "border-border bg-surface"} p-3 transition hover:border-gray-500/40 focus:outline-none focus:ring-2 focus:ring-gray-500/20`}
+      >
+        <div className={`flex w-full items-center justify-between mb-2 ${currentArchived === "true" ? "text-gray-700" : "text-muted"}`}>
+          <span className="text-xs font-semibold">{dictionary.kpiArchived}</span>
+          <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+        </div>
+        <p className="text-xl font-bold text-navy">{summary.archived}</p>
+      </button>
+
+      <button
+        onClick={() => updateFilter("documentStatus", "expiring")}
+        className={`flex flex-col items-start rounded-xl border ${currentDocumentStatus === "expiring" ? "border-amber-500 bg-amber-50 ring-1 ring-amber-500" : "border-border bg-surface"} p-3 transition hover:border-amber-500/40 focus:outline-none focus:ring-2 focus:ring-amber-500/20`}
+      >
+        <div className={`flex w-full items-center justify-between mb-2 ${currentDocumentStatus === "expiring" ? "text-amber-600" : "text-muted"}`}>
+          <span className="text-xs font-semibold">{dictionary.kpiExpiringSoon}</span>
+          <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <p className="text-xl font-bold text-navy">{summary.expiringSoon}</p>
+      </button>
+
+      <button
+        onClick={() => updateFilter("documentStatus", "expired")}
+        className={`flex flex-col items-start rounded-xl border ${currentDocumentStatus === "expired" ? "border-danger bg-danger/10 ring-1 ring-danger" : "border-border bg-surface"} p-3 transition hover:border-danger/40 focus:outline-none focus:ring-2 focus:ring-danger/20`}
+      >
+        <div className={`flex w-full items-center justify-between mb-2 ${currentDocumentStatus === "expired" ? "text-danger" : "text-muted"}`}>
+          <span className="text-xs font-semibold">{dictionary.kpiExpired}</span>
+          <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+        </div>
+        <p className="text-xl font-bold text-navy">{summary.expired}</p>
+      </button>
+
     </div>
   );
 }
 
-function DriversFilterBar() {
+function DriversFilterBar({
+  dictionary,
+}: {
+  dictionary: DriversDictionary;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -3259,45 +3582,66 @@ function DriversFilterBar() {
   }, [search, searchParams, updateFilters]);
 
   return (
-    <div className="flex flex-col gap-3 px-5 py-4 sm:px-7 sm:flex-row sm:items-center">
-      <div className="flex-1 relative">
+    <div className="flex flex-col gap-3 px-5 py-2 pb-4 sm:px-7 sm:flex-row sm:items-center sm:flex-wrap">
+      <div className="flex-1 min-w-[200px] relative">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="ابحث بالاسم أو الإقامة أو الجوال أو رقم اللوحة"
-          className="w-full min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+          placeholder={dictionary.searchPlaceholder}
+          className="w-full min-h-11 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
         />
         {isPending && (
-          <div className="absolute left-4 top-4 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <div className="absolute left-4 top-3 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         )}
       </div>
       <select
         value={searchParams.get("status") ?? ""}
         onChange={(e) => updateFilters({ status: e.target.value })}
-        className="min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+        className="min-h-11 rounded-xl border border-border bg-surface px-3 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
       >
-        <option value="">الحالة (الكل)</option>
-        <option value="active">نشط</option>
-        <option value="suspended">موقوف</option>
+        <option value="">{dictionary.filterStatus}</option>
+        <option value="active">{dictionary.filterActive}</option>
+        <option value="suspended">{dictionary.filterSuspended}</option>
+      </select>
+      <select
+        value={searchParams.get("appAccountStatus") ?? ""}
+        onChange={(e) => updateFilters({ appAccountStatus: e.target.value })}
+        className="min-h-11 rounded-xl border border-border bg-surface px-3 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+      >
+        <option value="">{dictionary.filterAppAccount}</option>
+        <option value="active">{dictionary.filterActive}</option>
+        <option value="not_linked">Not Linked</option>
+        <option value="password_change_required">Change Password</option>
+        <option value="suspended">{dictionary.filterSuspended}</option>
+      </select>
+      <select
+        value={searchParams.get("documentStatus") ?? ""}
+        onChange={(e) => updateFilters({ documentStatus: e.target.value })}
+        className="min-h-11 rounded-xl border border-border bg-surface px-3 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+      >
+        <option value="">{dictionary.filterDocumentStatus}</option>
+        <option value="valid">{dictionary.filterValidDocuments}</option>
+        <option value="expiring">{dictionary.filterExpiringDocuments}</option>
+        <option value="expired">{dictionary.filterExpiredDocuments}</option>
+      </select>
+      <select
+        value={searchParams.get("vehicleType") ?? ""}
+        onChange={(e) => updateFilters({ vehicleType: e.target.value })}
+        className="min-h-11 rounded-xl border border-border bg-surface px-3 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+      >
+        <option value="">{dictionary.filterVehicleType}</option>
+        <option value="car">Car</option>
+        <option value="motorcycle">Motorcycle</option>
       </select>
       <select
         value={searchParams.get("sponsorship") ?? ""}
         onChange={(e) => updateFilters({ sponsorship: e.target.value })}
-        className="min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
+        className="min-h-11 rounded-xl border border-border bg-surface px-3 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
       >
-        <option value="">الكفالة (الكل)</option>
-        <option value="company">على كفالة الشركة</option>
-        <option value="other">غير ذلك</option>
-      </select>
-      <select
-        value={searchParams.get("archived") ?? "false"}
-        onChange={(e) => updateFilters({ archived: e.target.value })}
-        className="min-h-12 rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none shadow-[0_16px_45px_rgba(16,35,63,0.06)]"
-      >
-        <option value="false">غير مؤرشف</option>
-        <option value="true">مؤرشف</option>
-        <option value="">الكل</option>
+        <option value="">{dictionary.filterSponsorship}</option>
+        <option value="company">{dictionary.filterCompanySponsored}</option>
+        <option value="other">{dictionary.filterOtherSponsorship}</option>
       </select>
     </div>
   );

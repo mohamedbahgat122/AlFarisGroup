@@ -1,14 +1,16 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname } from "next/navigation";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { DashboardLoadingState } from "@/components/dashboard/dashboard-loading-state";
 import { PermissionRevisionSync } from "@/components/dashboard/permission-revision-sync";
 import { RealtimeRefresh } from "@/components/dashboard/realtime-refresh";
 import { DashboardSidebar } from "@/components/dashboard/dashboard-sidebar";
 import type { AccessibleOrganization } from "@/features/organizations/types";
+import type { OilMaintenanceAlertsResult } from "@/features/app-requests/types";
 import type { AppNotification } from "@/features/notifications/types";
 import type { SystemExpiryAlertsResult } from "@/features/expiry-alerts/types";
 import type { Dictionary } from "@/i18n/dictionaries";
@@ -21,10 +23,14 @@ type DashboardShellProps = {
   user: {
     id: string;
     fullName: string | null;
+    email: string;
+    avatarUrl: string | null;
+    homeOrganizationId: string | null;
     jobTitle: string | null;
     role: ProfileRole;
     hasGlobalFleetPermission: boolean;
     hasGlobalHousingPermission: boolean;
+    hasGlobalSupervisorShiftsPermission: boolean;
   };
   authorizationRevision: string;
   organizations: AccessibleOrganization[];
@@ -42,6 +48,7 @@ type DashboardShellProps = {
         canViewNotifications: false;
       };
   systemExpiryAlerts: SystemExpiryAlertsResult;
+  oilMaintenanceAlerts: OilMaintenanceAlertsResult;
   children?: React.ReactNode;
 };
 
@@ -53,6 +60,7 @@ export function DashboardShell({
   organizations,
   appNotifications,
   systemExpiryAlerts,
+  oilMaintenanceAlerts,
   children,
 }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -62,16 +70,39 @@ export function DashboardShell({
   const [isNavigating, setIsNavigating] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const pathname = usePathname();
+  const currentPathnameRef = useRef(pathname);
+  const dashboardPathPrefix = `/${locale}/dashboard`;
+  const navigationPending = isNavigating || pendingHref !== null;
 
-  const [prevPathname, setPrevPathname] = useState(pathname);
-  if (pathname !== prevPathname) {
-    setPrevPathname(pathname);
+  useEffect(() => {
+    if (pathname === currentPathnameRef.current) {
+      return;
+    }
+
+    currentPathnameRef.current = pathname;
     setIsNavigating(false);
     setPendingHref(null);
-  }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!navigationPending) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setIsNavigating(false);
+      setPendingHref(null);
+    }, 30000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [navigationPending]);
 
   useEffect(() => {
     const handlePopState = () => {
+      if (window.location.pathname === currentPathnameRef.current) {
+        return;
+      }
+
       flushSync(() => {
         setIsNavigating(true);
       });
@@ -90,8 +121,9 @@ export function DashboardShell({
       const url = new URL(href, window.location.origin);
       const currentUrl = new URL(window.location.href);
       if (
-        url.pathname === currentUrl.pathname &&
-        url.search === currentUrl.search
+        url.origin !== window.location.origin ||
+        !url.pathname.startsWith(dashboardPathPrefix) ||
+        url.pathname === currentUrl.pathname
       ) {
         return;
       }
@@ -106,8 +138,9 @@ export function DashboardShell({
 
     flushSync(() => {
       setPendingHref(href);
+      setIsNavigating(true);
     });
-  }, [pendingHref]);
+  }, [dashboardPathPrefix, pendingHref]);
 
   const handleNavClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -128,7 +161,9 @@ export function DashboardShell({
     const href = anchor.getAttribute("href");
     if (!href) return;
 
-    const isHash = href.startsWith("#") || (href.includes("#") && href.split("#")[0] === window.location.pathname);
+    const isHash =
+      href.startsWith("#") ||
+      (href.includes("#") && href.split("#")[0] === window.location.pathname);
     if (isHash) return;
 
     const isInternal =
@@ -136,23 +171,29 @@ export function DashboardShell({
       href.startsWith(window.location.origin);
     if (!isInternal) return;
 
+    let nextHref = "";
+
     try {
       const url = new URL(href, window.location.origin);
       const currentUrl = new URL(window.location.href);
       if (
-        url.pathname === currentUrl.pathname &&
-        url.search === currentUrl.search
+        url.origin !== window.location.origin ||
+        !url.pathname.startsWith(dashboardPathPrefix) ||
+        url.pathname === currentUrl.pathname
       ) {
         return;
       }
+
+      nextHref = `${url.pathname}${url.search}`;
     } catch {
       return;
     }
 
     flushSync(() => {
       setIsNavigating(true);
+      setPendingHref(nextHref);
     });
-  }, []);
+  }, [dashboardPathPrefix]);
 
   const sidebarWidth = collapsed ? "88px" : "292px";
   const displayedAppNotifications = liveAppNotifications ?? appNotifications;
@@ -162,6 +203,11 @@ export function DashboardShell({
       organization.permissionKeys.includes("notifications.view") &&
       organization.permissionKeys.includes("app_requests.view"),
     );
+  const canSubscribeToOilMaintenanceAlerts = organizations.some(
+    (organization) =>
+      organization.navigation.appRequests &&
+      organization.permissionKeys.includes("app_requests.view"),
+  );
 
   const refreshAppNotifications = useCallback(async () => {
     try {
@@ -189,7 +235,7 @@ export function DashboardShell({
         }`}
         onClick={() => setMobileOpen(false)}
       />
-      {(isNavigating || pendingHref !== null) && (
+      {navigationPending && (
         <>
           <style>{`
             @keyframes loadingBar {
@@ -220,6 +266,7 @@ export function DashboardShell({
           userRole={user.role}
           hasGlobalFleetPermission={user.hasGlobalFleetPermission}
           hasGlobalHousingPermission={user.hasGlobalHousingPermission}
+          hasGlobalSupervisorShiftsPermission={user.hasGlobalSupervisorShiftsPermission}
           organizations={organizations}
           collapsed={collapsed}
           mobileOpen={mobileOpen}
@@ -237,8 +284,21 @@ export function DashboardShell({
             enabled={canSubscribeToRequestNotifications}
             onRefresh={refreshAppNotifications}
           />
+          <RealtimeRefresh
+            channelName={`dashboard-oil-events-${user.id}`}
+            table="fleet_vehicle_oil_change_events"
+            toast={dictionary.dashboard.oilMaintenancePanel.realtimeUpdated}
+            enabled={canSubscribeToOilMaintenanceAlerts}
+          />
+          <RealtimeRefresh
+            channelName={`dashboard-oil-odometers-${user.id}`}
+            table="driver_shifts"
+            toast={dictionary.dashboard.oilMaintenancePanel.realtimeUpdated}
+            enabled={canSubscribeToOilMaintenanceAlerts}
+          />
           <PermissionRevisionSync
             initialRevision={authorizationRevision}
+            intervalMs={12000}
             message="تم تحديث صلاحيات حسابك. يتم تحديث الواجهة الآن."
           />
           <DashboardHeader
@@ -248,9 +308,12 @@ export function DashboardShell({
             organizations={organizations}
             appNotifications={displayedAppNotifications}
             systemExpiryAlerts={systemExpiryAlerts}
+            oilMaintenanceAlerts={oilMaintenanceAlerts}
             onOpenSidebar={() => setMobileOpen(true)}
           />
-          <main className="min-h-[calc(100vh-4rem)] w-full">{children}</main>
+          <main className="min-h-[calc(100vh-4rem)] w-full">
+            {navigationPending ? <DashboardLoadingState /> : children}
+          </main>
         </section>
       </div>
     </>

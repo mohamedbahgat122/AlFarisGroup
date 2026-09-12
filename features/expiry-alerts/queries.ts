@@ -22,8 +22,6 @@ type DriverExpiryRow = Pick<
   | "iqama_expiry_date"
   | "driving_license_expiry_date"
   | "driver_card_expiry_date"
-  | "vehicle_authorization_expiry_date"
-  | "operating_card_expiry_date"
 >;
 
 type FleetExpiryRow = Pick<
@@ -135,7 +133,7 @@ async function getDriverExpiryAlerts({
   const { data, error } = await supabase
     .from("drivers")
     .select(
-      "id, organization_id, full_name, iqama_number, iqama_expiry_date, driving_license_expiry_date, driver_card_expiry_date, vehicle_authorization_expiry_date, operating_card_expiry_date",
+      "id, organization_id, full_name, iqama_number, iqama_expiry_date, driving_license_expiry_date, driver_card_expiry_date",
     )
     .in("organization_id", driverOrganizations.map((organization) => organization.id))
     .is("deleted_at", null)
@@ -144,8 +142,6 @@ async function getDriverExpiryAlerts({
         `iqama_expiry_date.lte.${cutoff}`,
         `driving_license_expiry_date.lte.${cutoff}`,
         `driver_card_expiry_date.lte.${cutoff}`,
-        `vehicle_authorization_expiry_date.lte.${cutoff}`,
-        `operating_card_expiry_date.lte.${cutoff}`,
       ].join(","),
     )
     .order("full_name", { ascending: true });
@@ -164,8 +160,6 @@ async function getDriverExpiryAlerts({
         { documentType: "iqama", expiryDate: driver.iqama_expiry_date },
         { documentType: "driving_license", expiryDate: driver.driving_license_expiry_date },
         { documentType: "driver_card", expiryDate: driver.driver_card_expiry_date },
-        { documentType: "vehicle_authorization", expiryDate: driver.vehicle_authorization_expiry_date },
-        { documentType: "driver_operating_card", expiryDate: driver.operating_card_expiry_date },
       ];
 
       return documents.flatMap((document) => {

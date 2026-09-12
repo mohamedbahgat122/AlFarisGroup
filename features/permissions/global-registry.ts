@@ -14,6 +14,9 @@ export const globalPermissionKeys = [
   "housing.assign_organizations",
   "housing.assign_drivers",
   "housing.activity.view",
+  "supervisor_shifts.view",
+  "supervisor_shifts.manage",
+  "supervisor_shifts.manage_leave",
 ] as const;
 
 export type GlobalPermissionKey = (typeof globalPermissionKeys)[number];

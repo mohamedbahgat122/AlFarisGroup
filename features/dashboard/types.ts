@@ -53,6 +53,19 @@ export type DashboardDriverPerformance = {
   attendanceDays: number;
 };
 
+export type DashboardDriverReportSummary = {
+  driver_id: string;
+  driver_full_name: string;
+  organization_id: string;
+  score: number | null;
+  delivered_tasks: number | null;
+  accepted_tasks: number | null;
+  report_days: number | null;
+  delivery_rate: number | null;
+  evaluation_completion_rate: number | null;
+  attendance_days: number | null;
+};
+
 export type DashboardActivityLeader = {
   driverId: string;
   driverName: string;

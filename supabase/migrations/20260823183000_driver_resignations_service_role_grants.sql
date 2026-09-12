@@ -1,0 +1,1 @@
+GRANT SELECT, INSERT ON public.driver_resignations TO service_role;

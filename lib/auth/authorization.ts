@@ -17,6 +17,7 @@ export type AdminAuthorizationResult =
       status: "authorized";
       user: User;
       profile: Profile;
+      avatarUrl: string | null;
       supabase: SupabaseClient<Database>;
     }
   | {
@@ -51,7 +52,7 @@ export async function getProfileForUser(
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "id, full_name, role, job_title, status, created_at, updated_at, home_organization_id, deleted_at, must_change_password",
+      "id, full_name, role, job_title, status, created_at, updated_at, home_organization_id, deleted_at, must_change_password, avatar_path",
     )
     .eq("id", userId)
     .maybeSingle();
@@ -123,10 +124,21 @@ export const getAuthenticatedAdmin = cache(
       };
     }
 
+    let avatarUrl: string | null = null;
+    if (access.profile.avatar_path) {
+      const { data: urlData } = await supabase.storage
+        .from("profile-avatars")
+        .createSignedUrl(access.profile.avatar_path, 3600); // 1 hour expiration
+      if (urlData) {
+        avatarUrl = urlData.signedUrl;
+      }
+    }
+
     return {
       status: "authorized",
       user,
       profile: access.profile,
+      avatarUrl,
       supabase,
     };
   },

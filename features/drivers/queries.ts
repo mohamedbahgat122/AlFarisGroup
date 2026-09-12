@@ -10,7 +10,9 @@ import type {
   DriversQueryResult,
 } from "@/features/drivers/types";
 import type { DriverSummary, DriverStatus } from "@/features/drivers/types";
+import { getBusinessDateString } from "@/features/drivers/expiry";
 import type { Database } from "@/types/database";
+import { createDriverDocumentSignedUrls } from "@/features/drivers/storage";
 type DriverRow = Database["public"]["Tables"]["drivers"]["Row"];
 type BankRow = Database["public"]["Tables"]["driver_bank_details"]["Row"];
 type DocumentRow = Database["public"]["Tables"]["driver_documents"]["Row"];
@@ -31,28 +33,19 @@ export async function getDriversSummaryForOrganization(
   const admin = await getAuthenticatedAdmin();
 
   if (admin.status !== "authorized") {
-    return { total: 0, active: 0, inactive: 0, archived: 0 };
+    return { total: 0, active: 0, inactive: 0, archived: 0, expiringSoon: 0, expired: 0 };
   }
 
-  const base = () =>
-    admin.supabase
-      .from("drivers")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", organizationId);
+  const { data, error } = await admin.supabase.rpc('get_drivers_summary' as any, {
+    p_organization_id: organizationId
+  });
 
-  const [total, active, inactive, archived] = await Promise.all([
-    base(),
-    base().is("deleted_at", null).eq("status", "active"),
-    base().is("deleted_at", null).neq("status", "active"),
-    base().not("deleted_at", "is", null),
-  ]);
+  if (error || !data) {
+    return { total: 0, active: 0, inactive: 0, archived: 0, expiringSoon: 0, expired: 0 };
+  }
 
-  return {
-    total: total.error ? 0 : total.count ?? 0,
-    active: active.error ? 0 : active.count ?? 0,
-    inactive: inactive.error ? 0 : inactive.count ?? 0,
-    archived: archived.error ? 0 : archived.count ?? 0,
-  };
+  // The RPC returns a JSONB object with the counts
+  return data as unknown as DriverSummary;
 }
 
 export async function getDriversForOrganization(
@@ -63,6 +56,9 @@ export async function getDriversForOrganization(
     status?: DriverStatus;
     nationality?: string;
     sponsorship?: string;
+    documentStatus?: "valid" | "expiring" | "expired";
+    vehicleType?: string;
+    appAccountStatus?: string;
     archived?: string;
     page?: number;
     pageSize?: number;
@@ -82,8 +78,35 @@ export async function getDriversForOrganization(
   const requestedPage = normalizePage(options?.page);
   const pageSize = normalizePageSize(options?.pageSize);
   let queryColumnMode: DriverQueryColumnMode = "withVehicleIdAndNfc";
+  let matchingAppAccountIds: string[] | null | "not_linked" | "empty" = null;
+  if (options?.appAccountStatus) {
+    if (options.appAccountStatus === "not_linked") {
+      matchingAppAccountIds = "not_linked";
+    } else {
+      const { data: driversData } = await admin.supabase
+        .from("drivers")
+        .select("auth_user_id")
+        .eq("organization_id", organizationId)
+        .not("auth_user_id", "is", null);
+        
+      if (driversData && driversData.length > 0) {
+        const authUserIds = driversData.map(d => d.auth_user_id);
+        const appAccounts = await getDriverAppAccounts(admin.supabase, authUserIds);
+        
+        const matchingIds = authUserIds.filter(id => {
+          const account = getDriverAppAccount(id, appAccounts);
+          return account.status === options.appAccountStatus;
+        }).filter(Boolean) as string[];
+
+        matchingAppAccountIds = matchingIds.length > 0 ? matchingIds : "empty";
+      } else {
+        matchingAppAccountIds = "empty";
+      }
+    }
+  }
+
   const fetchPage = (page: number, columnMode: DriverQueryColumnMode) =>
-    buildDriversPageQuery(admin.supabase, organizationId, options, columnMode)
+    buildDriversPageQuery(admin.supabase, organizationId, options, columnMode, matchingAppAccountIds)
       .order("full_name", { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1);
 
@@ -152,8 +175,17 @@ export async function getDriversForOrganization(
     rows.map((driver) => driver.auth_user_id),
   );
 
+  const avatarPaths = Array.from(
+    new Set(
+      rows
+        .map((row) => row.profile_photo_path)
+        .filter((path): path is string => Boolean(path)),
+    ),
+  );
+  const avatarUrls = await createDriverDocumentSignedUrls(avatarPaths);
+
   const drivers = rows.map((driver) =>
-    mapDriver(driver, organizationName, actors, appAccounts, {
+    mapDriver(driver, organizationName, actors, appAccounts, avatarUrls, {
       canViewDocuments,
       canDownloadDocuments,
     }),
@@ -177,6 +209,7 @@ function buildDriversPageQuery(
   organizationId: string,
   options: Parameters<typeof getDriversForOrganization>[2],
   columnMode: DriverQueryColumnMode,
+  matchingAppAccountIds?: string[] | null | "not_linked" | "empty",
 ) {
   let query = supabase
     .from("drivers")
@@ -212,6 +245,46 @@ function buildDriversPageQuery(
     query = query.or(
       `full_name.ilike.${searchTerm},iqama_number.ilike.${searchTerm},mobile_number.ilike.${searchTerm},vehicle_number.ilike.${searchTerm},keeta_vehicle_plate_number.ilike.${searchTerm}`,
     );
+  }
+
+  if (options?.documentStatus) {
+    const today = getBusinessDateString();
+    const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+    const thresholdDate = getBusinessDateString(new Date(Date.now() + tenDaysMs));
+
+    const expiredCondition = `iqama_expiry_date.lte.${today},driving_license_expiry_date.lte.${today},driver_card_expiry_date.lte.${today},vehicle_authorization_expiry_date.lte.${today},operating_card_expiry_date.lte.${today}`;
+    const expiringSoonCondition = `iqama_expiry_date.lte.${thresholdDate},driving_license_expiry_date.lte.${thresholdDate},driver_card_expiry_date.lte.${thresholdDate},vehicle_authorization_expiry_date.lte.${thresholdDate},operating_card_expiry_date.lte.${thresholdDate}`;
+
+    if (options.documentStatus === "expired") {
+      query = query.or(expiredCondition);
+    } else if (options.documentStatus === "expiring") {
+      query = query
+        .or(expiringSoonCondition)
+        .not("iqama_expiry_date", "lte", today)
+        .not("driving_license_expiry_date", "lte", today)
+        .not("driver_card_expiry_date", "lte", today)
+        .not("vehicle_authorization_expiry_date", "lte", today)
+        .not("operating_card_expiry_date", "lte", today);
+    } else if (options.documentStatus === "valid") {
+      query = query
+        .not("iqama_expiry_date", "lte", thresholdDate)
+        .not("driving_license_expiry_date", "lte", thresholdDate)
+        .not("driver_card_expiry_date", "lte", thresholdDate)
+        .not("vehicle_authorization_expiry_date", "lte", thresholdDate)
+        .not("operating_card_expiry_date", "lte", thresholdDate);
+    }
+  }
+
+  if (options?.vehicleType && (options.vehicleType === "car" || options.vehicleType === "motorcycle")) {
+    query = query.eq("vehicle_type", options.vehicleType);
+  }
+
+  if (matchingAppAccountIds === "not_linked") {
+    query = query.is("auth_user_id", null);
+  } else if (matchingAppAccountIds === "empty") {
+    query = query.eq("id", "00000000-0000-0000-0000-000000000000"); // force empty
+  } else if (Array.isArray(matchingAppAccountIds) && matchingAppAccountIds.length > 0) {
+    query = query.in("auth_user_id", matchingAppAccountIds);
   }
 
   return query;
@@ -255,6 +328,7 @@ function getDriversSelectColumns(columnMode: DriverQueryColumnMode) {
       updated_by_user_id,
       created_at,
       updated_at,
+      deleted_at,
       driver_bank_details (
         driver_id,
         iban,
@@ -314,6 +388,7 @@ function mapDriver(
   organizationName: string,
   actors: Map<string, DriverActor>,
   appAccounts: Map<string, ProfileRow>,
+  avatarUrls: Map<string, string>,
   documentPermissions: {
     canViewDocuments: boolean;
     canDownloadDocuments: boolean;
@@ -340,25 +415,22 @@ function mapDriver(
       })
     : [];
 
-  const profilePhotoPreview = driver.profile_photo_path
-    ? createDriverFilePreview({
-        driverId: driver.id,
-        type: "profile-photo",
-        fileName: getFileNameFromStoragePath(driver.profile_photo_path),
-        mimeType: getMimeTypeFromStoragePath(driver.profile_photo_path),
-        canDownload: documentPermissions.canDownloadDocuments,
-      })
-    : null;
-
-  const operatingCardFilePreview = driver.operating_card_file_path
-    ? createDriverFilePreview({
-        driverId: driver.id,
-        type: "operating-card",
-        fileName: getFileNameFromStoragePath(driver.operating_card_file_path),
-        mimeType: getMimeTypeFromStoragePath(driver.operating_card_file_path),
-        canDownload: documentPermissions.canDownloadDocuments,
-      })
-    : null;
+  let profilePhotoPreview = null;
+  if (driver.profile_photo_path) {
+    profilePhotoPreview = createDriverFilePreview({
+      driverId: driver.id,
+      type: "profile-photo",
+      fileName: getFileNameFromStoragePath(driver.profile_photo_path),
+      mimeType: getMimeTypeFromStoragePath(driver.profile_photo_path),
+      canDownload: documentPermissions.canDownloadDocuments,
+    });
+    
+    // Override the API route previewUrl with the batched signed URL if available
+    const batchedUrl = avatarUrls.get(driver.profile_photo_path);
+    if (batchedUrl && profilePhotoPreview) {
+      profilePhotoPreview.previewUrl = batchedUrl;
+    }
+  }
 
   return {
     id: driver.id,
@@ -370,9 +442,6 @@ function mapDriver(
     vehicleId: driver.vehicle_id || null,
     vehicleNumber: driver.vehicle_number,
     keetaVehiclePlateNumber: driver.keeta_vehicle_plate_number ?? null,
-    vehicleSerialNumber: driver.vehicle_serial_number,
-    vehicleOwnerIdentifier: driver.vehicle_owner_identifier,
-    vehicleBrand: driver.vehicle_brand,
     organizationName,
     status: driver.status,
     keetaUsername: driver.keeta_username,
@@ -387,22 +456,19 @@ function mapDriver(
     drivingLicenseExpiryDate: driver.driving_license_expiry_date,
     driverCardNumber: driver.driver_card_number,
     driverCardExpiryDate: driver.driver_card_expiry_date,
-    vehicleAuthorizationNumber: driver.vehicle_authorization_number,
-    vehicleAuthorizationExpiryDate: driver.vehicle_authorization_expiry_date,
+    vehicleAuthorizationExpiryDate: driver.vehicle_authorization_expiry_date ?? "",
+    operatingCardExpiryDate: driver.operating_card_expiry_date,
     iban: driver.driver_bank_details?.iban ?? null,
     bankName: driver.driver_bank_details?.bank_name ?? null,
     accountNumber: driver.driver_bank_details?.account_number ?? null,
     profilePhotoUrl: profilePhotoPreview?.previewUrl ?? null,
     profilePhotoPreview,
-    operatingCardNumber: driver.operating_card_number ?? null,
-    operatingCardExpiryDate: driver.operating_card_expiry_date ?? null,
-    operatingCardFileUrl: operatingCardFilePreview?.previewUrl ?? null,
-    operatingCardFilePreview,
     documents,
     createdBy: getActor(actors, driver.created_by_user_id),
     updatedBy: getActor(actors, driver.updated_by_user_id),
     createdAt: driver.created_at,
     updatedAt: driver.updated_at,
+    deletedAt: driver.deleted_at,
   };
 }
 
@@ -558,4 +624,90 @@ function getMimeTypeFromStoragePath(path: string) {
   }
 
   return null;
+}
+
+export async function getDriversExportData(
+  organizationId: string,
+  organizationName: string,
+  options?: Parameters<typeof getDriversForOrganization>[2]
+): Promise<DriverListItem[]> {
+  const admin = await getAuthenticatedAdmin();
+
+  if (admin.status !== "authorized") {
+    return [];
+  }
+
+  let matchingAppAccountIds: string[] | null | "not_linked" | "empty" = null;
+  if (options?.appAccountStatus) {
+    if (options.appAccountStatus === "not_linked") {
+      matchingAppAccountIds = "not_linked";
+    } else {
+      const { data: driversData } = await admin.supabase
+        .from("drivers")
+        .select("auth_user_id")
+        .eq("organization_id", organizationId)
+        .not("auth_user_id", "is", null);
+        
+      if (driversData && driversData.length > 0) {
+        const authUserIds = driversData.map(d => d.auth_user_id);
+        const appAccounts = await getDriverAppAccounts(admin.supabase, authUserIds);
+        
+        const matchingIds = authUserIds.filter(id => {
+          const account = getDriverAppAccount(id, appAccounts);
+          return account.status === options.appAccountStatus;
+        }).filter(Boolean) as string[];
+
+        matchingAppAccountIds = matchingIds.length > 0 ? matchingIds : "empty";
+      } else {
+        matchingAppAccountIds = "empty";
+      }
+    }
+  }
+
+  const query = buildDriversPageQuery(admin.supabase, organizationId, options, "withVehicleIdAndNfc", matchingAppAccountIds)
+    .order("full_name", { ascending: true });
+
+  let { data, error } = await query;
+  
+  if (isMissingNfcNumberColumnError(error)) {
+    const retry = await buildDriversPageQuery(admin.supabase, organizationId, options, "withVehicleId", matchingAppAccountIds)
+      .order("full_name", { ascending: true });
+    data = retry.data;
+    error = retry.error;
+  }
+
+  if (error || !data) {
+    console.error("Failed to fetch drivers for export", error);
+    return [];
+  }
+  
+  const rows = data as unknown as DriverQueryRow[];
+
+  const permissions = await getOrganizationPermissions(
+    admin.supabase,
+    admin.profile,
+    organizationId,
+  );
+  const canViewDocuments = permissions.has("drivers.documents.view");
+  const canDownloadDocuments = permissions.has("drivers.documents.download");
+
+  const actors = await getDriverActors(
+    admin.supabase,
+    rows.flatMap((driver) => [
+      driver.created_by_user_id,
+      driver.updated_by_user_id,
+    ]),
+  );
+
+  const appAccounts = await getDriverAppAccounts(
+    admin.supabase,
+    rows.map((driver) => driver.auth_user_id),
+  );
+
+  return rows.map((driver) =>
+    mapDriver(driver, organizationName, actors, appAccounts, new Map(), {
+      canViewDocuments,
+      canDownloadDocuments,
+    }),
+  );
 }

@@ -76,6 +76,44 @@ export async function uploadFleetOperatingCard({
   }
 }
 
+export async function uploadFleetRegistrationFile({
+  file,
+  organizationId,
+  vehicleId,
+}: {
+  file: File;
+  organizationId: string;
+  vehicleId: string;
+}): Promise<FleetFileUploadResult> {
+  if (!isValidFleetFile(file)) {
+    return { success: false, code: "document_invalid" };
+  }
+
+  try {
+    const admin = createAdminClient();
+    const path = buildFleetRegistrationFilePath({ organizationId, vehicleId, file });
+    const { error } = await admin.storage.from(bucketName).upload(path, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      logFleetStorageError("registration_file_upload", error);
+      return { success: false, code: "upload_failed" };
+    }
+
+    return {
+      success: true,
+      path,
+      fileName: getSafeDownloadName(file.name),
+      mimeType: file.type,
+    };
+  } catch (error) {
+    logFleetStorageError("registration_file_upload_exception", error);
+    return { success: false, code: "configuration_error" };
+  }
+}
+
 export async function uploadFleetBaselinePhoto({
   file,
   vehicleId,
@@ -176,6 +214,18 @@ function buildFleetOperatingCardPath({
   file: File;
 }) {
   return `fleet/${organizationId}/${vehicleId}/operating-card/${randomUUID()}${getSafeExtension(file)}`;
+}
+
+function buildFleetRegistrationFilePath({
+  organizationId,
+  vehicleId,
+  file,
+}: {
+  organizationId: string;
+  vehicleId: string;
+  file: File;
+}) {
+  return `fleet/${organizationId}/${vehicleId}/registration/${randomUUID()}${getSafeExtension(file)}`;
 }
 
 function buildFleetBaselinePhotoPath({

@@ -25,7 +25,8 @@ export type FleetActivityAction =
   | "assigned_driver_changed"
   | "authorized_person_changed"
   | "technical_status_changed"
-  | "operating_card_changed";
+  | "operating_card_changed"
+  | "registration_file_changed";
 
 export type FleetVehicleRow =
   Database["public"]["Tables"]["fleet_vehicles"]["Row"];
@@ -50,6 +51,8 @@ export type FleetVehicle = {
   vehicleType: string;
   plateNumber: string;
   normalizedPlateNumber: string;
+  serialNumber: string | null;
+  brand: string | null;
   ownerSource: FleetOwnerSource;
   ownerName: string;
   manualOwnerName: string | null;
@@ -60,6 +63,7 @@ export type FleetVehicle = {
   ownerDriverIqama: string | null;
   ownerDriverMobile: string | null;
   ownerContactPhone: string | null;
+  ownerIdentifier: string | null;
   rentalStartDate: string | null;
   rentalEndDate: string | null;
   rentalMonthlyCost: number | null;
@@ -70,6 +74,9 @@ export type FleetVehicle = {
   operatingCardFileName: string | null;
   operatingCardFilePath: string | null;
   operatingCardMimeType: string | null;
+  registrationFileName: string | null;
+  registrationFilePath: string | null;
+  registrationMimeType: string | null;
   assignedDriverSource: FleetPersonSource;
   assignedDriverId: string | null;
   assignedDriverName: string | null;
@@ -83,6 +90,7 @@ export type FleetVehicle = {
   authorizedPersonIqama: string | null;
   authorizedManualName: string | null;
   authorizedManualIqama: string | null;
+  authorizationNumber: string | null;
   authorizationExpiryDate: string | null;
   operationalStatus: FleetOperationalStatus;
   technicalStatus: FleetTechnicalStatus;
@@ -94,7 +102,12 @@ export type FleetVehicle = {
 };
 
 export type FleetListFilters = {
+  page: number;
+  pageSize: number;
   search: string;
+  driver: string;
+  authorization: "all" | "authorized" | "missing";
+  linkedDriver: "all" | "linked" | "missing";
   technicalStatus: FleetTechnicalStatus | "all";
   operationalStatus: FleetOperationalStatus | "all";
   assignedOrganizationId: string;
@@ -129,12 +142,19 @@ export type FleetPageData =
       vehicles: FleetVehicle[];
       drivers: FleetDriverOption[];
       summary: FleetSummaryCounts;
+      pagination: {
+        page: number;
+        pageSize: number;
+        totalRows: number;
+        totalPages: number;
+      };
     }
   | {
       status: "unauthorized" | "load_error";
       vehicles: [];
       drivers: [];
       summary: FleetSummaryCounts;
+      pagination?: undefined;
     };
 
 export type FleetMutationInput = {
@@ -142,12 +162,15 @@ export type FleetMutationInput = {
   vehicleCategory: FleetVehicleCategory;
   vehicleType: string;
   plateNumber: string;
+  serialNumber: string | null;
+  brand: string | null;
   ownerSource: FleetOwnerSource;
   manualOwnerName: string | null;
   ownershipType: FleetOwnershipType | null;
   ownerName: string | null;
   ownerDriverId: string | null;
   ownerContactPhone: string | null;
+  ownerIdentifier: string | null;
   rentalStartDate: string | null;
   rentalEndDate: string | null;
   rentalMonthlyCost: number | null;
@@ -163,6 +186,7 @@ export type FleetMutationInput = {
   authorizedDriverId: string | null;
   authorizedManualName: string | null;
   authorizedManualIqama: string | null;
+  authorizationNumber: string | null;
   authorizationExpiryDate: string | null;
   technicalStatus: FleetTechnicalStatus;
   faultLocation: FleetFaultLocation | null;

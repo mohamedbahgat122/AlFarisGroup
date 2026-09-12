@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { notFound, redirect } from "next/navigation";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { getOilMaintenanceAlertsForDashboard } from "@/features/app-requests/queries";
 import { getSystemExpiryAlertsForDashboard } from "@/features/expiry-alerts/queries";
 import { getAccessibleOrganizationsForProfile } from "@/features/organizations/queries";
 import { getAppNotificationsForCurrentUser } from "@/features/notifications/queries";
@@ -58,6 +59,11 @@ export default async function DashboardLayout({
     organizations,
     locale,
   });
+  const oilMaintenanceAlerts = await getOilMaintenanceAlertsForDashboard({
+    supabase: admin.supabase,
+    organizations,
+    locale,
+  });
   const authorizationRevision =
     (await getAuthorizationRevision(admin.supabase, admin.profile.id)) ?? "";
 
@@ -68,15 +74,20 @@ export default async function DashboardLayout({
       user={{
         id: admin.profile.id,
         fullName: admin.profile.full_name,
+        email: admin.user.email ?? "",
+        avatarUrl: admin.avatarUrl,
         jobTitle: admin.profile.job_title,
         role: admin.profile.role,
+        homeOrganizationId: admin.profile.home_organization_id,
         hasGlobalFleetPermission: admin.profile.role === "system_owner" || (await getGlobalPermissions(admin.supabase, admin.profile)).has("fleet.view"),
         hasGlobalHousingPermission: admin.profile.role === "system_owner" || (await getGlobalPermissions(admin.supabase, admin.profile)).has("housing.view"),
+        hasGlobalSupervisorShiftsPermission: admin.profile.role === "system_owner" || (await getGlobalPermissions(admin.supabase, admin.profile)).has("supervisor_shifts.view" as any),
       }}
       authorizationRevision={authorizationRevision}
       organizations={organizations}
       appNotifications={appNotifications}
       systemExpiryAlerts={systemExpiryAlerts}
+      oilMaintenanceAlerts={oilMaintenanceAlerts}
     >
       {children}
     </DashboardShell>

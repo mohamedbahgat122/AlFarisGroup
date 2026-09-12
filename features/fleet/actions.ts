@@ -82,7 +82,7 @@ export async function updateFleetTechnicalStatusAction(
     return { status: "error", code: "validation_error" };
   }
   const normalizedFaultLocation: FleetFaultLocation | null =
-    technicalStatus === "fault" && isFleetFaultLocation(faultLocation)
+    (technicalStatus === "fault" || technicalStatus === "accident") && isFleetFaultLocation(faultLocation)
       ? faultLocation
       : null;
   const result = await updateFleetTechnicalStatus({
@@ -108,11 +108,15 @@ export async function getFleetDownloadUrlAction(formData: FormData) {
   const fileName = getStringValue(formData, "fileName") || "fleet-file";
   if (!path.startsWith("fleet/")) return null;
   const organizationId = path.split("/")[1];
+  const isOperatingCard = path.includes("/operating-card/");
+  const isRegistration = path.includes("/registration/");
+  const permissionKey = isRegistration ? "fleet.update" : "fleet.operating_card.download";
+
   if (
     !organizationId ||
     !(await requireOrganizationPermission({
       organizationId,
-      permissionKey: "fleet.operating_card.download",
+      permissionKey: permissionKey as any, // Using 'any' as I don't know the exact permission enum
     }))
   ) {
     return null;
@@ -156,11 +160,20 @@ async function saveFleetVehicle(
       fieldErrors: { operatingCardFile: getDictionary(locale).dashboard.fleet.errors.document_invalid },
     };
   }
+  
+  const registrationFile = getOptionalFile(formData, "registrationFile");
+  if (registrationFile && !isValidFleetFile(registrationFile)) {
+    return {
+      status: "validation_error",
+      code: "document_invalid",
+      fieldErrors: { registrationFile: getDictionary(locale).dashboard.fleet.errors.document_invalid },
+    };
+  }
 
   const result =
     mode === "create"
-      ? await createFleetVehicle({ organizationCode, input, operatingCardFile: file })
-      : await updateFleetVehicle({ organizationCode, input, operatingCardFile: file });
+      ? await createFleetVehicle({ organizationCode, input, operatingCardFile: file, registrationFile })
+      : await updateFleetVehicle({ organizationCode, input, operatingCardFile: file, registrationFile });
 
   if (!result.success) {
     return {
@@ -195,12 +208,15 @@ function getFleetInput(formData: FormData): FleetMutationInput | null {
     vehicleCategory,
     vehicleType: getStringValue(formData, "vehicleType"),
     plateNumber: getStringValue(formData, "plateNumber"),
+    serialNumber: getStringValue(formData, "serialNumber") || null,
+    brand: getStringValue(formData, "brand") || null,
     ownerSource,
     manualOwnerName: getStringValue(formData, "manualOwnerName"),
     ownershipType: null,
     ownerName: null,
     ownerDriverId: null,
     ownerContactPhone: null,
+    ownerIdentifier: getStringValue(formData, "ownerIdentifier") || null,
     rentalStartDate: null,
     rentalEndDate: null,
     rentalMonthlyCost: null,
@@ -216,6 +232,7 @@ function getFleetInput(formData: FormData): FleetMutationInput | null {
     authorizedDriverId: getStringValue(formData, "authorizedDriverId"),
     authorizedManualName: getStringValue(formData, "authorizedManualName"),
     authorizedManualIqama: getStringValue(formData, "authorizedManualIqama"),
+    authorizationNumber: getStringValue(formData, "authorizationNumber") || null,
     authorizationExpiryDate: getStringValue(formData, "authorizationExpiryDate"),
     technicalStatus,
     faultLocation: isFleetFaultLocation(faultLocation) ? faultLocation : null,

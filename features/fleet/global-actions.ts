@@ -183,6 +183,8 @@ async function saveGlobalFleetVehicle(
     vehicleCategory: category,
     vehicleType: type,
     plateNumber: plate,
+    serialNumber: getStringValue(formData, "serialNumber") || null,
+    brand: getStringValue(formData, "brand") || null,
     ownerSource: legacyOwner.ownerSource,
     assignedOrganizationId,
     manualOwnerName: legacyOwner.manualOwnerName,
@@ -190,6 +192,7 @@ async function saveGlobalFleetVehicle(
     ownerName,
     ownerDriverId: getStringValue(formData, "ownerDriverId") || null,
     ownerContactPhone: getStringValue(formData, "ownerContactPhone") || null,
+    ownerIdentifier: getStringValue(formData, "ownerIdentifier") || null,
     rentalStartDate: getStringValue(formData, "rentalStartDate") || null,
     rentalEndDate: getStringValue(formData, "rentalEndDate") || null,
     rentalMonthlyCost: getOptionalNumberValue(formData, "rentalMonthlyCost"),
@@ -205,6 +208,7 @@ async function saveGlobalFleetVehicle(
     authorizedDriverId: getStringValue(formData, "authorizedDriverId") || null,
     authorizedManualName: getStringValue(formData, "authorizedManualName"),
     authorizedManualIqama: getStringValue(formData, "authorizedManualIqama"),
+    authorizationNumber: getStringValue(formData, "authorizationNumber") || null,
     authorizationExpiryDate: getStringValue(formData, "authorizationExpiryDate") || null,
     technicalStatus: "healthy",
     faultLocation: null,
@@ -213,6 +217,7 @@ async function saveGlobalFleetVehicle(
   };
 
   const operatingCardFile = getOptionalFile(formData, "operatingCardFile");
+  const registrationFile = getOptionalFile(formData, "registrationFile");
   const baselinePhotoFiles = getBaselinePhotoFiles(formData);
 
   let result;
@@ -220,6 +225,7 @@ async function saveGlobalFleetVehicle(
     result = await createGlobalFleetVehicle({
       input,
       operatingCardFile,
+      registrationFile,
       baselinePhotoFiles,
     });
   } else {
@@ -240,6 +246,7 @@ async function saveGlobalFleetVehicle(
       vehicleId,
       input,
       operatingCardFile,
+      registrationFile,
       baselinePhotoFiles,
     });
   }
@@ -315,7 +322,7 @@ export async function updateGlobalFleetTechnicalStatusAction(
     return { status: "error", code: "validation_error" };
   }
   const normalizedFaultLocation: FleetFaultLocation | null =
-    technicalStatus === "fault" && isFleetFaultLocation(faultLocation)
+    (technicalStatus === "fault" || technicalStatus === "accident") && isFleetFaultLocation(faultLocation)
       ? faultLocation
       : null;
   const result = await updateGlobalFleetTechnicalStatus({
@@ -385,4 +392,33 @@ export async function getGlobalFleetBaselinePhotoUrlsAction(
   );
 
   return Object.fromEntries(entries) as FleetBaselinePhotoUrls;
+}
+
+export async function getGlobalFleetDocumentPreviewUrlAction(formData: FormData) {
+  const path = getStringValue(formData, "path");
+  if (!path.startsWith("fleet/")) return null;
+  const isOperatingCard = path.includes("/operating-card/");
+  const isRegistration = path.includes("/registration/");
+  if (!isOperatingCard && !isRegistration) {
+    return null;
+  }
+
+  const admin = await getAuthenticatedAdmin();
+  if (admin.status !== "authorized") return null;
+
+  const globalPermissions = await getGlobalPermissions(admin.supabase, admin.profile);
+  const permissionKey = isRegistration ? "fleet.update" : "fleet.operating_card.download";
+  if (admin.profile.role !== "system_owner" && !globalPermissions.has(permissionKey)) {
+    return null;
+  }
+
+  const { data, error } = await admin.supabase
+    .from("fleet_vehicles")
+    .select("id")
+    .or(`operating_card_file_path.eq.${path},registration_file_path.eq.${path}`)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  return createFleetFilePreviewSignedUrl(path);
 }

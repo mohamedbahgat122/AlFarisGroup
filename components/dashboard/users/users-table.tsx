@@ -101,7 +101,7 @@ export function UsersTable({
                   >
                     <td className="max-w-[260px] px-4 py-4">
                       <div className="flex min-w-0 items-center gap-3">
-                        <UserAvatar fullName={user.fullName} />
+                        <UserAvatar fullName={user.fullName} avatarUrl={user.avatarUrl} />
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <p className="truncate text-sm font-bold text-navy">

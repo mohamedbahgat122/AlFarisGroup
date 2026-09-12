@@ -10,6 +10,7 @@ import {
   getEligibleDriverAppAccountsForOrganization,
   linkExistingDriverAppAccountForOrganization,
   resetDriverAppPasswordForOrganization,
+  restoreDriverForOrganization,
   setDriverStatusForOrganization,
   updateDriverAppLoginIdentifierForOrganization,
   updateDriverForOrganization,
@@ -108,7 +109,6 @@ export async function createDriverAction(
     drivingLicenseFile: selectedFiles.drivingLicenseFile,
     driverCardFile: selectedFiles.driverCardFile,
     profilePhotoFile: selectedFiles.profilePhotoFile,
-    operatingCardFile: selectedFiles.operatingCardFile,
     requireFiles: true,
     requireDrivingLicenseFile: true,
   });
@@ -124,7 +124,6 @@ export async function createDriverAction(
     iqamaFile: selectedFiles.iqamaFile,
     drivingLicenseFile: selectedFiles.drivingLicenseFile,
     driverCardFile: selectedFiles.driverCardFile,
-    operatingCardFile: selectedFiles.operatingCardFile,
   });
 
   if (!result.success) {
@@ -259,7 +258,6 @@ export async function updateDriverAction(
     drivingLicenseFile: selectedFiles.drivingLicenseFile,
     driverCardFile: selectedFiles.driverCardFile,
     profilePhotoFile: selectedFiles.profilePhotoFile,
-    operatingCardFile: selectedFiles.operatingCardFile,
     requireFiles: false,
     requireDrivingLicenseFile: !hasDrivingLicenseDocument,
   });
@@ -282,9 +280,6 @@ export async function updateDriverAction(
     iqamaFile: selectedFiles.iqamaFile,
     drivingLicenseFile: selectedFiles.drivingLicenseFile,
     driverCardFile: selectedFiles.driverCardFile,
-    operatingCardFile: selectedFiles.operatingCardFile,
-    removeOperatingCardFile:
-      getStringValue(formData, "removeOperatingCardFile") === "true",
   });
 
   if (!result.success) {
@@ -362,6 +357,32 @@ export async function archiveDriverAction(
   }
 
   const result = await archiveDriverForOrganization({
+    organizationCode,
+    driverId,
+  });
+
+  if (!result.success) {
+    return { status: "error", code: result.code };
+  }
+
+  revalidateDriverDashboardPaths(locale, organizationCode);
+
+  return { status: "success", code: "success" };
+}
+
+export async function restoreDriverAction(
+  _previousState: DriverLifecycleActionState,
+  formData: FormData,
+): Promise<DriverLifecycleActionState> {
+  const locale = getStringValue(formData, "locale");
+  const organizationCode = getStringValue(formData, "organizationCode");
+  const driverId = getStringValue(formData, "driverId");
+
+  if (!isLocale(locale) || !organizationCode || !isUuid(driverId)) {
+    return { status: "error", code: "invalid_driver" };
+  }
+
+  const result = await restoreDriverForOrganization({
     organizationCode,
     driverId,
   });
@@ -661,9 +682,7 @@ function getFileValidationStage(
     return "validate_profile_photo";
   }
 
-  if (fileErrors.operatingCardFile) {
-    return "validate_operating_card_file";
-  }
+
 
   return "validate_form_data";
 }
@@ -722,7 +741,6 @@ function getSelectedDriverFiles(formData: FormData) {
     iqamaFile: getFileValue(formData, "iqamaDocument"),
     drivingLicenseFile: getFileValue(formData, "drivingLicenseDocument"),
     driverCardFile: getFileValue(formData, "driverCardDocument"),
-    operatingCardFile: getFileValue(formData, "operatingCardFile"),
   };
 }
 
@@ -758,12 +776,6 @@ function getDriverFormValues(formData: FormData): DriverFormValues {
       formData,
       "keetaVehiclePlateNumber",
     ),
-    vehicleSerialNumber: getStringValue(formData, "vehicleSerialNumber"),
-    vehicleOwnerIdentifier: getStringValue(
-      formData,
-      "vehicleOwnerIdentifier",
-    ),
-    vehicleBrand: getStringValue(formData, "vehicleBrand"),
     keetaUsername: getStringValue(formData, "keetaUsername"),
     keetaDriverId: getStringValue(formData, "keetaDriverId"),
     isCompanySponsored: getStringValue(formData, "isCompanySponsored"),
@@ -778,19 +790,6 @@ function getDriverFormValues(formData: FormData): DriverFormValues {
     ),
     driverCardNumber: getStringValue(formData, "driverCardNumber"),
     driverCardExpiryDate: getStringValue(formData, "driverCardExpiryDate"),
-    vehicleAuthorizationNumber: getStringValue(
-      formData,
-      "vehicleAuthorizationNumber",
-    ),
-    vehicleAuthorizationExpiryDate: getStringValue(
-      formData,
-      "vehicleAuthorizationExpiryDate",
-    ),
-    operatingCardNumber: getStringValue(formData, "operatingCardNumber"),
-    operatingCardExpiryDate: getStringValue(
-      formData,
-      "operatingCardExpiryDate",
-    ),
     iban: getStringValue(formData, "iban"),
     bankName: getStringValue(formData, "bankName"),
     accountNumber: getStringValue(formData, "accountNumber"),
@@ -819,9 +818,6 @@ function buildDriverInput({
     vehicleId: values.vehicleId,
     vehicleNumber: values.vehicleNumber ?? "",
     keetaVehiclePlateNumber: values.keetaVehiclePlateNumber ?? "",
-    vehicleSerialNumber: values.vehicleSerialNumber ?? "",
-    vehicleOwnerIdentifier: values.vehicleOwnerIdentifier ?? "",
-    vehicleBrand: values.vehicleBrand ?? "",
     keetaUsername: values.keetaUsername ?? "",
     keetaDriverId: values.keetaDriverId ?? "",
     isCompanySponsored,
@@ -833,10 +829,6 @@ function buildDriverInput({
     drivingLicenseExpiryDate: values.drivingLicenseExpiryDate ?? "",
     driverCardNumber: values.driverCardNumber ?? "",
     driverCardExpiryDate: values.driverCardExpiryDate ?? "",
-    vehicleAuthorizationNumber: values.vehicleAuthorizationNumber ?? "",
-    vehicleAuthorizationExpiryDate: values.vehicleAuthorizationExpiryDate ?? "",
-    operatingCardNumber: values.operatingCardNumber ?? "",
-    operatingCardExpiryDate: values.operatingCardExpiryDate ?? "",
     iban: values.iban ?? "",
     bankName: values.bankName ?? "",
     accountNumber: values.accountNumber ?? "",
@@ -849,7 +841,6 @@ function getFileErrors({
   drivingLicenseFile,
   driverCardFile,
   profilePhotoFile,
-  operatingCardFile,
   requireFiles,
   requireDrivingLicenseFile,
 }: {
@@ -858,7 +849,6 @@ function getFileErrors({
   drivingLicenseFile: File | null;
   driverCardFile: File | null;
   profilePhotoFile: File | null;
-  operatingCardFile: File | null;
   requireFiles: boolean;
   requireDrivingLicenseFile: boolean;
 }): DriverFieldErrors {
@@ -890,10 +880,6 @@ function getFileErrors({
 
   if (profilePhotoFile && !isValidDriverImageFile(profilePhotoFile)) {
     errors.profilePhoto = getFileInvalidMessage(locale);
-  }
-
-  if (operatingCardFile && !isValidDriverFile(operatingCardFile)) {
-    errors.operatingCardFile = getFileInvalidMessage(locale);
   }
 
   return errors;
@@ -969,12 +955,6 @@ function getFieldErrorMessage(
       return dictionary.fieldErrors.vehicleNumber;
     case "keetaVehiclePlateNumber":
       return dictionary.fieldErrors.keetaVehiclePlateNumber;
-    case "vehicleSerialNumber":
-      return dictionary.fieldErrors.vehicleSerialNumber;
-    case "vehicleOwnerIdentifier":
-      return dictionary.fieldErrors.vehicleOwnerIdentifier;
-    case "vehicleBrand":
-      return dictionary.fieldErrors.vehicleBrand;
     case "iqamaExpiryDate":
       return dictionary.fieldErrors.iqamaExpiryDate;
     case "drivingLicenseExpiryDate":
@@ -983,20 +963,12 @@ function getFieldErrorMessage(
       return dictionary.fieldErrors.drivingLicenseDocument;
     case "driverCardExpiryDate":
       return dictionary.fieldErrors.driverCardExpiryDate;
-    case "vehicleAuthorizationExpiryDate":
-      return dictionary.fieldErrors.vehicleAuthorizationExpiryDate;
-    case "operatingCardNumber":
-      return dictionary.fieldErrors.operatingCardNumber;
-    case "operatingCardExpiryDate":
-      return dictionary.fieldErrors.operatingCardExpiryDate;
     case "iqamaDocument":
       return dictionary.fieldErrors.iqamaDocument;
     case "driverCardDocument":
       return dictionary.fieldErrors.driverCardDocument;
     case "profilePhoto":
       return dictionary.fieldErrors.profilePhoto;
-    case "operatingCardFile":
-      return dictionary.fieldErrors.operatingCardFile;
     case "vehicleType":
       return dictionary.fieldErrors.vehicleType;
     case "isCompanySponsored":

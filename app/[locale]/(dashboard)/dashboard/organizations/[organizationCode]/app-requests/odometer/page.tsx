@@ -77,6 +77,7 @@ export default async function OdometerRoute({ params, searchParams }: RouteProps
             { label: dictionary.odometerSummary.notStarted, value: data.summary.notStarted, tone: "pending" },
             { label: dictionary.odometerSummary.startedOnly, value: data.summary.startedOnly, tone: "info" },
             { label: dictionary.odometerSummary.completed, value: data.summary.completed, tone: "success" },
+            { label: dictionary.odometerSummary.alertRows, value: data.summary.alertRows, tone: "danger" },
           ]}
         />
         <OdometerFilterBar

@@ -76,6 +76,7 @@ export type ManagedUserListItem = {
   globalPermissions: GlobalPermissionKey[];
   createdAt: string;
   isSystemOwner: boolean;
+  avatarUrl?: string | null;
 };
 
 export type ManagedUserActivityLog = {

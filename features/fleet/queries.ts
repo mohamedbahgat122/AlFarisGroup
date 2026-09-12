@@ -87,7 +87,58 @@ export async function getFleetPageData({
     ),
     drivers: drivers.drivers,
     summary: emptyFleetSummary,
+    pagination: {
+      page: 1,
+      pageSize: 1000,
+      totalRows: vehicleRows.length,
+      totalPages: 1,
+    }
   };
+}
+
+export type FleetExportData = {
+  status: "success" | "unauthorized" | "load_error";
+  vehicles: FleetVehicle[];
+};
+
+async function applyGlobalFleetFilters(
+  vehicleQuery: any,
+  filters: Partial<FleetListFilters>
+) {
+  if (filters.archive === "active") {
+    vehicleQuery = vehicleQuery.is("archived_at", null);
+  } else if (filters.archive === "archived") {
+    vehicleQuery = vehicleQuery.not("archived_at", "is", null);
+  }
+
+  if (filters.technicalStatus && filters.technicalStatus !== "all") {
+    vehicleQuery = vehicleQuery.eq("technical_status", filters.technicalStatus);
+  }
+
+  if (filters.operationalStatus && filters.operationalStatus !== "all") {
+    vehicleQuery = vehicleQuery.eq("operational_status", filters.operationalStatus);
+  }
+
+  if (filters.assignedOrganizationId) {
+    vehicleQuery = vehicleQuery.eq("assigned_organization_id", filters.assignedOrganizationId);
+  }
+
+  if (filters.vehicleType) {
+    vehicleQuery = vehicleQuery.ilike("vehicle_type", `%${sanitizeLike(filters.vehicleType)}%`);
+  }
+
+  if (filters.ownershipType && filters.ownershipType !== "all") {
+    vehicleQuery = vehicleQuery.eq("ownership_type", filters.ownershipType);
+  }
+
+  if (filters.search) {
+    const searchFilter = await buildGlobalFleetSearchFilter(filters.search);
+    if (searchFilter) {
+      vehicleQuery = vehicleQuery.or(searchFilter);
+    }
+  }
+
+  return vehicleQuery;
 }
 
 export async function getGlobalFleetPageData({
@@ -108,44 +159,19 @@ export async function getGlobalFleetPageData({
     return { status: "unauthorized", vehicles: [], drivers: [], summary: emptyFleetSummary };
   }
 
+  const from = (filters.page - 1) * filters.pageSize;
+  const to = from + filters.pageSize - 1;
+
   let vehicleQuery = admin.supabase
     .from("fleet_vehicles")
-    .select("id, vehicle_category, vehicle_type, plate_number, normalized_plate_number, owner_source, owner_organization_id, manual_owner_name, ownership_type, owner_name, owner_driver_id, owner_contact_phone, rental_start_date, rental_end_date, rental_monthly_cost, ownership_contract_number, ownership_notes, operating_card_number, operating_card_expiry_date, operating_card_file_name, operating_card_file_path, operating_card_mime_type, assigned_driver_source, assigned_driver_id, assigned_driver_manual_name, assigned_driver_manual_iqama, authorized_person_source, authorized_driver_id, authorized_manual_name, authorized_manual_iqama, authorization_expiry_date, operational_status, technical_status, fault_location, technical_status_note, notes, archived_at, assigned_organization_id")
+    .select("id, vehicle_category, vehicle_type, plate_number, normalized_plate_number, serial_number, brand, owner_source, owner_organization_id, manual_owner_name, ownership_type, owner_name, owner_driver_id, owner_contact_phone, owner_identifier, rental_start_date, rental_end_date, rental_monthly_cost, ownership_contract_number, ownership_notes, operating_card_number, operating_card_expiry_date, operating_card_file_name, operating_card_file_path, operating_card_mime_type, registration_file_name, registration_file_path, registration_mime_type, assigned_driver_source, assigned_driver_id, assigned_driver_manual_name, assigned_driver_manual_iqama, authorized_person_source, authorized_driver_id, authorized_manual_name, authorized_manual_iqama, authorization_number, authorization_expiry_date, operational_status, technical_status, fault_location, technical_status_note, notes, archived_at, assigned_organization_id", { count: "exact" })
     .eq("vehicle_category", category)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(from, to);
 
-  if (filters.archive === "active") {
-    vehicleQuery = vehicleQuery.is("archived_at", null);
-  } else if (filters.archive === "archived") {
-    vehicleQuery = vehicleQuery.not("archived_at", "is", null);
-  }
+  vehicleQuery = await applyGlobalFleetFilters(vehicleQuery, filters);
 
-  if (filters.technicalStatus !== "all") {
-    vehicleQuery = vehicleQuery.eq("technical_status", filters.technicalStatus);
-  }
-
-  if (filters.operationalStatus !== "all") {
-    vehicleQuery = vehicleQuery.eq("operational_status", filters.operationalStatus);
-  }
-
-  if (filters.assignedOrganizationId) {
-    vehicleQuery = vehicleQuery.eq("assigned_organization_id", filters.assignedOrganizationId);
-  }
-
-  if (filters.vehicleType) {
-    vehicleQuery = vehicleQuery.ilike("vehicle_type", `%${sanitizeLike(filters.vehicleType)}%`);
-  }
-
-  if (filters.ownershipType !== "all") {
-    vehicleQuery = vehicleQuery.eq("ownership_type", filters.ownershipType);
-  }
-
-  const searchFilter = await buildGlobalFleetSearchFilter(filters.search);
-  if (searchFilter) {
-    vehicleQuery = vehicleQuery.or(searchFilter);
-  }
-
-  const [{ data: vehicles, error: vehiclesError }, summary] = await Promise.all([
+  const [{ data: vehicles, error: vehiclesError, count }, summary] = await Promise.all([
     vehicleQuery,
     getGlobalFleetSummaryCounts(category),
   ]);
@@ -168,6 +194,9 @@ export async function getGlobalFleetPageData({
     vehicleRows.map((vehicle) => vehicle.id),
   );
 
+  const totalRows = count ?? 0;
+  const totalPages = Math.ceil(totalRows / filters.pageSize);
+
   return {
     status: "success",
     vehicles: vehicleRows.map((vehicle) =>
@@ -175,6 +204,66 @@ export async function getGlobalFleetPageData({
     ),
     drivers,
     summary,
+    pagination: {
+      page: filters.page,
+      pageSize: filters.pageSize,
+      totalRows,
+      totalPages,
+    },
+  };
+}
+
+export async function getGlobalFleetExportData({
+  category,
+  filters,
+}: {
+  category: FleetVehicleCategory;
+  filters: Partial<FleetListFilters>;
+}): Promise<FleetExportData> {
+  const admin = await getAuthenticatedAdmin();
+
+  if (admin.status !== "authorized") {
+    return { status: "unauthorized", vehicles: [] };
+  }
+
+  const globalPermissions = await getGlobalPermissions(admin.supabase, admin.profile);
+  if (admin.profile.role !== "system_owner" && !globalPermissions.has("fleet.view")) {
+    return { status: "unauthorized", vehicles: [] };
+  }
+
+  let vehicleQuery = admin.supabase
+    .from("fleet_vehicles")
+    .select("id, vehicle_category, vehicle_type, plate_number, normalized_plate_number, owner_source, owner_organization_id, manual_owner_name, ownership_type, owner_name, owner_driver_id, owner_contact_phone, rental_start_date, rental_end_date, rental_monthly_cost, ownership_contract_number, ownership_notes, operating_card_number, operating_card_expiry_date, operating_card_file_name, operating_card_file_path, operating_card_mime_type, assigned_driver_source, assigned_driver_id, assigned_driver_manual_name, assigned_driver_manual_iqama, authorized_person_source, authorized_driver_id, authorized_manual_name, authorized_manual_iqama, authorization_expiry_date, operational_status, technical_status, fault_location, technical_status_note, notes, archived_at, assigned_organization_id, serial_number, brand, owner_identifier, authorization_number, registration_file_path, registration_file_name, registration_mime_type, created_at")
+    .eq("vehicle_category", category)
+    .order("created_at", { ascending: false });
+
+  vehicleQuery = await applyGlobalFleetFilters(vehicleQuery, filters);
+
+  const { data: vehicles, error: vehiclesError } = await vehicleQuery;
+
+  if (vehiclesError) {
+    return { status: "load_error", vehicles: [] };
+  }
+
+  const vehicleRows = (vehicles ?? []) as FleetVehicleRow[];
+  const driverIds = new Set<string>();
+  vehicleRows.forEach((vehicle) => {
+    if (vehicle.assigned_driver_id) driverIds.add(vehicle.assigned_driver_id);
+    if (vehicle.authorized_driver_id) driverIds.add(vehicle.authorized_driver_id);
+    if (vehicle.owner_driver_id) driverIds.add(vehicle.owner_driver_id);
+  });
+
+  const drivers = await getDriverOptionsByIds(Array.from(driverIds));
+  const driverNames = new Map(drivers.map((driver) => [driver.id, driver]));
+  const linkedDriversByVehicleId = await getLinkedDriversByVehicleId(
+    vehicleRows.map((vehicle) => vehicle.id),
+  );
+
+  return {
+    status: "success",
+    vehicles: vehicleRows.map((vehicle) =>
+      mapFleetVehicle(vehicle, driverNames, linkedDriversByVehicleId),
+    ),
   };
 }
 
@@ -615,6 +704,13 @@ function mapFleetVehicle(
     notes: row.notes,
     archivedAt: row.archived_at,
     assignedOrganizationId: row.assigned_organization_id ?? null,
+    serialNumber: (row as any).serial_number ?? null,
+    brand: (row as any).brand ?? null,
+    ownerIdentifier: (row as any).owner_identifier ?? null,
+    authorizationNumber: (row as any).authorization_number ?? null,
+    registrationFileName: (row as any).registration_file_name ?? null,
+    registrationFilePath: (row as any).registration_file_path ?? null,
+    registrationMimeType: (row as any).registration_mime_type ?? null,
   };
 }
 

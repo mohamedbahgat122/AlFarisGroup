@@ -9,6 +9,7 @@ import {
   fleetBaselinePhotoSlots,
   uploadFleetBaselinePhoto,
   uploadFleetOperatingCard,
+  uploadFleetRegistrationFile,
   type FleetBaselinePhotoSlot,
 } from "@/features/fleet/storage";
 import { normalizeAndValidateFleetInput } from "@/features/fleet/validation";
@@ -96,10 +97,12 @@ export async function getGlobalManageAccess(permissionKey: GlobalPermissionKey) 
 export async function createGlobalFleetVehicle({
   input,
   operatingCardFile,
+  registrationFile,
   baselinePhotoFiles = {},
 }: {
   input: FleetMutationInput;
   operatingCardFile: File | null;
+  registrationFile?: File | null;
   baselinePhotoFiles?: BaselinePhotoFiles;
 }): Promise<FleetMutationResult> {
   const diagnostics = createFleetCreateDiagnostics();
@@ -148,12 +151,21 @@ export async function createGlobalFleetVehicle({
       })
     : null;
 
+  const regUpload = registrationFile
+    ? await uploadFleetRegistrationFile({
+        file: registrationFile,
+        organizationId: validation.input.assignedOrganizationId!,
+        vehicleId,
+      })
+    : null;
+
   diagnostics.mark("operating_card_upload", {
     attempted: Boolean(operatingCardFile),
     success: upload ? upload.success : true,
   });
 
   if (upload && !upload.success) return { success: false, code: upload.code };
+  if (regUpload && !regUpload.success) return { success: false, code: regUpload.code };
 
   const admin = getAdminClientOrNull();
   if (!admin) {
@@ -170,6 +182,7 @@ export async function createGlobalFleetVehicle({
     vehicleId,
     existing: null,
     uploadedFile: upload?.success ? upload : null,
+    uploadedRegistration: regUpload?.success ? regUpload : null,
   });
 
   const { error } = await admin.from("fleet_vehicles").insert(record);
@@ -178,6 +191,7 @@ export async function createGlobalFleetVehicle({
   if (error) {
     diagnostics.error("fleet_vehicles_insert", error);
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     return {
       success: false,
       code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
@@ -206,6 +220,7 @@ export async function createGlobalFleetVehicle({
   });
   if (!baselinePhotoPatch.success) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     await deleteCreatedGlobalVehicle(vehicleId);
     return { success: false, code: baselinePhotoPatch.code };
   }
@@ -221,6 +236,7 @@ export async function createGlobalFleetVehicle({
       diagnostics.error("vehicle_path_updates", photosError);
       await deleteFleetFiles(Object.values(baselinePhotoPatch.patch).filter(Boolean) as string[]);
       if (upload?.success) await deleteFleetFiles([upload.path]);
+      if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
       await deleteCreatedGlobalVehicle(vehicleId);
       return { success: false, code: "save_failed" };
     }
@@ -236,11 +252,13 @@ export async function updateGlobalFleetVehicle({
   vehicleId,
   input,
   operatingCardFile,
+  registrationFile,
   baselinePhotoFiles = {},
 }: {
   vehicleId: string;
   input: FleetMutationInput;
   operatingCardFile: File | null;
+  registrationFile?: File | null;
   baselinePhotoFiles?: BaselinePhotoFiles;
 }): Promise<FleetMutationResult> {
   const access = await getGlobalManageAccess("fleet.update");
@@ -276,7 +294,16 @@ export async function updateGlobalFleetVehicle({
       })
     : null;
 
+  const regUpload = registrationFile
+    ? await uploadFleetRegistrationFile({
+        file: registrationFile,
+        organizationId: validation.input.assignedOrganizationId!,
+        vehicleId,
+      })
+    : null;
+
   if (upload && !upload.success) return { success: false, code: upload.code };
+  if (regUpload && !regUpload.success) return { success: false, code: regUpload.code };
 
   const baselinePhotoPatch = await uploadGlobalBaselinePhotos({
     vehicleId,
@@ -284,6 +311,7 @@ export async function updateGlobalFleetVehicle({
   });
   if (!baselinePhotoPatch.success) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     return { success: false, code: baselinePhotoPatch.code };
   }
 
@@ -294,6 +322,7 @@ export async function updateGlobalFleetVehicle({
     vehicleId,
     existing,
     uploadedFile: upload?.success ? upload : null,
+    uploadedRegistration: regUpload?.success ? regUpload : null,
   });
 
   const { error } = await admin
@@ -303,6 +332,7 @@ export async function updateGlobalFleetVehicle({
 
   if (error) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     await deleteFleetFiles(Object.values(baselinePhotoPatch.patch).filter(Boolean) as string[]);
     return {
       success: false,
@@ -312,6 +342,9 @@ export async function updateGlobalFleetVehicle({
 
   if (upload?.success && existing.operating_card_file_path) {
     await deleteFleetFiles([existing.operating_card_file_path]);
+  }
+  if (regUpload?.success && existing.registration_file_path) {
+    await deleteFleetFiles([existing.registration_file_path]);
   }
   await deleteFleetFiles(getReplacedBaselinePhotoPaths(existing, baselinePhotoPatch.patch));
 

@@ -1,20 +1,41 @@
 import { type NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import { getOrganizationPermissions } from "@/features/permissions/server";
+import type { Database } from "@/types/database";
 
 type PhotoType =
   | "request-driver"
   | "odometer-driver"
   | "odometer-start"
-  | "odometer-end";
+  | "odometer-end"
+  | "maintenance-invoice";
 
 const validPhotoTypes = new Set<string>([
   "request-driver",
   "odometer-driver",
   "odometer-start",
   "odometer-end",
+  "maintenance-invoice",
 ]);
 const signedUrlExpiresInSeconds = 300;
+
+type PhotoRouteDatabase = Database & {
+  public: Database["public"] & {
+    Tables: Database["public"]["Tables"] & {
+      maintenance_jobs: {
+        Row: {
+          id: string;
+          organization_id: string;
+          invoice_file_path: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+    };
+  };
+};
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +54,8 @@ export async function GET(request: NextRequest) {
   const resolved =
     type === "request-driver"
       ? await resolveRequestDriverPhotoPath(request, admin)
+      : type === "maintenance-invoice"
+        ? await resolveMaintenanceInvoicePath(request, admin)
       : await resolveOdometerPhotoPath(request, type as PhotoType, admin);
 
   if (!resolved.success) {
@@ -50,6 +73,40 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(data.signedUrl, 307);
   response.headers.set("Cache-Control", "private, no-store");
   return response;
+}
+
+async function resolveMaintenanceInvoicePath(
+  request: NextRequest,
+  admin: Extract<Awaited<ReturnType<typeof getAuthenticatedAdmin>>, { status: "authorized" }>,
+) {
+  const jobId = request.nextUrl.searchParams.get("jobId");
+  if (!jobId) return failure(400, "Missing job id");
+
+  const supabase = admin.supabase as SupabaseClient<PhotoRouteDatabase>;
+  const { data: job, error: jobError } = await supabase
+    .from("maintenance_jobs")
+    .select("id, organization_id, invoice_file_path")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (jobError || !job?.invoice_file_path) {
+    return failure(404, "Photo not found");
+  }
+
+  const permissions = await getOrganizationPermissions(
+    admin.supabase,
+    admin.profile,
+    job.organization_id,
+  );
+  if (
+    !permissions.has("app_requests.view") &&
+    !permissions.has("maintenance_jobs.view") &&
+    !permissions.has("maintenance_jobs.assign")
+  ) {
+    return failure(403, "Forbidden");
+  }
+
+  return success("maintenance-invoices", job.invoice_file_path);
 }
 
 async function resolveRequestDriverPhotoPath(
@@ -143,7 +200,7 @@ async function resolveOdometerPhotoPath(
   return success("driver-documents", driver.profile_photo_path);
 }
 
-function success(bucket: "driver-documents" | "driver-odometer", path: string) {
+function success(bucket: "driver-documents" | "driver-odometer" | "maintenance-invoices", path: string) {
   return { success: true as const, bucket, path };
 }
 

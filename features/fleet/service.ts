@@ -8,6 +8,7 @@ import type { OrganizationPermissionKey } from "@/features/permissions/registry"
 import {
   deleteFleetFiles,
   uploadFleetOperatingCard,
+  uploadFleetRegistrationFile,
 } from "@/features/fleet/storage";
 import { normalizeAndValidateFleetInput } from "@/features/fleet/validation";
 import type {
@@ -41,10 +42,12 @@ export async function createFleetVehicle({
   organizationCode,
   input,
   operatingCardFile,
+  registrationFile,
 }: {
   organizationCode: string;
   input: FleetMutationInput;
   operatingCardFile: File | null;
+  registrationFile: File | null;
 }): Promise<FleetMutationResult> {
   const access = await getManageAccess(organizationCode, "fleet.create");
   if (!access.success) return access;
@@ -72,9 +75,23 @@ export async function createFleetVehicle({
 
   if (upload && !upload.success) return { success: false, code: upload.code };
 
+  const regUpload = registrationFile
+    ? await uploadFleetRegistrationFile({
+        file: registrationFile,
+        organizationId: access.organization.id,
+        vehicleId,
+      })
+    : null;
+
+  if (regUpload && !regUpload.success) {
+    if (upload?.success) await deleteFleetFiles([upload.path]);
+    return { success: false, code: regUpload.code };
+  }
+
   const admin = getAdminClientOrNull();
   if (!admin) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     return { success: false, code: "configuration_error" };
   }
 
@@ -85,11 +102,13 @@ export async function createFleetVehicle({
     vehicleId,
     existing: null,
     uploadedFile: upload?.success ? upload : null,
+    uploadedRegistration: regUpload?.success ? regUpload : null,
   });
   const { error } = await admin.from("fleet_vehicles").insert(record);
 
   if (error) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     return {
       success: false,
       code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
@@ -111,10 +130,12 @@ export async function updateFleetVehicle({
   organizationCode,
   input,
   operatingCardFile,
+  registrationFile,
 }: {
   organizationCode: string;
   input: FleetMutationInput;
   operatingCardFile: File | null;
+  registrationFile: File | null;
 }): Promise<FleetMutationResult> {
   const access = await getManageAccess(organizationCode, "fleet.update");
   if (!access.success) return access;
@@ -143,9 +164,22 @@ export async function updateFleetVehicle({
     : null;
   if (upload && !upload.success) return { success: false, code: upload.code };
 
+  const regUpload = registrationFile
+    ? await uploadFleetRegistrationFile({
+        file: registrationFile,
+        organizationId: access.organization.id,
+        vehicleId: input.vehicleId,
+      })
+    : null;
+  if (regUpload && !regUpload.success) {
+    if (upload?.success) await deleteFleetFiles([upload.path]);
+    return { success: false, code: regUpload.code };
+  }
+
   const admin = getAdminClientOrNull();
   if (!admin) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     return { success: false, code: "configuration_error" };
   }
 
@@ -156,6 +190,7 @@ export async function updateFleetVehicle({
     vehicleId: input.vehicleId,
     existing,
     uploadedFile: upload?.success ? upload : null,
+    uploadedRegistration: regUpload?.success ? regUpload : null,
   });
   const { error } = await admin
     .from("fleet_vehicles")
@@ -165,6 +200,7 @@ export async function updateFleetVehicle({
 
   if (error) {
     if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
     return {
       success: false,
       code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
@@ -173,6 +209,9 @@ export async function updateFleetVehicle({
 
   if (upload?.success && existing.operating_card_file_path) {
     await deleteFleetFiles([existing.operating_card_file_path]);
+  }
+  if (regUpload?.success && existing.registration_file_path) {
+    await deleteFleetFiles([existing.registration_file_path]);
   }
 
   await insertActivityLog({
@@ -214,6 +253,17 @@ export async function updateFleetVehicle({
       action: "operating_card_changed",
       oldValues: safeOperatingCardSnapshot(existing),
       newValues: safeOperatingCardSnapshot(next),
+    });
+  }
+
+  if (regUpload?.success) {
+    await insertActivityLog({
+      organizationId: access.organization.id,
+      vehicleId: input.vehicleId,
+      actorUserId: access.actorUserId,
+      action: "registration_file_changed",
+      oldValues: safeRegistrationFileSnapshot(existing),
+      newValues: safeRegistrationFileSnapshot(next),
     });
   }
 
@@ -332,13 +382,13 @@ export async function updateFleetTechnicalStatus({
     vehicleId,
   });
   if (!existing) return { success: false, code: "invalid_vehicle" };
-  if (technicalStatus === "fault" && !faultLocation) {
+  if ((technicalStatus === "fault" || technicalStatus === "accident") && !faultLocation) {
     return { success: false, code: "validation_error", fields: ["faultLocation"] };
   }
   const now = new Date().toISOString();
   const patch = {
     technical_status: technicalStatus,
-    fault_location: technicalStatus === "fault" ? faultLocation : null,
+    fault_location: (technicalStatus === "fault" || technicalStatus === "accident") ? faultLocation : null,
     technical_status_note: note?.trim() || null,
     technical_status_changed_at: now,
     technical_status_changed_by: access.actorUserId,
@@ -372,6 +422,7 @@ export function buildRecord({
   vehicleId,
   existing,
   uploadedFile,
+  uploadedRegistration,
 }: {
   input: FleetMutationInput & { normalizedPlateNumber: string };
   organizationId: string;
@@ -379,6 +430,7 @@ export function buildRecord({
   vehicleId: string;
   existing: FleetVehicleRow | null;
   uploadedFile: { path: string; fileName: string; mimeType: string } | null;
+  uploadedRegistration: { path: string; fileName: string; mimeType: string } | null;
 }): Database["public"]["Tables"]["fleet_vehicles"]["Insert"] {
   const now = new Date().toISOString();
   return {
@@ -388,6 +440,8 @@ export function buildRecord({
     vehicle_type: input.vehicleType,
     plate_number: input.plateNumber,
     normalized_plate_number: input.normalizedPlateNumber,
+    serial_number: input.serialNumber,
+    brand: input.brand,
     owner_source: input.ownerSource,
     owner_organization_id: input.ownerSource === "organization" ? organizationId : null,
     manual_owner_name: input.ownerSource === "manual" ? input.manualOwnerName : null,
@@ -395,6 +449,7 @@ export function buildRecord({
     owner_name: input.ownerName,
     owner_driver_id: input.ownershipType === "driver_owned" ? input.ownerDriverId : null,
     owner_contact_phone: input.ownerContactPhone,
+    owner_identifier: input.ownerIdentifier,
     rental_start_date: input.rentalStartDate,
     rental_end_date: input.rentalEndDate,
     rental_monthly_cost: input.rentalMonthlyCost,
@@ -405,6 +460,9 @@ export function buildRecord({
     operating_card_file_path: uploadedFile?.path ?? existing?.operating_card_file_path ?? null,
     operating_card_file_name: uploadedFile?.fileName ?? existing?.operating_card_file_name ?? null,
     operating_card_mime_type: uploadedFile?.mimeType ?? existing?.operating_card_mime_type ?? null,
+    registration_file_path: uploadedRegistration?.path ?? existing?.registration_file_path ?? null,
+    registration_file_name: uploadedRegistration?.fileName ?? existing?.registration_file_name ?? null,
+    registration_mime_type: uploadedRegistration?.mimeType ?? existing?.registration_mime_type ?? null,
     assigned_driver_source: input.assignedDriverSource,
     assigned_driver_id: input.assignedDriverSource === "organization_driver" ? input.assignedDriverId : null,
     assigned_driver_manual_name: input.assignedDriverSource === "manual" ? input.assignedDriverManualName : null,
@@ -413,10 +471,11 @@ export function buildRecord({
     authorized_driver_id: input.authorizedPersonSource === "organization_driver" ? input.authorizedDriverId : null,
     authorized_manual_name: input.authorizedPersonSource === "manual" ? input.authorizedManualName : null,
     authorized_manual_iqama: input.authorizedPersonSource === "manual" ? input.authorizedManualIqama : null,
+    authorization_number: input.authorizationNumber,
     authorization_expiry_date: input.authorizationExpiryDate,
     operational_status: existing?.operational_status ?? "active",
     technical_status: input.technicalStatus,
-    fault_location: input.technicalStatus === "fault" ? input.faultLocation : null,
+    fault_location: (input.technicalStatus === "fault" || input.technicalStatus === "accident") ? input.faultLocation : null,
     technical_status_note: input.technicalStatusNote,
     technical_status_changed_at:
       existing?.technical_status !== input.technicalStatus ||
@@ -581,6 +640,13 @@ function safeOperatingCardSnapshot(value: Partial<FleetVehicleRow>) {
     operating_card_expiry_date: value.operating_card_expiry_date,
     operating_card_file_name: value.operating_card_file_name,
     operating_card_mime_type: value.operating_card_mime_type,
+  } satisfies Record<string, unknown>;
+}
+
+function safeRegistrationFileSnapshot(value: Partial<FleetVehicleRow>) {
+  return {
+    registration_file_name: value.registration_file_name,
+    registration_mime_type: value.registration_mime_type,
   } satisfies Record<string, unknown>;
 }
 

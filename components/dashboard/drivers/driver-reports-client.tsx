@@ -245,6 +245,7 @@ export function DriverReportsClient({
                     row={row}
                     today={today}
                     fuelMetricsAvailable={report.fuelMetricsAvailable}
+                    distanceMetricsAvailable={report.distanceMetricsAvailable}
                   />
                 ))}
               </div>
@@ -562,17 +563,20 @@ function DriverReportCard({
   row,
   today,
   fuelMetricsAvailable,
+  distanceMetricsAvailable,
 }: {
   locale: Locale;
   dictionary: DriversDictionary;
   row: DriverReportRow;
   today: string;
   fuelMetricsAvailable: boolean;
+  distanceMetricsAvailable: boolean;
 }) {
   const [cardOpen, setCardOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const contentId = `driver-report-card-content-${row.id}`;
   const detailsId = `driver-report-ranking-details-${row.id}`;
+  const labels = getDriverAnalyticsLabels(locale);
   const metrics = [
     {
       title: dictionary.reportMetrics.todayOrders,
@@ -727,6 +731,177 @@ function DriverReportCard({
       valueDir: "ltr" as const,
     },
   ];
+  const todayAnalytics = [
+    {
+      title: dictionary.reportMetrics.todayOrders,
+      value: formatNumber(row.deliveredTasks, locale),
+      icon: "packageCheck" as const,
+    },
+    {
+      title: dictionary.reportMetrics.onlineHours,
+      value: formatDuration(row.validOnlineSeconds, locale),
+      icon: "clock" as const,
+      valueDir: "auto" as const,
+    },
+    {
+      title: labels.todayDistance,
+      value: formatDistance(row.dailyDistanceKm, locale, dictionary, distanceMetricsAvailable),
+      icon: "gauge" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMetrics.dailyFuelCost,
+      value: formatFuelAmount(
+        row.dailyFuelAmountSar,
+        locale,
+        dictionary,
+        fuelMetricsAvailable,
+      ),
+      icon: "fuel" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMetrics.dailyFuelRate,
+      value: formatFuelRate(
+        row.dailyFuelAmountSar,
+        row.deliveredTasks,
+        locale,
+        dictionary,
+        fuelMetricsAvailable,
+      ),
+      icon: "percent" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMetrics.attendance,
+      value: dictionary.reportAttendance[row.attendanceStatus],
+      icon: row.attendanceStatus === "present" ? "userCheck" as const : "userX" as const,
+    },
+  ];
+  const monthAnalytics = [
+    {
+      title: dictionary.reportMonthlyMetrics.monthlyOrders,
+      value: formatNumber(row.monthlyMetrics.monthlyOrders, locale),
+      icon: "packageCheck" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.monthlyWorkingHours,
+      value: formatDuration(row.monthlyMetrics.monthlyWorkingSeconds, locale),
+      icon: "clock" as const,
+      valueDir: "auto" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.monthlyAttendanceDays,
+      value: formatNumber(row.monthlyMetrics.monthlyAttendanceDays, locale),
+      icon: "userCheck" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.monthlyAbsenceDays,
+      value: formatNumber(row.monthlyMetrics.monthlyAbsenceDays, locale),
+      icon: "userX" as const,
+    },
+    {
+      title: labels.monthDistance,
+      value: formatDistance(
+        row.monthlyMetrics.monthlyDistanceKm,
+        locale,
+        dictionary,
+        distanceMetricsAvailable,
+      ),
+      icon: "gauge" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.monthlyFuel,
+      value: formatFuelAmount(
+        row.monthlyMetrics.monthlyFuelAmountSar,
+        locale,
+        dictionary,
+        fuelMetricsAvailable,
+      ),
+      icon: "fuel" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.monthlyFuelRate,
+      value: formatOptionalFuelAmountWithUnit(
+        row.monthlyMetrics.monthlyFuelRateSar,
+        dictionary.fuelRateUnit,
+        locale,
+        dictionary,
+        fuelMetricsAvailable,
+      ),
+      icon: "percent" as const,
+      valueDir: "ltr" as const,
+    },
+  ];
+  const ratingAnalytics = [
+    {
+      title: dictionary.reportMetrics.level,
+      value: row.level ?? dictionary.reportUnranked,
+      icon: "award" as const,
+    },
+    {
+      title: getRankingMetricLabel(row, labels),
+      value: formatRankingMetric(row, locale, dictionary),
+      icon: "trophy" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMetrics.deliveryRate,
+      value: formatPercentage(row.deliveryRate, locale, dictionary.notAvailable),
+      icon: "circleCheck" as const,
+      valueDir: "ltr" as const,
+    },
+  ];
+  const detailMetrics = [
+    {
+      title: dictionary.reportMetrics.rejectedOrders,
+      value: formatNumber(row.rejectedTasks, locale),
+      icon: "ban" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.averageDailyFuel,
+      value: formatOptionalFuelAmountWithUnit(
+        row.monthlyMetrics.averageDailyFuelAmountSar,
+        dictionary.reportMonthlyMetrics.fuelPerDayUnit,
+        locale,
+        dictionary,
+        fuelMetricsAvailable,
+      ),
+      icon: "fuel" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMonthlyMetrics.averageDailyWorkingHours,
+      value: formatOptionalDuration(
+        row.monthlyMetrics.averageDailyWorkingSeconds,
+        locale,
+        dictionary,
+        labels.perDaySuffix,
+      ),
+      icon: "timer" as const,
+      valueDir: "auto" as const,
+    },
+    {
+      title: dictionary.reportMetrics.onTimeRate,
+      value: formatPercentage(row.onTimeRate, locale, dictionary.notAvailable),
+      icon: "clockCheck" as const,
+      valueDir: "ltr" as const,
+    },
+    {
+      title: dictionary.reportMetrics.incompleteOrders,
+      value: formatNumber(row.incompleteOrders, locale),
+      icon: "alertTriangle" as const,
+    },
+    {
+      title: dictionary.reportMetrics.eligibility,
+      value: row.eligibilityStatus
+        ? dictionary.reportEligibility[row.eligibilityStatus]
+        : dictionary.notAvailable,
+      icon: row.eligibilityStatus === "eligible" ? "shieldCheck" as const : "shieldX" as const,
+    },
+  ];
 
   return (
     <article className="w-full overflow-hidden rounded-xl border border-border bg-surface shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
@@ -766,7 +941,7 @@ function DriverReportCard({
           className="border-t border-border px-5 pb-5 motion-safe:animate-[driverReportAccordion_220ms_ease-out]"
         >
           <div className="pt-4">
-            <DriverMetadataBadges dictionary={dictionary} row={row} />
+            <DriverMetadataBadges dictionary={dictionary} locale={locale} row={row} />
           </div>
           <div className="mt-4 border-t border-border pt-4">
             <ExpirySummary
@@ -776,28 +951,14 @@ function DriverReportCard({
               today={today}
             />
           </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-            {metrics.map((metric) => (
-              <div
-                key={metric.title}
-                className="min-h-28 rounded-lg border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-primary-soft/40"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-xs font-bold leading-5 text-muted">
-                    {metric.title}
-                  </h3>
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-primary">
-                    <ReportIcon name={metric.icon} />
-                  </span>
-                </div>
-                <p
-                  dir={metric.valueDir}
-                  className="mt-4 break-words text-xl font-bold leading-7 text-navy"
-                >
-                  {metric.value}
-                </p>
-              </div>
-            ))}
+          <div className="mt-5 space-y-5">
+            <AnalyticsSection title={labels.todaySection} metrics={todayAnalytics} />
+            <AnalyticsSection title={labels.monthSection} metrics={monthAnalytics} />
+            <AnalyticsSection
+              title={labels.ratingSection}
+              metrics={ratingAnalytics}
+              columnsClassName="sm:grid-cols-2 lg:grid-cols-3"
+            />
           </div>
           <div className="mt-5 border-t border-border pt-4">
             <button
@@ -829,7 +990,7 @@ function DriverReportCard({
                 id={detailsId}
                 className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
               >
-                {monthlyMetrics.map((metric) => (
+                {detailMetrics.map((metric) => (
                   <RankingDetailCard
                     key={metric.title}
                     title={metric.title}
@@ -849,11 +1010,15 @@ function DriverReportCard({
 
 function DriverMetadataBadges({
   dictionary,
+  locale,
   row,
 }: {
   dictionary: DriversDictionary;
+  locale: Locale;
   row: DriverReportRow;
 }) {
+  const nfcLabel = locale === "ar" ? "رقم NFC" : "NFC Number";
+
   return (
     <div className="flex flex-wrap gap-2 xl:justify-end">
       <MetadataBadge
@@ -871,6 +1036,11 @@ function DriverMetadataBadges({
         label={dictionary.driverMetadata.actualPlateNumber}
         value={row.actualVehiclePlateNumber ?? dictionary.notAvailable}
         valueDir={row.actualVehiclePlateNumber ? "ltr" : undefined}
+      />
+      <MetadataBadge
+        label={nfcLabel}
+        value={row.nfcNumber?.trim() ? row.nfcNumber : dictionary.notAvailable}
+        valueDir={row.nfcNumber?.trim() ? "ltr" : undefined}
       />
       <MetadataBadge
         label={dictionary.driverMetadata.keetaDashboardPlate}
@@ -971,6 +1141,50 @@ function RankingDetailCard({
         {value}
       </p>
     </div>
+  );
+}
+
+function AnalyticsSection({
+  title,
+  metrics,
+  columnsClassName = "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6",
+}: {
+  title: string;
+  metrics: {
+    title: string;
+    value: string;
+    icon: ReportIconName;
+    valueDir?: "ltr" | "rtl" | "auto";
+  }[];
+  columnsClassName?: string;
+}) {
+  return (
+    <section className="border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <h3 className="text-sm font-bold text-navy">{title}</h3>
+      <div className={`mt-3 grid gap-3 ${columnsClassName}`}>
+        {metrics.map((metric) => (
+          <div
+            key={metric.title}
+            className="min-h-28 rounded-lg border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-primary-soft/40"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-xs font-bold leading-5 text-muted">
+                {metric.title}
+              </h4>
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-primary">
+                <ReportIcon name={metric.icon} />
+              </span>
+            </div>
+            <p
+              dir={metric.valueDir}
+              className="mt-4 break-words text-2xl font-bold leading-8 text-navy"
+            >
+              {metric.value}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1664,6 +1878,32 @@ function formatNumber(value: number, locale: Locale) {
   return new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(value);
 }
 
+function getDriverAnalyticsLabels(locale: Locale) {
+  return locale === "ar"
+    ? {
+        todaySection: "أداء اليوم",
+        monthSection: "أداء الشهر",
+        ratingSection: "التقييم والترتيب",
+        todayDistance: "كيلومترات اليوم",
+        monthDistance: "كيلومترات الشهر",
+        cityRanking: "ترتيب المدينة",
+        rankingPercentage: "نسبة ترتيب المدينة",
+        perDaySuffix: "/ يوم",
+        kmUnit: "كم",
+      }
+    : {
+        todaySection: "Today's Performance",
+        monthSection: "Monthly Performance",
+        ratingSection: "Rating and Ranking",
+        todayDistance: "Today's Kilometers",
+        monthDistance: "Monthly Kilometers",
+        cityRanking: "City Ranking",
+        rankingPercentage: "City Ranking Percentage",
+        perDaySuffix: "/ day",
+        kmUnit: "km",
+      };
+}
+
 function isValidFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -1686,6 +1926,41 @@ function formatFuelAmount(
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value)} ${dictionary.fuelSarUnit}`;
+}
+
+function formatDistance(
+  value: number | null,
+  locale: Locale,
+  dictionary: DriversDictionary,
+  available: boolean,
+) {
+  if (!available || !isValidFiniteNumber(value)) {
+    return dictionary.notAvailable;
+  }
+
+  return `${new Intl.NumberFormat(getNumberLocale(locale), {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(value)} ${getDriverAnalyticsLabels(locale).kmUnit}`;
+}
+
+function getRankingMetricLabel(
+  row: DriverReportRow,
+  labels: ReturnType<typeof getDriverAnalyticsLabels>,
+) {
+  return row.cityRanking === null ? labels.rankingPercentage : labels.cityRanking;
+}
+
+function formatRankingMetric(
+  row: DriverReportRow,
+  locale: Locale,
+  dictionary: DriversDictionary,
+) {
+  if (row.cityRanking !== null) {
+    return `#${formatNumber(row.cityRanking, locale)}`;
+  }
+
+  return formatPercentage(row.rankingPercentage, locale, dictionary.notAvailable);
 }
 
 function formatOptionalFuelAmountWithUnit(

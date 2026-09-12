@@ -15,6 +15,7 @@ import { AppRequestsTable } from "@/components/dashboard/app-requests/app-reques
 import { RealtimeRefresh } from "@/components/dashboard/realtime-refresh";
 import {
   getAppRequestPage,
+  getEligibleMaintenanceProvidersForOrganization,
   type RequestFilters,
 } from "@/features/app-requests/queries";
 import type { DriverAppRequestType } from "@/features/app-requests/types";
@@ -63,12 +64,17 @@ export async function RequestPage({
   });
 
   const dictionary = getDictionary(locale).dashboard.appRequests;
-  const data = await getAppRequestPage({
-    organizationId: organization.id,
-    organizationName: organization.name,
-    requestType,
-    filters: query,
-  });
+  const [data, maintenanceProviderOptions] = await Promise.all([
+    getAppRequestPage({
+      organizationId: organization.id,
+      organizationName: organization.name,
+      requestType,
+      filters: query,
+    }),
+    requestType === "maintenance"
+      ? getEligibleMaintenanceProvidersForOrganization(organization.id)
+      : Promise.resolve([]),
+  ]);
 
   if (data.status !== "success") {
     return <LoadError message={dictionary.errors.load_failed} />;
@@ -82,6 +88,14 @@ export async function RequestPage({
         filter={`organization_id=eq.${organization.id}`}
         toast={dictionary.realtime.requestUpdated}
       />
+      {requestType === "maintenance" ? (
+        <RealtimeRefresh
+          channelName={`dashboard-maintenance-jobs-${organization.id}-maintenance`}
+          table="maintenance_jobs"
+          filter={`organization_id=eq.${organization.id}`}
+          toast={dictionary.realtime.requestUpdated}
+        />
+      ) : null}
       <div className="border-b border-border bg-surface px-5 py-6 sm:px-7">
         <h1 className="text-2xl font-bold text-navy">{title}</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
@@ -130,6 +144,8 @@ export async function RequestPage({
             requestType={requestType}
             rows={data.rows}
             canReview={organization.permissionKeys.includes("app_requests.review")}
+            canAssignMaintenance={organization.permissionKeys.includes("maintenance_jobs.assign")}
+            maintenanceProviderOptions={maintenanceProviderOptions}
           />
         )}
         {data.totalPages > 1 ? (

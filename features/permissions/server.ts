@@ -18,8 +18,9 @@ export type OrganizationNavigationPermissions = {
   notifications: boolean;
   odometerManagement: boolean;
   driverWarnings: boolean;
-  entitlements: boolean;
   shifts: boolean;
+  orderPeriods: boolean;
+  maintenanceMaterials: boolean;
 };
 
 export async function getOrganizationPermissionsForCurrentUser(
@@ -139,7 +140,8 @@ export function getAccessibleOrganizationNavigation(
     notifications: permissions.has("notifications.view"),
     odometerManagement: permissions.has("odometer.manage"),
     driverWarnings: permissions.has("driver_warnings.view"),
-    entitlements: permissions.has("entitlements.view"),
     shifts: permissions.has("shifts.view"),
+    orderPeriods: permissions.has("order_periods.view"),
+    maintenanceMaterials: permissions.has("maintenance_materials.view"),
   };
 }

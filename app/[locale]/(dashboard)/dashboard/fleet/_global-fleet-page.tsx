@@ -97,6 +97,7 @@ export async function GlobalFleetPage({
       category={category}
       vehicles={result.vehicles}
       drivers={result.drivers}
+      pagination={result.pagination!}
       summary={result.summary}
       today={getBusinessDateString()}
       filters={filters}
@@ -110,8 +111,15 @@ export async function GlobalFleetPage({
 function parseFleetListFilters(
   searchParams: Record<string, string | undefined>,
 ): FleetListFilters {
+  const pageParam = parseInt(searchParams.page ?? "1", 10);
+  const pageSizeParam = parseInt(searchParams.pageSize ?? "25", 10);
   return {
+    page: isNaN(pageParam) || pageParam < 1 ? 1 : pageParam,
+    pageSize: isNaN(pageSizeParam) || pageSizeParam < 1 ? 25 : pageSizeParam,
     search: searchParams.search?.trim() ?? "",
+    driver: searchParams.driver?.trim() ?? "",
+    authorization: parseAuthorization(searchParams.authorization),
+    linkedDriver: parseLinkedDriver(searchParams.linkedDriver),
     technicalStatus: parseTechnicalStatus(searchParams.technical),
     operationalStatus: parseOperationalStatus(searchParams.operational),
     assignedOrganizationId: searchParams.organization ?? "",
@@ -119,6 +127,14 @@ function parseFleetListFilters(
     ownershipType: parseOwnershipType(searchParams.ownership),
     archive: parseArchiveFilter(searchParams.archive, searchParams.archived),
   };
+}
+
+function parseAuthorization(value: string | undefined): "all" | "authorized" | "missing" {
+  return value === "authorized" || value === "missing" ? value : "all";
+}
+
+function parseLinkedDriver(value: string | undefined): "all" | "linked" | "missing" {
+  return value === "linked" || value === "missing" ? value : "all";
 }
 
 function parseTechnicalStatus(value: string | undefined): FleetTechnicalStatus | "all" {

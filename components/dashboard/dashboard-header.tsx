@@ -1,6 +1,7 @@
 import { DashboardUserControls } from "@/components/dashboard/dashboard-user-controls";
 import { OrganizationSwitcher } from "@/components/dashboard/organization-switcher";
 import type { AccessibleOrganization } from "@/features/organizations/types";
+import type { OilMaintenanceAlertsResult } from "@/features/app-requests/types";
 import type { AppNotification } from "@/features/notifications/types";
 import type { SystemExpiryAlertsResult } from "@/features/expiry-alerts/types";
 import type { Dictionary } from "@/i18n/dictionaries";
@@ -29,6 +30,7 @@ type DashboardHeaderProps = {
         canViewNotifications: false;
       };
   systemExpiryAlerts: SystemExpiryAlertsResult;
+  oilMaintenanceAlerts: OilMaintenanceAlertsResult;
   onOpenSidebar: () => void;
 };
 
@@ -39,6 +41,7 @@ export function DashboardHeader({
   organizations,
   appNotifications,
   systemExpiryAlerts,
+  oilMaintenanceAlerts,
   onOpenSidebar,
 }: DashboardHeaderProps) {
   return (
@@ -64,6 +67,7 @@ export function DashboardHeader({
         user={user}
         appNotifications={appNotifications}
         systemExpiryAlerts={systemExpiryAlerts}
+        oilMaintenanceAlerts={oilMaintenanceAlerts}
       />
     </header>
   );

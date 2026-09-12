@@ -50,6 +50,7 @@ export type DriverReportRow = {
   driverFullName: string;
   keetaDriverId: string | null;
   isCompanySponsored: boolean | null;
+  nfcNumber: string | null;
   actualVehiclePlateNumber: string | null;
   keetaDashboardPlateNumber: string | null;
   driverExpiries: DriverReportDriverExpiries;
@@ -73,6 +74,7 @@ export type DriverReportRow = {
   eligibilityStatus: ReportEligibilityStatus | null;
   dailyFuelQuantityLitres: number;
   dailyFuelAmountSar: number;
+  dailyDistanceKm: number | null;
   monthlyMetrics: DriverMonthlyReportMetrics;
 };
 
@@ -85,10 +87,12 @@ export type DriverMonthlyReportMetrics = {
   monthlyWorkingSeconds: number;
   averageDailyWorkingSeconds: number | null;
   monthlyFuelRateSar: number | null;
+  monthlyDistanceKm: number | null;
 };
 
 export type DriverReportDriverExpiries = {
   isCompanySponsored: boolean | null;
+  nfcNumber: string | null;
   actualVehiclePlateNumber: string | null;
   keetaDashboardPlateNumber: string | null;
   iqamaExpiryDate: string | null;
@@ -104,6 +108,7 @@ export type DriverReport = DriverReportSummary & {
   importedAt: string;
   importedByFullName: string | null;
   fuelMetricsAvailable: boolean;
+  distanceMetricsAvailable: boolean;
   rows: DriverReportRow[];
 };
 

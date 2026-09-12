@@ -1,5 +1,6 @@
-import "server-only";
+﻿import "server-only";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import { getBusinessDateString } from "@/features/drivers/expiry";
 import type {
@@ -7,9 +8,17 @@ import type {
   AppRequestRow,
   DriverAppRequestStatus,
   DriverAppRequestType,
+  MaintenanceJobExecution,
+  MaintenanceProviderOption,
+  OilMaintenanceAlertsResult,
+  OilMaintenanceStatus,
+  OilMaintenanceTrackingRow,
   OdometerShiftRow,
   OdometerSummary,
 } from "@/features/app-requests/types";
+import type { AccessibleOrganization } from "@/features/organizations/types";
+import type { Database } from "@/types/database";
+import type { Locale } from "@/types/locale";
 
 type RequestRecord = {
   id: string;
@@ -29,9 +38,11 @@ type RequestRecord = {
 
 type DriverRecord = {
   id: string;
+  organization_id?: string;
   full_name: string;
   keeta_driver_id: string | null;
   mobile_number: string | null;
+  vehicle_id: string | null;
   vehicle_type: string | null;
   keeta_vehicle_plate_number: string | null;
   vehicle_number: string | null;
@@ -59,12 +70,133 @@ type OdometerShiftRecord = {
   end_reviewed_by: string | null;
   end_reviewed_at: string | null;
   end_review_note: string | null;
+  order_period_template_id: string | null;
+  shift_template_id: string | null;
+  scheduled_business_date: string | null;
+  applied_minimum_work_minutes: number | null;
 };
 
 type VehicleRecord = {
   id: string;
+  organization_id?: string | null;
+  assigned_organization_id?: string | null;
   vehicle_type: string;
   plate_number: string;
+  assigned_driver_id?: string | null;
+  authorized_driver_id?: string | null;
+};
+
+type OilChangeEventRecord = {
+  id: string;
+  organization_id: string;
+  vehicle_id: string;
+  driver_id: string | null;
+  request_id: string | null;
+  odometer_reading: number;
+  interval_km: number;
+  completed_at: string;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+type LatestOdometerRecord = {
+  vehicle_id: string;
+  driver_id: string;
+  end_odometer_reading: number;
+  ended_at: string | null;
+  started_at: string;
+  created_at: string;
+};
+
+type CumulativeDistanceRecord = {
+  driver_id: string;
+  total_distance_km: number;
+};
+
+type MaintenanceProviderRecord = {
+  id: string;
+  name: string;
+  code: string;
+  is_active: boolean;
+};
+
+type MaintenanceJobRecord = {
+  id: string;
+  request_id: string;
+  job_type: MaintenanceJobExecution["jobType"];
+  status: MaintenanceJobExecution["status"];
+  provider_id: string;
+  assigned_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  invoice_file_name: string | null;
+  invoice_file_path: string | null;
+  invoice_mime_type: string | null;
+  invoice_uploaded_at: string | null;
+};
+
+type MaintenanceProviderOrganizationRecord = {
+  provider_id: string;
+  organization_id: string;
+  is_active: boolean;
+};
+
+type AppRequestsLocalDatabase = Database & {
+  public: Database["public"] & {
+    Tables: Database["public"]["Tables"] & {
+      maintenance_providers: {
+        Row: MaintenanceProviderRecord;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      maintenance_provider_organizations: {
+        Row: MaintenanceProviderOrganizationRecord;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      maintenance_jobs: {
+        Row: MaintenanceJobRecord;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      fleet_vehicle_oil_change_events: {
+        Row: OilChangeEventRecord;
+        Insert: {
+          id?: string;
+          organization_id: string;
+          vehicle_id: string;
+          driver_id?: string | null;
+          request_id?: string | null;
+          odometer_reading: number;
+          interval_km: number;
+          completed_at: string;
+          note?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: never;
+        Relationships: [];
+      };
+    };
+    Functions: Database["public"]["Functions"] & {
+      has_current_user_organization_permission: {
+        Args: {
+          target_organization_id: string;
+          target_permission_key: string;
+        };
+        Returns: boolean;
+      };
+      get_organization_driver_cumulative_distances: {
+        Args: { p_organization_id: string };
+        Returns: CumulativeDistanceRecord[];
+      };
+    };
+  };
 };
 
 type ProfileRecord = {
@@ -77,6 +209,24 @@ type ProfileRecord = {
 type OrganizationRecord = {
   id: string;
   name: string;
+};
+
+type OdometerShiftContextRecord = {
+  shift_id: string | null;
+  driver_id: string;
+  vehicle_id: string | null;
+  expected_previous_reading: number | null;
+  latest_baseline_reading: number | null;
+  latest_baseline_reset_at: string | null;
+  latest_baseline_reason: string | null;
+};
+
+type OdometerVehicleBaselineContext = {
+  vehicleId: string | null;
+  expectedPreviousReading: number | null;
+  baselineReading: number | null;
+  baselineResetAt: string | null;
+  baselineReason: string | null;
 };
 
 export type RequestFilters = {
@@ -105,6 +255,268 @@ export type OdometerFilters = {
 const pageSize = 25;
 const odometerPageSize = 20;
 const riyadhUtcOffsetHours = 3;
+
+export async function getEligibleMaintenanceProvidersForOrganization(
+  organizationId: string,
+): Promise<MaintenanceProviderOption[]> {
+  const admin = await getAuthenticatedAdmin();
+
+  if (admin.status !== "authorized") {
+    return [];
+  }
+
+  const supabase = admin.supabase as SupabaseClient<AppRequestsLocalDatabase>;
+  const { data: mappings, error: mappingsError } = await supabase
+    .from("maintenance_provider_organizations")
+    .select("provider_id")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true);
+
+  if (mappingsError || !mappings || mappings.length === 0) {
+    return [];
+  }
+
+  const providerIds = Array.from(
+    new Set(mappings.map((mapping) => mapping.provider_id)),
+  );
+  const { data, error } = await supabase
+    .from("maintenance_providers")
+    .select("id, name, code")
+    .in("id", providerIds)
+    .eq("is_active", true)
+    .order("name", { ascending: true });
+
+  if (error) {
+    return [];
+  }
+
+  return (data ?? []).map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    code: provider.code,
+  }));
+}
+
+export async function getOilMaintenanceAlertsForDashboard({
+  supabase,
+  organizations,
+  locale,
+}: {
+  supabase: SupabaseClient<Database>;
+  organizations: AccessibleOrganization[];
+  locale: Locale;
+}): Promise<OilMaintenanceAlertsResult> {
+  const visibleOrganizations = organizations.filter(
+    (organization) =>
+      organization.navigation.appRequests &&
+      organization.permissionKeys.includes("app_requests.view"),
+  );
+
+  if (visibleOrganizations.length === 0) {
+    return emptyOilMaintenanceAlertsResult("success");
+  }
+
+  const organizationIds = visibleOrganizations.map((organization) => organization.id);
+  const organizationsById = new Map(
+    visibleOrganizations.map((organization) => [organization.id, organization]),
+  );
+  const driversResult = await loadOilTrackingDriversForOrganizations(
+    supabase,
+    organizationIds,
+  );
+
+  if (driversResult.error) {
+    return emptyOilMaintenanceAlertsResult("load_error");
+  }
+
+  const drivers = driversResult.drivers;
+  const vehiclesByDriverId = await loadCurrentOilVehiclesForOrganizations(
+    supabase,
+    organizationIds,
+    drivers,
+  );
+  const vehicleIds = Array.from(
+    new Set(Array.from(vehiclesByDriverId.values()).map((vehicle) => vehicle.id)),
+  );
+  const oilSupabase = supabase as SupabaseClient<AppRequestsLocalDatabase>;
+  const [eventsByVehicleId, latestOdometerByVehicleId] = await Promise.all([
+    loadLatestOilEventsForOrganizations(oilSupabase, organizationIds, vehicleIds),
+    loadLatestValidVehicleOdometersForOrganizations(
+      supabase,
+      organizationIds,
+      vehicleIds,
+    ),
+  ]);
+
+  const alerts = drivers.flatMap((driver) => {
+    if (!driver.organization_id) return [];
+
+    const organization = organizationsById.get(driver.organization_id);
+    const vehicle = vehiclesByDriverId.get(driver.id) ?? null;
+    const event = vehicle ? eventsByVehicleId.get(vehicle.id) ?? null : null;
+    const latestOdometer =
+      vehicle ? latestOdometerByVehicleId.get(vehicle.id) ?? null : null;
+    const derived = deriveOilMetrics({
+      event,
+      latestOdometer: latestOdometer?.end_odometer_reading ?? null,
+      vehicleId: vehicle?.id ?? null,
+    });
+
+    if (
+      !organization ||
+      !vehicle ||
+      derived.remainingKm === null ||
+      (derived.oilStatus !== "due" && derived.oilStatus !== "due_soon")
+    ) {
+      return [];
+    }
+
+    const search = encodeURIComponent(driver.full_name);
+
+    return [
+      {
+        id: `${vehicle.id}:${event?.id ?? "oil"}`,
+        organizationId: organization.id,
+        organizationCode: organization.code,
+        organizationName: organization.name,
+        driverId: driver.id,
+        driverName: driver.full_name,
+        driverIdentifier: driver.keeta_driver_id ?? null,
+        vehicleId: vehicle.id,
+        vehicleLabel: vehicle.vehicle_type ?? driver.vehicle_type ?? null,
+        vehiclePlate:
+          vehicle.plate_number ??
+          driver.vehicle_number ??
+          driver.keeta_vehicle_plate_number ??
+          null,
+        remainingKm: derived.remainingKm,
+        oilStatus: derived.oilStatus,
+        href: `/${locale}/dashboard/organizations/${organization.code}/app-requests/oil-change?search=${search}`,
+      },
+    ];
+  });
+
+  alerts.sort((a, b) => {
+    if (a.oilStatus !== b.oilStatus) {
+      return a.oilStatus === "due" ? -1 : 1;
+    }
+
+    return a.remainingKm - b.remainingKm || a.driverName.localeCompare(b.driverName);
+  });
+
+  const dueCount = alerts.filter((alert) => alert.oilStatus === "due").length;
+  const dueSoonCount = alerts.length - dueCount;
+
+  return {
+    status: "success",
+    alerts: alerts.slice(0, 50),
+    totalCount: alerts.length,
+    dueCount,
+    dueSoonCount,
+    hasDue: dueCount > 0,
+    hasDueSoon: dueSoonCount > 0,
+  };
+}
+
+export async function getOilMaintenanceTrackingPage({
+  organizationId,
+  filters,
+}: {
+  organizationId: string;
+  filters: RequestFilters;
+}): Promise<
+  | {
+      status: "success";
+      rows: OilMaintenanceTrackingRow[];
+    }
+  | { status: "unauthorized" | "load_error"; rows: [] }
+> {
+  const admin = await getAuthenticatedAdmin();
+
+  if (admin.status !== "authorized") {
+    return { status: "unauthorized", rows: [] };
+  }
+
+  const driversResult = await loadOilTrackingDrivers(
+    admin.supabase,
+    organizationId,
+    filters,
+  );
+
+  if (driversResult.error) {
+    return { status: "load_error", rows: [] };
+  }
+
+  const drivers = driversResult.drivers;
+  const driverIds = drivers.map((driver) => driver.id);
+  const vehiclesByDriverId = await loadCurrentOilVehicles(
+    admin.supabase,
+    organizationId,
+    drivers,
+  );
+  const vehicleIds = Array.from(
+    new Set(
+      Array.from(vehiclesByDriverId.values())
+        .map((vehicle) => vehicle.id)
+        .filter(Boolean),
+    ),
+  );
+  const oilSupabase =
+    admin.supabase as SupabaseClient<AppRequestsLocalDatabase>;
+  const [
+    eventsByVehicleId,
+    latestOdometerByVehicleId,
+    cumulativeMap,
+    requestsByDriverId,
+  ] = await Promise.all([
+    loadLatestOilEvents(oilSupabase, organizationId, vehicleIds),
+    loadLatestValidVehicleOdometers(admin.supabase, organizationId, vehicleIds),
+    loadCumulativeDistances(oilSupabase, organizationId),
+    loadLatestOilRequestsForDrivers(
+      admin.supabase,
+      organizationId,
+      drivers,
+      driverIds,
+    ),
+  ]);
+
+  return {
+    status: "success",
+    rows: drivers.map((driver) => {
+      const vehicle = vehiclesByDriverId.get(driver.id) ?? null;
+      const event = vehicle ? eventsByVehicleId.get(vehicle.id) ?? null : null;
+      const latestOdometer =
+        vehicle ? latestOdometerByVehicleId.get(vehicle.id) ?? null : null;
+      const derived = deriveOilMetrics({
+        event,
+        latestOdometer: latestOdometer?.end_odometer_reading ?? null,
+        vehicleId: vehicle?.id ?? null,
+      });
+
+      return {
+        driverId: driver.id,
+        driverName: driver.full_name,
+        driverIdentifier: driver.keeta_driver_id ?? null,
+        vehicleId: vehicle?.id ?? null,
+        vehicleLabel: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
+        vehiclePlate:
+          vehicle?.plate_number ??
+          driver.vehicle_number ??
+          driver.keeta_vehicle_plate_number ??
+          null,
+        lastOilChangeOdometer: event?.odometer_reading ?? null,
+        oilIntervalKm: event?.interval_km ?? null,
+        nextOilChangeAt: derived.nextOilChangeAt,
+        latestOdometer: latestOdometer?.end_odometer_reading ?? null,
+        drivenSinceOilChange: derived.drivenSinceOilChange,
+        remainingKm: derived.remainingKm,
+        totalDistanceKm: cumulativeMap.get(driver.id) ?? null,
+        oilStatus: derived.oilStatus,
+        latestRequest: requestsByDriverId.get(driver.id) ?? null,
+      };
+    }),
+  };
+}
 
 export async function getAppRequestPage({
   organizationId,
@@ -223,7 +635,7 @@ export async function getAppRequestPage({
   }
 
   const requests = (data ?? []) as RequestRecord[];
-  const [drivers, vehicles, reviewers, organizations, detailResult] = await Promise.all([
+  const [drivers, vehicles, reviewers, organizations, detailResult, maintenanceJobs] = await Promise.all([
     loadDrivers(admin.supabase, requests.map((request) => request.driver_id)),
     loadVehicles(
       admin.supabase,
@@ -239,6 +651,11 @@ export async function getAppRequestPage({
     ),
     loadOrganizations(admin.supabase, requests.map((request) => request.organization_id)),
     loadDetails(admin.supabase, requestType, requests.map((request) => request.id)),
+    loadMaintenanceJobsForRequests(
+      admin.supabase as SupabaseClient<AppRequestsLocalDatabase>,
+      requestType,
+      requests.map((request) => request.id),
+    ),
   ]);
 
   if (detailResult.error) {
@@ -308,12 +725,79 @@ export async function getAppRequestPage({
           reviewNote: request.review_note,
           reviewedAt: request.reviewed_at,
           completedAt: request.completed_at,
+          maintenanceJob: maintenanceJobs.get(request.id) ?? null,
           detail,
         };
       })
       .filter((row) => matchesTextFilters(row, filters))
       .sort(compareAppRequestRows),
   };
+}
+
+async function loadMaintenanceJobsForRequests(
+  supabase: SupabaseClient<AppRequestsLocalDatabase>,
+  requestType: DriverAppRequestType,
+  requestIds: string[],
+) {
+  const jobsByRequestId = new Map<string, MaintenanceJobExecution>();
+
+  if (
+    requestIds.length === 0 ||
+    (requestType !== "maintenance" && requestType !== "oil_change")
+  ) {
+    return jobsByRequestId;
+  }
+
+  const { data: jobs } = await supabase
+    .from("maintenance_jobs")
+    .select(
+      "id, request_id, job_type, status, provider_id, assigned_at, started_at, completed_at, cancelled_at, invoice_file_name, invoice_file_path, invoice_mime_type, invoice_uploaded_at",
+    )
+    .in("request_id", Array.from(new Set(requestIds)));
+
+  const providerIds = Array.from(
+    new Set((jobs ?? []).map((job) => job.provider_id)),
+  );
+  const providersById = new Map<string, MaintenanceProviderRecord>();
+
+  if (providerIds.length > 0) {
+    const { data: providers } = await supabase
+      .from("maintenance_providers")
+      .select("id, name, code")
+      .in("id", providerIds);
+
+    for (const provider of providers ?? []) {
+      providersById.set(provider.id, {
+        id: provider.id,
+        name: provider.name,
+        code: provider.code,
+        is_active: true,
+      });
+    }
+  }
+
+  for (const job of jobs ?? []) {
+    const provider = providersById.get(job.provider_id);
+    jobsByRequestId.set(job.request_id, {
+      id: job.id,
+      jobType: job.job_type,
+      status: job.status,
+      providerId: job.provider_id,
+      providerName: provider?.name ?? null,
+      providerCode: provider?.code ?? null,
+      assignedAt: job.assigned_at,
+      startedAt: job.started_at,
+      completedAt: job.completed_at,
+      cancelledAt: job.cancelled_at,
+      invoiceFileName: job.invoice_file_name,
+      invoiceFilePath: job.invoice_file_path,
+      invoiceMimeType: job.invoice_mime_type,
+      invoiceUploadedAt: job.invoice_uploaded_at,
+      materials: [],
+    });
+  }
+
+  return jobsByRequestId;
 }
 
 export async function getOdometerPage({
@@ -370,15 +854,54 @@ export async function getOdometerPage({
     allDriverIds,
     dateRange,
   );
-  const allRows = mapDriversToOdometerRows({
-    drivers: eligibleDrivers,
-    shifts: allShifts,
-    vehicles: await loadVehicles(
-      admin.supabase,
-      allShifts
+  const { data: cumulativeData } = await admin.supabase.rpc('get_organization_driver_cumulative_distances' as any, {
+    p_organization_id: organizationId
+  });
+  const cumulativeMap = new Map<string, number>();
+  if (cumulativeData) {
+    (cumulativeData as unknown as { driver_id: string; total_distance_km: number }[]).forEach(row => {
+      cumulativeMap.set(row.driver_id, row.total_distance_km ?? 0);
+    });
+  }
+  const { data: shiftContextData } = await admin.supabase.rpc("get_odometer_page_shifts_context" as any, {
+    p_organization_id: organizationId,
+    p_date: selectedDate,
+  });
+  const shiftContextMap = new Map<string, OdometerVehicleBaselineContext>();
+  const driverContextMap = new Map<string, OdometerVehicleBaselineContext>();
+  if (shiftContextData) {
+    (shiftContextData as unknown as OdometerShiftContextRecord[]).forEach((row) => {
+      const context = {
+        vehicleId: row.vehicle_id,
+        expectedPreviousReading: row.expected_previous_reading,
+        baselineReading: row.latest_baseline_reading,
+        baselineResetAt: row.latest_baseline_reset_at,
+        baselineReason: row.latest_baseline_reason,
+      };
+      if (row.shift_id) shiftContextMap.set(row.shift_id, context);
+      driverContextMap.set(row.driver_id, context);
+    });
+  }
+  const contextVehicleIds = Array.from(driverContextMap.values())
+    .map((context) => context.vehicleId)
+    .filter((value): value is string => Boolean(value));
+  const vehicles = await loadVehicles(
+    admin.supabase,
+    [
+      ...allShifts
         .map((shift) => shift.vehicle_id)
         .filter((value): value is string => Boolean(value)),
-    ),
+      ...contextVehicleIds,
+    ],
+  );
+
+  const allRows = mapDriversToOdometerRows({
+    cumulativeMap,
+    shiftContextMap,
+    driverContextMap,
+    drivers: eligibleDrivers,
+    shifts: allShifts,
+    vehicles,
     reviewers: await loadProfiles(
       admin.supabase,
       allShifts
@@ -426,7 +949,7 @@ async function loadEligibleOdometerDrivers(
 > {
   let query = supabase
     .from("drivers")
-    .select("id, full_name, keeta_driver_id, mobile_number, vehicle_type, keeta_vehicle_plate_number, vehicle_number")
+    .select("id, full_name, keeta_driver_id, mobile_number, vehicle_id, vehicle_type, keeta_vehicle_plate_number, vehicle_number")
     .eq("organization_id", organizationId)
     .is("deleted_at", null)
     .order("full_name", { ascending: true });
@@ -477,16 +1000,501 @@ async function loadDailyOdometerShifts(
     .lte("started_at", dateRange.endIso)
     .order("started_at", { ascending: false });
 
-  return (data ?? []) as OdometerShiftRecord[];
+  return (data ?? []) as unknown as OdometerShiftRecord[];
+}
+
+async function loadOilTrackingDriversForOrganizations(
+  supabase: SupabaseClient<Database>,
+  organizationIds: string[],
+): Promise<
+  | { drivers: DriverRecord[]; error: null }
+  | { drivers: []; error: { code?: string; message: string } }
+> {
+  if (organizationIds.length === 0) {
+    return { drivers: [], error: null };
+  }
+
+  const { data, error } = await supabase
+    .from("drivers")
+    .select(
+      "id, organization_id, full_name, keeta_driver_id, mobile_number, vehicle_id, vehicle_type, keeta_vehicle_plate_number, vehicle_number",
+    )
+    .in("organization_id", organizationIds)
+    .eq("status", "active")
+    .is("deleted_at", null)
+    .order("full_name", { ascending: true });
+
+  if (error) {
+    return { drivers: [], error: { code: error.code, message: error.message } };
+  }
+
+  return {
+    drivers: (data ?? []) as DriverRecord[],
+    error: null,
+  };
+}
+
+async function loadOilTrackingDrivers(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+  filters: RequestFilters,
+): Promise<
+  | { drivers: DriverRecord[]; error: null }
+  | { drivers: []; error: { code?: string; message: string } }
+> {
+  let query = supabase
+    .from("drivers")
+    .select(
+      "id, full_name, keeta_driver_id, mobile_number, vehicle_id, vehicle_type, keeta_vehicle_plate_number, vehicle_number",
+    )
+    .eq("organization_id", organizationId)
+    .eq("status", "active")
+    .is("deleted_at", null)
+    .order("full_name", { ascending: true });
+
+  const search = getRequestSearch(filters);
+  if (search.length >= 2) {
+    const like = `%${sanitizeSearchLike(search)}%`;
+    query = query.or(
+      [
+        `full_name.ilike.${like}`,
+        `keeta_driver_id.ilike.${like}`,
+        `mobile_number.ilike.${like}`,
+        `vehicle_number.ilike.${like}`,
+      ].join(","),
+    );
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return { drivers: [], error: { code: error.code, message: error.message } };
+  }
+
+  return {
+    drivers: (data ?? []) as DriverRecord[],
+    error: null,
+  };
+}
+
+async function loadCurrentOilVehicles(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+  drivers: DriverRecord[],
+) {
+  const vehiclesByDriverId = new Map<string, VehicleRecord>();
+
+  if (drivers.length === 0) return vehiclesByDriverId;
+
+  const { data } = await supabase
+    .from("fleet_vehicles")
+    .select("id, vehicle_type, plate_number, assigned_driver_id, authorized_driver_id")
+    .or(`organization_id.eq.${organizationId},assigned_organization_id.eq.${organizationId}`)
+    .is("archived_at", null)
+    .order("created_at", { ascending: false });
+
+  const vehicles = (data ?? []) as VehicleRecord[];
+  const vehiclesById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  const assignedVehiclesByDriverId = new Map<string, VehicleRecord>();
+  const authorizedVehiclesByDriverId = new Map<string, VehicleRecord>();
+
+  for (const vehicle of vehicles) {
+    if (vehicle.assigned_driver_id && !assignedVehiclesByDriverId.has(vehicle.assigned_driver_id)) {
+      assignedVehiclesByDriverId.set(vehicle.assigned_driver_id, vehicle);
+    }
+    if (vehicle.authorized_driver_id && !authorizedVehiclesByDriverId.has(vehicle.authorized_driver_id)) {
+      authorizedVehiclesByDriverId.set(vehicle.authorized_driver_id, vehicle);
+    }
+  }
+
+  for (const driver of drivers) {
+    const vehicle =
+      (driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined) ??
+      assignedVehiclesByDriverId.get(driver.id) ??
+      authorizedVehiclesByDriverId.get(driver.id);
+
+    if (vehicle) {
+      vehiclesByDriverId.set(driver.id, vehicle);
+    }
+  }
+
+  return vehiclesByDriverId;
+}
+
+async function loadCurrentOilVehiclesForOrganizations(
+  supabase: SupabaseClient<Database>,
+  organizationIds: string[],
+  drivers: DriverRecord[],
+) {
+  const vehiclesByDriverId = new Map<string, VehicleRecord>();
+
+  if (drivers.length === 0 || organizationIds.length === 0) return vehiclesByDriverId;
+
+  const [ownedResult, assignedResult] = await Promise.all([
+    supabase
+      .from("fleet_vehicles")
+      .select(
+        "id, organization_id, assigned_organization_id, vehicle_type, plate_number, assigned_driver_id, authorized_driver_id",
+      )
+      .in("organization_id", organizationIds)
+      .is("archived_at", null)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("fleet_vehicles")
+      .select(
+        "id, organization_id, assigned_organization_id, vehicle_type, plate_number, assigned_driver_id, authorized_driver_id",
+      )
+      .in("assigned_organization_id", organizationIds)
+      .is("archived_at", null)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const vehicles = dedupeVehicles([
+    ...((ownedResult.data ?? []) as VehicleRecord[]),
+    ...((assignedResult.data ?? []) as VehicleRecord[]),
+  ]);
+  const vehiclesById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  const assignedVehiclesByDriverId = new Map<string, VehicleRecord>();
+  const authorizedVehiclesByDriverId = new Map<string, VehicleRecord>();
+
+  for (const vehicle of vehicles) {
+    if (vehicle.assigned_driver_id && !assignedVehiclesByDriverId.has(vehicle.assigned_driver_id)) {
+      assignedVehiclesByDriverId.set(vehicle.assigned_driver_id, vehicle);
+    }
+    if (vehicle.authorized_driver_id && !authorizedVehiclesByDriverId.has(vehicle.authorized_driver_id)) {
+      authorizedVehiclesByDriverId.set(vehicle.authorized_driver_id, vehicle);
+    }
+  }
+
+  for (const driver of drivers) {
+    const vehicle =
+      (driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined) ??
+      assignedVehiclesByDriverId.get(driver.id) ??
+      authorizedVehiclesByDriverId.get(driver.id);
+
+    if (vehicle) {
+      vehiclesByDriverId.set(driver.id, vehicle);
+    }
+  }
+
+  return vehiclesByDriverId;
+}
+
+async function loadLatestOilEvents(
+  supabase: SupabaseClient<AppRequestsLocalDatabase>,
+  organizationId: string,
+  vehicleIds: string[],
+) {
+  const eventsByVehicleId = new Map<string, OilChangeEventRecord>();
+
+  if (vehicleIds.length === 0) return eventsByVehicleId;
+
+  const { data } = await supabase
+    .from("fleet_vehicle_oil_change_events")
+    .select(
+      "id, organization_id, vehicle_id, driver_id, request_id, odometer_reading, interval_km, completed_at, note, created_by, created_at",
+    )
+    .eq("organization_id", organizationId)
+    .in("vehicle_id", vehicleIds)
+    .order("completed_at", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  for (const event of (data ?? []) as OilChangeEventRecord[]) {
+    if (!eventsByVehicleId.has(event.vehicle_id)) {
+      eventsByVehicleId.set(event.vehicle_id, event);
+    }
+  }
+
+  return eventsByVehicleId;
+}
+
+async function loadLatestOilEventsForOrganizations(
+  supabase: SupabaseClient<AppRequestsLocalDatabase>,
+  organizationIds: string[],
+  vehicleIds: string[],
+) {
+  const eventsByVehicleId = new Map<string, OilChangeEventRecord>();
+
+  if (organizationIds.length === 0 || vehicleIds.length === 0) return eventsByVehicleId;
+
+  const { data } = await supabase
+    .from("fleet_vehicle_oil_change_events")
+    .select(
+      "id, organization_id, vehicle_id, driver_id, request_id, odometer_reading, interval_km, completed_at, note, created_by, created_at",
+    )
+    .in("organization_id", organizationIds)
+    .in("vehicle_id", vehicleIds)
+    .order("completed_at", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  for (const event of (data ?? []) as OilChangeEventRecord[]) {
+    if (!eventsByVehicleId.has(event.vehicle_id)) {
+      eventsByVehicleId.set(event.vehicle_id, event);
+    }
+  }
+
+  return eventsByVehicleId;
+}
+
+async function loadLatestValidVehicleOdometers(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+  vehicleIds: string[],
+) {
+  const odometersByVehicleId = new Map<string, LatestOdometerRecord>();
+
+  if (vehicleIds.length === 0) return odometersByVehicleId;
+
+  const { data } = await supabase
+    .from("driver_shifts")
+    .select(
+      "id, driver_id, vehicle_id, vehicle_plate_snapshot, status, started_at, start_odometer_reading, start_photo_path, start_photo_captured_at, ended_at, end_odometer_reading, end_photo_path, end_photo_captured_at, start_review_status, start_reviewed_by, start_reviewed_at, start_review_note, end_review_status, end_reviewed_by, end_reviewed_at, end_review_note, created_at",
+    )
+    .eq("organization_id", organizationId)
+    .eq("status", "completed")
+    .in("vehicle_id", vehicleIds)
+    .not("start_odometer_reading", "is", null)
+    .not("end_odometer_reading", "is", null)
+    .order("ended_at", { ascending: false, nullsFirst: false })
+    .order("started_at", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  for (const shift of (data ?? []) as Array<OdometerShiftRecord & { created_at: string }>) {
+    if (!shift.vehicle_id || odometersByVehicleId.has(shift.vehicle_id)) continue;
+    if (!isValidOdometerDistanceShift(shift)) continue;
+    odometersByVehicleId.set(shift.vehicle_id, {
+      vehicle_id: shift.vehicle_id,
+      driver_id: shift.driver_id,
+      end_odometer_reading: shift.end_odometer_reading,
+      ended_at: shift.ended_at,
+      started_at: shift.started_at,
+      created_at: shift.created_at,
+    });
+  }
+
+  return odometersByVehicleId;
+}
+
+async function loadLatestValidVehicleOdometersForOrganizations(
+  supabase: SupabaseClient<Database>,
+  organizationIds: string[],
+  vehicleIds: string[],
+) {
+  const odometersByVehicleId = new Map<string, LatestOdometerRecord>();
+
+  if (organizationIds.length === 0 || vehicleIds.length === 0) return odometersByVehicleId;
+
+  const { data } = await supabase
+    .from("driver_shifts")
+    .select(
+      "id, driver_id, vehicle_id, vehicle_plate_snapshot, status, started_at, start_odometer_reading, start_photo_path, start_photo_captured_at, ended_at, end_odometer_reading, end_photo_path, end_photo_captured_at, start_review_status, start_reviewed_by, start_reviewed_at, start_review_note, end_review_status, end_reviewed_by, end_reviewed_at, end_review_note, created_at",
+    )
+    .in("organization_id", organizationIds)
+    .eq("status", "completed")
+    .in("vehicle_id", vehicleIds)
+    .not("start_odometer_reading", "is", null)
+    .not("end_odometer_reading", "is", null)
+    .order("ended_at", { ascending: false, nullsFirst: false })
+    .order("started_at", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  for (const shift of (data ?? []) as Array<OdometerShiftRecord & { created_at: string }>) {
+    if (!shift.vehicle_id || odometersByVehicleId.has(shift.vehicle_id)) continue;
+    if (!isValidOdometerDistanceShift(shift)) continue;
+    odometersByVehicleId.set(shift.vehicle_id, {
+      vehicle_id: shift.vehicle_id,
+      driver_id: shift.driver_id,
+      end_odometer_reading: shift.end_odometer_reading,
+      ended_at: shift.ended_at,
+      started_at: shift.started_at,
+      created_at: shift.created_at,
+    });
+  }
+
+  return odometersByVehicleId;
+}
+
+async function loadCumulativeDistances(
+  supabase: SupabaseClient<AppRequestsLocalDatabase>,
+  organizationId: string,
+) {
+  const cumulativeMap = new Map<string, number>();
+  const { data } = await supabase.rpc("get_organization_driver_cumulative_distances", {
+    p_organization_id: organizationId,
+  });
+
+  for (const row of (data ?? []) as CumulativeDistanceRecord[]) {
+    cumulativeMap.set(row.driver_id, row.total_distance_km ?? 0);
+  }
+
+  return cumulativeMap;
+}
+
+async function loadLatestOilRequestsForDrivers(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+  drivers: DriverRecord[],
+  driverIds: string[],
+) {
+  const requestsByDriverId = new Map<string, AppRequestRow>();
+
+  if (driverIds.length === 0) return requestsByDriverId;
+
+  const { data } = await supabase
+    .from("driver_app_requests")
+    .select(
+      "id, organization_id, driver_id, vehicle_id, vehicle_plate_snapshot, request_type, status, submitted_note, submitted_at, reviewed_by, reviewed_at, review_note, completed_at",
+    )
+    .eq("organization_id", organizationId)
+    .eq("request_type", "oil_change")
+    .in("driver_id", driverIds)
+    .order("submitted_at", { ascending: false })
+    .limit(Math.min(Math.max(driverIds.length * 3, 50), 1000));
+
+  const requests = (data ?? []) as RequestRecord[];
+  const details = await loadDetails(
+    supabase,
+    "oil_change",
+    requests.map((request) => request.id),
+  );
+  const vehicles = await loadVehicles(
+    supabase,
+    requests
+      .map((request) => request.vehicle_id)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
+
+  for (const request of requests) {
+    if (requestsByDriverId.has(request.driver_id)) continue;
+    const driver = driversById.get(request.driver_id);
+    const vehicle = vehicles.get(request.vehicle_id ?? "");
+    requestsByDriverId.set(request.driver_id, {
+      id: request.id,
+      requestType: request.request_type,
+      status: request.status,
+      submittedAt: request.submitted_at,
+      submittedNote: request.submitted_note,
+      driverName: driver?.full_name ?? "",
+      driverIdentifier: driver?.keeta_driver_id ?? null,
+      organizationName: null,
+      vehicleLabel: vehicle?.vehicle_type ?? driver?.vehicle_type ?? null,
+      vehiclePlate:
+        request.vehicle_plate_snapshot ??
+        vehicle?.plate_number ??
+        driver?.vehicle_number ??
+        driver?.keeta_vehicle_plate_number ??
+        null,
+      reviewerName: null,
+      requestedManagerName: null,
+      requestedManagerJobTitle: null,
+      requestedManagerStatus: null,
+      reviewNote: request.review_note,
+      reviewedAt: request.reviewed_at,
+      completedAt: request.completed_at,
+      maintenanceJob: null,
+      detail: details.details.get(request.id) ?? {},
+    });
+  }
+
+  return requestsByDriverId;
+}
+
+function deriveOilMetrics({
+  event,
+  latestOdometer,
+  vehicleId,
+}: {
+  event: OilChangeEventRecord | null;
+  latestOdometer: number | null;
+  vehicleId: string | null;
+}): {
+  nextOilChangeAt: number | null;
+  drivenSinceOilChange: number | null;
+  remainingKm: number | null;
+  oilStatus: OilMaintenanceStatus;
+} {
+  if (!vehicleId) {
+    return {
+      nextOilChangeAt: null,
+      drivenSinceOilChange: null,
+      remainingKm: null,
+      oilStatus: "no_vehicle",
+    };
+  }
+
+  if (!event) {
+    return {
+      nextOilChangeAt: null,
+      drivenSinceOilChange: null,
+      remainingKm: null,
+      oilStatus: "incomplete",
+    };
+  }
+
+  const nextOilChangeAt = event.odometer_reading + event.interval_km;
+
+  if (latestOdometer === null) {
+    return {
+      nextOilChangeAt,
+      drivenSinceOilChange: null,
+      remainingKm: null,
+      oilStatus: "incomplete",
+    };
+  }
+
+  const drivenSinceOilChange = Math.max(latestOdometer - event.odometer_reading, 0);
+  const remainingKm = nextOilChangeAt - latestOdometer;
+  const oilStatus =
+    remainingKm <= 0 ? "due" : remainingKm <= 500 ? "due_soon" : "ok";
+
+  return {
+    nextOilChangeAt,
+    drivenSinceOilChange,
+    remainingKm,
+    oilStatus,
+  };
+}
+
+function dedupeVehicles(vehicles: VehicleRecord[]) {
+  const vehiclesById = new Map<string, VehicleRecord>();
+
+  for (const vehicle of vehicles) {
+    if (!vehiclesById.has(vehicle.id)) {
+      vehiclesById.set(vehicle.id, vehicle);
+    }
+  }
+
+  return Array.from(vehiclesById.values());
+}
+
+function emptyOilMaintenanceAlertsResult(
+  status: OilMaintenanceAlertsResult["status"],
+): OilMaintenanceAlertsResult {
+  return {
+    status,
+    alerts: [],
+    totalCount: 0,
+    dueCount: 0,
+    dueSoonCount: 0,
+    hasDue: false,
+    hasDueSoon: false,
+  };
 }
 
 function mapDriversToOdometerRows({
+  cumulativeMap,
+  shiftContextMap,
+  driverContextMap,
   drivers,
   shifts,
   vehicles,
   reviewers,
   selectedDate,
 }: {
+  cumulativeMap: Map<string, number>;
+  shiftContextMap: Map<string, OdometerVehicleBaselineContext>;
+  driverContextMap: Map<string, OdometerVehicleBaselineContext>;
   drivers: DriverRecord[];
   shifts: OdometerShiftRecord[];
   vehicles: Map<string, VehicleRecord>;
@@ -500,16 +1508,29 @@ function mapDriversToOdometerRows({
     }
   }
 
+
+  // Calculate daily distances per driver
+  const dailyDistances = new Map<string, number>();
+  for (const shift of shifts) {
+    if (isValidOdometerDistanceShift(shift)) {
+      const dist = shift.end_odometer_reading - shift.start_odometer_reading;
+      dailyDistances.set(shift.driver_id, (dailyDistances.get(shift.driver_id) ?? 0) + dist);
+    }
+  }
+
   return drivers.map((driver) => {
     const shift = shiftsByDriver.get(driver.id);
+    const dailyDistanceKm = dailyDistances.get(driver.id) ?? null;
+    const driverContext = driverContextMap.get(driver.id);
+    const assignedVehicle = vehicles.get(driverContext?.vehicleId ?? "");
     if (!shift) {
       return {
         id: `driver-${driver.id}-${selectedDate}`,
         driverName: driver.full_name,
         driverIdentifier: driver.keeta_driver_id ?? null,
         organizationName: null,
-        vehicleLabel: driver.vehicle_type ?? null,
-        vehiclePlate: driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
+        vehicleLabel: assignedVehicle?.vehicle_type ?? driver.vehicle_type ?? null,
+        vehiclePlate: assignedVehicle?.plate_number ?? driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
         status: "not_started",
         shiftDate: `${selectedDate}T00:00:00+03:00`,
         startedAt: null,
@@ -530,12 +1551,40 @@ function mapDriversToOdometerRows({
         endReviewerName: null,
         endReviewedAt: null,
         endReviewNote: null,
-        distance: null,
+          startOcrReading: null,
+          startOcrStatus: null,
+          endOcrReading: null,
+          endOcrStatus: null,
+          distance: null,
+          totalDistanceKm: cumulativeMap.get(driver.id) ?? null,
+          driverId: driver.id,
+          vehicleId: driverContext?.vehicleId ?? null,
+          dailyDistanceKm,
+          expectedPreviousReading: null,
+          vehicleBaselineReading: driverContext?.baselineReading ?? null,
+          vehicleBaselineResetAt: driverContext?.baselineResetAt ?? null,
+          vehicleBaselineReason: driverContext?.baselineReason ?? null,
+          alerts: buildOdometerAlerts({
+            hasStarted: false,
+            shouldHaveEnd: false,
+            startReading: null,
+            endReading: null,
+            startPhotoPathPresent: false,
+            endPhotoPathPresent: false,
+            expectedPreviousReading: null,
+            dailyDistanceKm,
+          }),
       } satisfies OdometerShiftRow;
     }
 
     const vehicle = vehicles.get(shift.vehicle_id ?? "");
     const endReading = shift.end_odometer_reading;
+    const status = endReading === null ? "open" : "completed";
+    const shiftContext = shiftContextMap.get(shift.id) ?? driverContext;
+    const expectedPreviousReading = shiftContext?.expectedPreviousReading ?? null;
+    const distance = isValidOdometerDistanceShift(shift)
+      ? shift.end_odometer_reading - shift.start_odometer_reading
+      : null;
 
     return {
       id: shift.id,
@@ -544,7 +1593,7 @@ function mapDriversToOdometerRows({
       organizationName: null,
       vehicleLabel: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
       vehiclePlate: shift.vehicle_plate_snapshot ?? driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
-      status: endReading === null ? "open" : "completed",
+      status,
       shiftDate: shift.started_at,
       startedAt: shift.started_at,
       startReading: shift.start_odometer_reading,
@@ -568,10 +1617,29 @@ function mapDriversToOdometerRows({
       endReviewerName: reviewers.get(shift.end_reviewed_by ?? "")?.full_name ?? null,
       endReviewedAt: shift.end_reviewed_at,
       endReviewNote: shift.end_review_note,
-      distance:
-        typeof endReading === "number"
-          ? endReading - shift.start_odometer_reading
-          : null,
+        startOcrReading: null,
+        startOcrStatus: null,
+        endOcrReading: null,
+        endOcrStatus: null,
+        distance,
+        totalDistanceKm: cumulativeMap.get(driver.id) ?? null,
+        driverId: driver.id,
+        vehicleId: shift.vehicle_id,
+        dailyDistanceKm,
+        expectedPreviousReading,
+        vehicleBaselineReading: shiftContext?.baselineReading ?? null,
+        vehicleBaselineResetAt: shiftContext?.baselineResetAt ?? null,
+        vehicleBaselineReason: shiftContext?.baselineReason ?? null,
+        alerts: buildOdometerAlerts({
+          hasStarted: true,
+          shouldHaveEnd: shift.status === "completed" || shift.ended_at !== null,
+          startReading: shift.start_odometer_reading,
+          endReading,
+          startPhotoPathPresent: Boolean(shift.start_photo_path),
+          endPhotoPathPresent: Boolean(shift.end_photo_path),
+          expectedPreviousReading,
+          dailyDistanceKm,
+        }),
     } satisfies OdometerShiftRow;
   });
 }
@@ -582,7 +1650,123 @@ function summarizeOdometerDailyRows(rows: OdometerShiftRow[]): OdometerSummary {
     notStarted: rows.filter((row) => row.status === "not_started").length,
     startedOnly: rows.filter((row) => row.status === "open").length,
     completed: rows.filter((row) => row.status === "completed").length,
+      selectedDateDistanceKm: rows.reduce((acc, row) => acc + (row.distance ?? 0), 0),
+    alertRows: rows.filter((row) => row.alerts.length > 0).length,
   };
+}
+
+function isValidOdometerDistanceShift(
+  shift: OdometerShiftRecord,
+): shift is OdometerShiftRecord & {
+  start_odometer_reading: number;
+  end_odometer_reading: number;
+} {
+  return (
+    shift.status === "completed" &&
+    shift.start_odometer_reading !== null &&
+    shift.end_odometer_reading !== null &&
+    shift.end_odometer_reading >= shift.start_odometer_reading &&
+    shift.start_review_status !== "rejected" &&
+    shift.end_review_status !== "rejected"
+  );
+}
+
+function buildOdometerAlerts({
+  hasStarted,
+  shouldHaveEnd,
+  startReading,
+  endReading,
+  startPhotoPathPresent,
+  endPhotoPathPresent,
+  expectedPreviousReading,
+  dailyDistanceKm,
+}: {
+  hasStarted: boolean;
+  shouldHaveEnd: boolean;
+  startReading: number | null;
+  endReading: number | null;
+  startPhotoPathPresent: boolean;
+  endPhotoPathPresent: boolean;
+  expectedPreviousReading: number | null;
+  dailyDistanceKm: number | null;
+}) {
+  const alerts: OdometerShiftRow["alerts"] = [];
+
+  if (hasStarted && startReading === null) {
+    alerts.push({
+      code: "MISSING_START_READING",
+      message: "قراءة بداية العداد مفقودة",
+      severity: "critical",
+    });
+  }
+
+  if (shouldHaveEnd && endReading === null) {
+    alerts.push({
+      code: "MISSING_END_READING",
+      message: "قراءة نهاية العداد مفقودة",
+      severity: "critical",
+    });
+  }
+
+  if (hasStarted && !startPhotoPathPresent) {
+    alerts.push({
+      code: "MISSING_START_PHOTO",
+      message: "صورة بداية العداد مفقودة",
+      severity: "warning",
+    });
+  }
+
+  if (shouldHaveEnd && !endPhotoPathPresent) {
+    alerts.push({
+      code: "MISSING_END_PHOTO",
+      message: "صورة نهاية العداد مفقودة",
+      severity: "warning",
+    });
+  }
+
+  if (
+    typeof startReading === "number" &&
+    typeof expectedPreviousReading === "number" &&
+    startReading !== expectedPreviousReading
+  ) {
+    const differenceKm = startReading - expectedPreviousReading;
+    alerts.push({
+      code: "CONTINUITY_MISMATCH",
+      message: `قراءة البداية لا تطابق مرجع المركبة - المتوقع ${formatAlertKm(expectedPreviousReading)} كم، المسجل ${formatAlertKm(startReading)} كم، الفرق ${formatSignedAlertKm(differenceKm)} كم`,
+      severity: "warning",
+      meta: {
+        expected: expectedPreviousReading,
+        actual: startReading,
+        differenceKm,
+      },
+    });
+  }
+
+  if (hasStarted && typeof dailyDistanceKm === "number" && dailyDistanceKm > 0 && dailyDistanceKm < 200) {
+    alerts.push({
+      code: "LOW_DAILY_DISTANCE",
+      message: `المسافة اليومية منخفضة: ${formatAlertKm(dailyDistanceKm)} كم`,
+      severity: "warning",
+    });
+  }
+
+  if (typeof dailyDistanceKm === "number" && dailyDistanceKm > 450) {
+    alerts.push({
+      code: "HIGH_DAILY_DISTANCE",
+      message: `المسافة اليومية مرتفعة: ${formatAlertKm(dailyDistanceKm)} كم`,
+      severity: "warning",
+    });
+  }
+
+  return alerts;
+}
+
+function formatAlertKm(value: number) {
+  return new Intl.NumberFormat("ar-SA").format(value);
+}
+
+function formatSignedAlertKm(value: number) {
+  return `${value > 0 ? "+" : ""}${formatAlertKm(value)}`;
 }
 
 async function loadDrivers(
@@ -600,7 +1784,7 @@ async function loadDrivers(
 
   const { data } = await supabase
     .from("drivers")
-    .select("id, full_name, keeta_driver_id, mobile_number, vehicle_type, keeta_vehicle_plate_number, vehicle_number")
+    .select("id, full_name, keeta_driver_id, mobile_number, vehicle_id, vehicle_type, keeta_vehicle_plate_number, vehicle_number")
     .in("id", uniqueIds);
 
   for (const driver of (data ?? []) as DriverRecord[]) {
@@ -933,12 +2117,12 @@ function getLeaveTypesMatchingSearch(search: string) {
 
   const normalized = search.normalize("NFKC").trim().toLowerCase();
   const pairs = [
-    ["annual", ["annual", "سنوية"]],
-    ["sick", ["sick", "مرضية"]],
-    ["weekly", ["weekly", "أسبوعية", "اسبوعية"]],
-    ["emergency", ["emergency", "طارئة"]],
-    ["unpaid", ["unpaid", "بدون راتب"]],
-    ["other", ["other", "أخرى", "اخرى"]],
+    ["annual", ["annual", "ط³ظ†ظˆظٹط©"]],
+    ["sick", ["sick", "ظ…ط±ط¶ظٹط©"]],
+    ["weekly", ["weekly", "ط£ط³ط¨ظˆط¹ظٹط©", "ط§ط³ط¨ظˆط¹ظٹط©"]],
+    ["emergency", ["emergency", "ط·ط§ط±ط¦ط©"]],
+    ["unpaid", ["unpaid", "ط¨ط¯ظˆظ† ط±ط§طھط¨"]],
+    ["other", ["other", "ط£ط®ط±ظ‰", "ط§ط®ط±ظ‰"]],
   ] as const;
 
   return pairs
@@ -1043,14 +2227,13 @@ async function logAppRequestLoadDiagnostic(
 ) {
   if (process.env.NODE_ENV === "production") return;
 
+  const permissionClient = supabase as SupabaseClient<AppRequestsLocalDatabase>;
   const [{ data: canView }, { data: canReview }] = await Promise.all([
-    supabase.rpc("has_organization_permission", {
-      target_user_id: userId,
+    permissionClient.rpc("has_current_user_organization_permission", {
       target_organization_id: organizationId,
       target_permission_key: "app_requests.view",
     }),
-    supabase.rpc("has_organization_permission", {
-      target_user_id: userId,
+    permissionClient.rpc("has_current_user_organization_permission", {
       target_organization_id: organizationId,
       target_permission_key: "app_requests.review",
     }),

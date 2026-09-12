@@ -50,19 +50,42 @@ export async function markRequestNotificationsReadForCurrentUser({
   requestId: string | null | undefined;
   organizationId: string;
 }) {
+  await markDriverAppRequestSubmittedNotificationsRead({
+    requestId,
+    organizationId,
+  });
+}
+
+export async function markDriverAppRequestSubmittedNotificationsRead({
+  requestId,
+  organizationId,
+}: {
+  requestId: string | null | undefined;
+  organizationId: string;
+}) {
   if (!requestId || !isUuid(requestId)) return;
 
   const admin = await getAuthenticatedAdmin();
   if (admin.status !== "authorized") return;
 
-  await admin.supabase
-    .from("app_notifications")
-    .update({ is_read: true, read_at: new Date().toISOString() })
-    .eq("recipient_user_id", admin.profile.id)
-    .eq("organization_id", organizationId)
-    .eq("entity_type", "driver_app_request")
-    .eq("entity_id", requestId)
-    .is("read_at", null);
+  const { error } = await admin.supabase.rpc(
+    "mark_driver_app_request_submitted_notifications_read",
+    {
+      p_organization_id: organizationId,
+      p_request_id: requestId,
+    },
+  );
+
+  if (error) {
+    console.error("[notifications:shared-request-read] Failed to mark request notifications read", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      organizationId,
+      requestId,
+    });
+  }
 }
 
 export async function markAllNotificationsReadAction(formData: FormData) {
@@ -70,11 +93,21 @@ export async function markAllNotificationsReadAction(formData: FormData) {
   const admin = await getAuthenticatedAdmin();
   if (admin.status !== "authorized") return;
 
-  await admin.supabase
+  const { error } = await admin.supabase
     .from("app_notifications")
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq("recipient_user_id", admin.profile.id)
     .is("read_at", null);
+
+  if (error) {
+    console.error("[notifications:mark-all-read] Failed to mark notifications read", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    return;
+  }
 
   revalidatePath(pathname);
 }
@@ -84,6 +117,51 @@ async function markNotificationRead(
   notificationId: string,
   recipientUserId: string,
 ) {
+  const { data: notification, error: notificationError } = await supabase
+    .from("app_notifications")
+    .select("id, type, entity_type, entity_id, organization_id")
+    .eq("id", notificationId)
+    .eq("recipient_user_id", recipientUserId)
+    .maybeSingle();
+
+  if (notificationError) {
+    console.error("[notifications:mark-read] Failed to load notification", {
+      code: notificationError.code,
+      message: notificationError.message,
+      details: notificationError.details,
+      hint: notificationError.hint,
+      notificationId,
+    });
+  }
+
+  if (
+    notification?.type === "driver_app_request_submitted" &&
+    notification.entity_type === "driver_app_request" &&
+    notification.entity_id &&
+    notification.organization_id
+  ) {
+    const { error } = await supabase.rpc(
+      "mark_driver_app_request_submitted_notifications_read",
+      {
+        p_organization_id: notification.organization_id,
+        p_request_id: notification.entity_id,
+      },
+    );
+
+    if (error) {
+      console.error("[notifications:shared-request-read] Failed to mark request notifications read", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        notificationId,
+        requestId: notification.entity_id,
+      });
+    }
+
+    return;
+  }
+
   await supabase
     .from("app_notifications")
     .update({ is_read: true, read_at: new Date().toISOString() })

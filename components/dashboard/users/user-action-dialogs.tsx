@@ -406,8 +406,8 @@ export function ActivityDialog({
                     {dictionary.details}
                   </summary>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    <SafeJson label={dictionary.before} value={log.beforeData} />
-                    <SafeJson label={dictionary.after} value={log.afterData} />
+                    <SafeJson label={dictionary.before} value={log.beforeData} targetName={log.targetName} />
+                    <SafeJson label={dictionary.after} value={log.afterData} targetName={log.targetName} />
                   </div>
                 </details>
               </div>
@@ -544,13 +544,98 @@ function TabButton({
   );
 }
 
-function SafeJson({ label, value }: { label: string; value: unknown }) {
+const UI_FIELD_MAP: Record<string, string> = {
+  status: "الحالة",
+  category: "التصنيف",
+  severity: "درجة التحذير",
+  driver_id: "المندوب",
+  incident_at: "وقت الواقعة",
+  driver_seen_at: "وقت مشاهدة المندوب",
+  previous_status: "الحالة السابقة",
+  new_status: "الحالة الجديدة",
+};
+
+const UI_VALUE_MAP: Record<string, string> = {
+  active: "نشط",
+  inactive: "غير نشط",
+  compliance: "الالتزام",
+  medium: "متوسط",
+  low: "منخفض",
+  high: "مرتفع",
+  critical: "حرج",
+};
+
+function formatValue(key: string, value: unknown, targetName?: string | null): React.ReactNode {
+  if (value === null || value === undefined) {
+    if (key === "driver_seen_at") return "لم تتم المشاهدة";
+    return "غير محدد";
+  }
+
+  if (key === "driver_id" && targetName) {
+    return targetName;
+  }
+
+  if (typeof value === "boolean") return value ? "نعم" : "لا";
+  
+  if (typeof value === "string") {
+    if (UI_VALUE_MAP[value]) return UI_VALUE_MAP[value];
+
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+      try {
+        return new Intl.DateTimeFormat("ar-SA", {
+          dateStyle: "long",
+          timeStyle: "short",
+        }).format(new Date(value));
+      } catch (e) {
+        return value;
+      }
+    }
+    return value;
+  }
+  
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "لا توجد بيانات";
+    return value.map(v => (typeof v === "string" && UI_VALUE_MAP[v]) ? UI_VALUE_MAP[v] : v).join(", ");
+  }
+  
+  if (typeof value === "object") {
+    if (Object.keys(value).length === 0) return "لا توجد بيانات";
+    return JSON.stringify(value);
+  }
+  
+  return String(value);
+}
+
+function SafeJson({ label, value, targetName }: { label: string; value: unknown; targetName?: string | null }) {
+  if (!value || (typeof value === "object" && Object.keys(value).length === 0)) {
+    return (
+      <div className="rounded-lg bg-background p-3">
+        <p className="font-semibold text-navy">{label}</p>
+        <p className="mt-1 text-sm text-muted">لا توجد بيانات</p>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-lg bg-background p-3">
-      <p className="font-semibold text-navy">{label}</p>
-      <pre className="mt-1 whitespace-pre-wrap wrap-break-word font-sans">
-        {value ? JSON.stringify(value, null, 2) : "-"}
-      </pre>
+      <p className="mb-2 font-semibold text-navy">{label}</p>
+      <dl className="space-y-2">
+        {typeof value === "object" ? (
+          Object.entries(value).map(([key, val]) => (
+            <div
+              key={key}
+              className="flex flex-col text-sm sm:flex-row sm:justify-between sm:gap-4"
+            >
+              <dt className="text-muted">{UI_FIELD_MAP[key] ?? key}:</dt>
+              <dd className="font-medium text-navy sm:text-end" dir="auto">
+                {formatValue(key, val, targetName)}
+              </dd>
+            </div>
+          ))
+        ) : (
+          <div className="text-sm font-medium text-navy">{formatValue("", value, targetName)}</div>
+        )}
+      </dl>
     </div>
   );
 }
@@ -645,24 +730,13 @@ function getActivityLabel(
   dictionary: UserManagementDictionary,
   action: string,
 ) {
-  if (isKnownActivityAction(action)) {
-    return dictionary.actionLabels[action];
+  if (action in dictionary.actionLabels) {
+    return dictionary.actionLabels[
+      action as keyof UserManagementDictionary["actionLabels"]
+    ];
   }
 
   return action;
-}
-
-function isKnownActivityAction(
-  action: string,
-): action is keyof UserManagementDictionary["actionLabels"] {
-  return [
-    "user_created",
-    "user_updated",
-    "user_permissions_updated",
-    "user_suspended",
-    "user_reactivated",
-    "user_archived",
-  ].includes(action);
 }
 
 function formatDateTime(value: string, locale: Locale) {

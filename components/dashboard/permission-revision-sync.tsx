@@ -16,6 +16,7 @@ export function PermissionRevisionSync({
 }: PermissionRevisionSyncProps) {
   const router = useRouter();
   const revisionRef = useRef(initialRevision);
+  const checkingRef = useRef(false);
   const refreshingRef = useRef(false);
   const [visible, setVisible] = useState(false);
 
@@ -28,6 +29,12 @@ export function PermissionRevisionSync({
     let timeout: ReturnType<typeof setTimeout> | null = null;
 
     async function checkRevision() {
+      if (checkingRef.current) {
+        return;
+      }
+
+      checkingRef.current = true;
+
       try {
         const response = await fetch("/api/dashboard/permissions/revision", {
           cache: "no-store",
@@ -43,12 +50,16 @@ export function PermissionRevisionSync({
         if (
           typeof payload.revision === "string" &&
           payload.revision !== revisionRef.current &&
+          !cancelled &&
           !refreshingRef.current
         ) {
           refreshingRef.current = true;
           revisionRef.current = payload.revision;
           setVisible(true);
           router.refresh();
+          if (timeout) {
+            window.clearTimeout(timeout);
+          }
           timeout = setTimeout(() => {
             if (!cancelled) {
               setVisible(false);
@@ -58,15 +69,24 @@ export function PermissionRevisionSync({
         }
       } catch {
         // A missed poll is harmless; the next one will re-check server truth.
+      } finally {
+        checkingRef.current = false;
       }
     }
 
+    function handleFocus() {
+      void checkRevision();
+    }
+
+    void checkRevision();
+    window.addEventListener("focus", handleFocus);
     const interval = window.setInterval(() => {
       void checkRevision();
     }, intervalMs);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", handleFocus);
       window.clearInterval(interval);
       if (timeout) window.clearTimeout(timeout);
     };

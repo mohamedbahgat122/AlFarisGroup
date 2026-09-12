@@ -1,8 +1,21 @@
 type UserAvatarProps = {
   fullName: string | null;
+  avatarUrl?: string | null;
 };
 
-export function UserAvatar({ fullName }: UserAvatarProps) {
+export function UserAvatar({ fullName, avatarUrl }: UserAvatarProps) {
+  if (avatarUrl) {
+    return (
+      <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/20 bg-primary-soft text-sm font-bold text-primary">
+        <img
+          src={avatarUrl}
+          alt={fullName || "User Avatar"}
+          className="size-full object-cover"
+        />
+      </div>
+    );
+  }
+
   const initials = getInitials(fullName);
 
   return (

@@ -48,9 +48,6 @@ export function normalizeAndValidateDriverInput(
     vehicleId: normalizeOptionalText(input.vehicleId) ?? undefined,
     vehicleNumber: input.vehicleNumber.trim(),
     keetaVehiclePlateNumber: input.keetaVehiclePlateNumber.trim(),
-    vehicleSerialNumber: input.vehicleSerialNumber.trim(),
-    vehicleOwnerIdentifier: input.vehicleOwnerIdentifier.trim(),
-    vehicleBrand: input.vehicleBrand.trim(),
     keetaUsername: input.keetaUsername.trim(),
     keetaDriverId: input.keetaDriverId.trim(),
     iqamaNumber: input.iqamaNumber.trim(),
@@ -59,11 +56,6 @@ export function normalizeAndValidateDriverInput(
     drivingLicenseExpiryDate: input.drivingLicenseExpiryDate.trim(),
     driverCardNumber: input.driverCardNumber.trim(),
     driverCardExpiryDate: input.driverCardExpiryDate.trim(),
-    vehicleAuthorizationNumber: input.vehicleAuthorizationNumber.trim(),
-    vehicleAuthorizationExpiryDate:
-      input.vehicleAuthorizationExpiryDate.trim(),
-    operatingCardNumber: input.operatingCardNumber.trim(),
-    operatingCardExpiryDate: input.operatingCardExpiryDate.trim(),
     iban: normalizeOptionalIban(input.iban),
     bankName: normalizeOptionalText(input.bankName),
     accountNumber: normalizeOptionalText(input.accountNumber),
@@ -106,15 +98,6 @@ export function normalizeAndValidateDriverInput(
   ) {
     fields.push("keetaVehiclePlateNumber");
   }
-  if (!isLength(normalized.vehicleSerialNumber, 1, 80)) {
-    fields.push("vehicleSerialNumber");
-  }
-  if (!isLength(normalized.vehicleOwnerIdentifier, 1, 80)) {
-    fields.push("vehicleOwnerIdentifier");
-  }
-  if (!isLength(normalized.vehicleBrand, 1, 120)) {
-    fields.push("vehicleBrand");
-  }
   if (!allowedSettlementTypes.has(normalized.settlementType)) {
     fields.push("settlementType");
   }
@@ -141,24 +124,6 @@ export function normalizeAndValidateDriverInput(
   }
   if (!isValidDate(normalized.driverCardExpiryDate)) {
     fields.push("driverCardExpiryDate");
-  }
-  if (!isLength(normalized.vehicleAuthorizationNumber, 1, 80)) {
-    fields.push("vehicleAuthorizationNumber");
-  }
-  if (!isValidDate(normalized.vehicleAuthorizationExpiryDate)) {
-    fields.push("vehicleAuthorizationExpiryDate");
-  }
-  if (
-    normalized.operatingCardNumber &&
-    normalized.operatingCardNumber.length > 80
-  ) {
-    fields.push("operatingCardNumber");
-  }
-  if (
-    normalized.operatingCardExpiryDate &&
-    !isValidDate(normalized.operatingCardExpiryDate)
-  ) {
-    fields.push("operatingCardExpiryDate");
   }
   if (normalized.iban && !ibanPattern.test(normalized.iban)) {
     fields.push("iban");
