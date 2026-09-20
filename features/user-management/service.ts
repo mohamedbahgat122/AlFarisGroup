@@ -312,7 +312,11 @@ export async function updateManagedUserPermissions(
     return { success: false, code: "protected_user" };
   }
 
-  if (target.profile.role === "driver" && normalizedInput.additionalAccess.length > 0) {
+  if (
+    target.profile.role === "driver" &&
+    (normalizedInput.homePermissions.length > 0 ||
+      normalizedInput.additionalAccess.length > 0)
+  ) {
     logManagedUserPermissionsFailure({
       stage: "driver_target",
       targetUserId: normalizedInput.targetUserId,
@@ -361,10 +365,13 @@ export async function updateManagedUserPermissions(
   const { error } = await admin.rpc("replace_managed_user_organization_permissions", {
     p_actor_user_id: currentUser.user.id,
     p_target_user_id: normalizedInput.targetUserId,
-    p_access: normalizedInput.additionalAccess.map((access) => ({
-      organization_id: access.organizationId,
-      permission_keys: access.permissionKeys,
-    })),
+    p_access: {
+      home_permissions: normalizedInput.homePermissions,
+      additional_access: normalizedInput.additionalAccess.map((access) => ({
+        organization_id: access.organizationId,
+        permission_keys: access.permissionKeys,
+      })),
+    },
   });
 
   if (error) {

@@ -36,6 +36,7 @@ export type UpdateManagedUserInput = {
 
 export type UpdateManagedUserPermissionsInput = {
   targetUserId: string;
+  homePermissions: OrganizationPermissionKey[];
   additionalAccess: {
     organizationId: string;
     permissionKeys: OrganizationPermissionKey[];
@@ -65,7 +66,9 @@ export type ManagedUserListItem = {
   role: Database["public"]["Enums"]["app_role"];
   jobTitle: string | null;
   status: Database["public"]["Enums"]["account_status"];
-  homeOrganization: ActiveOrganizationOption | null;
+  homeOrganization: (ActiveOrganizationOption & {
+    permissionKeys: OrganizationPermissionKey[];
+  }) | null;
   additionalAccess: {
     organizationId: string;
     organizationName: string;

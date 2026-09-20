@@ -16,6 +16,7 @@ import {
   parseAdditionalAccess,
   parseGranularAdditionalAccess,
   parseGranularGlobalAccess,
+  parseGranularHomePermissions,
 } from "@/features/user-management/validation";
 import { organizationPermissionSet } from "@/features/permissions/registry";
 import { isLocale } from "@/types/locale";
@@ -137,12 +138,20 @@ export async function updateManagedUserPermissionsAction(
   const additionalAccess = parseGranularAdditionalAccess(
     formData.get("additionalAccess"),
   );
+  const homePermissions = parseGranularHomePermissions(
+    formData.get("homePermissions"),
+  );
   
   const globalPermissions = parseGranularGlobalAccess(
     formData.get("globalPermissions"),
   );
 
-  if (!isUuid(targetUserId) || !additionalAccess || !globalPermissions) {
+  if (
+    !isUuid(targetUserId) ||
+    !additionalAccess ||
+    !homePermissions ||
+    !globalPermissions
+  ) {
     logManagedUserPermissionActionDiagnostic({
       stage: "target_validation",
       targetUserId,
@@ -153,6 +162,7 @@ export async function updateManagedUserPermissionsAction(
 
   const result = await updateManagedUserPermissions({
     targetUserId,
+    homePermissions,
     additionalAccess,
     globalPermissions,
   });

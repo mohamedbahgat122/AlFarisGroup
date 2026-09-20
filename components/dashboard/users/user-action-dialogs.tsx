@@ -29,7 +29,7 @@ import type {
   ManagedUserRole,
 } from "@/features/user-management/types";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
-import { stripLegacyPermissionKeys } from "@/features/permissions/registry";
+import { normalizeLegacyPermissionsForEditor } from "@/features/permissions/registry";
 import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { Locale } from "@/types/locale";
 
@@ -167,9 +167,14 @@ export function PermissionsDialog({
     Object.fromEntries(
       user.additionalAccess.map((access) => [
         access.organizationId,
-        stripLegacyPermissionKeys(access.permissionKeys),
+        normalizeLegacyPermissionsForEditor(access.permissionKeys),
       ]),
     ),
+  );
+  const [homePermissionKeys, setHomePermissionKeys] = useState<
+    OrganizationPermissionKey[]
+  >(() =>
+    normalizeLegacyPermissionsForEditor(user.homeOrganization?.permissionKeys ?? []),
   );
   const [globalPermissions, setGlobalPermissions] = useState<GlobalPermissionKey[]>(
     user.globalPermissions || [],
@@ -211,6 +216,11 @@ export function PermissionsDialog({
         />
         <input
           type="hidden"
+          name="homePermissions"
+          value={JSON.stringify(homePermissionKeys)}
+        />
+        <input
+          type="hidden"
           name="globalPermissions"
           value={JSON.stringify(globalPermissions)}
         />
@@ -234,7 +244,8 @@ export function PermissionsDialog({
             dictionary={dictionary}
             organizations={organizations}
             homeOrganizationId={user.homeOrganization?.id ?? ""}
-            includeHomeOrganization={true}
+            homePermissionKeys={homePermissionKeys}
+            onHomeChange={setHomePermissionKeys}
             values={accessValues}
             onChange={(organizationId, permissionKeys) =>
               setAccessValues((current) => ({
@@ -592,7 +603,7 @@ function formatValue(key: string, value: unknown, targetName?: string | null): R
           dateStyle: "long",
           timeStyle: "short",
         }).format(new Date(value));
-      } catch (e) {
+      } catch {
         return value;
       }
     }

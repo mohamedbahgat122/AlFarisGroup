@@ -93,7 +93,7 @@ export async function getOrganizationDashboardData({
   const period = buildPeriod(selectedRange, today);
   const organizationIds = [organization.id];
   const canViewDrivers = organization.permissionKeys.includes("drivers.view");
-  const canViewRequests = organization.permissionKeys.includes("app_requests.view");
+  const canViewRequests = hasAnyRequestViewPermission(organization.permissionKeys);
   const canViewShifts = organization.permissionKeys.includes("shifts.view");
   const canViewReports = organization.permissionKeys.includes("driver_reports.view");
   const canViewFleet =
@@ -236,7 +236,7 @@ export async function getExecutiveDashboardData({
     .filter((item) => item.permissionKeys.includes("drivers.view"))
     .map((item) => item.id);
   const appRequestOrganizationIds = selectedOrganizations
-    .filter((item) => item.permissionKeys.includes("app_requests.view"))
+    .filter((item) => hasAnyRequestViewPermission(item.permissionKeys))
     .map((item) => item.id);
   const shiftOrganizationIds = selectedOrganizations
     .filter((item) => item.permissionKeys.includes("shifts.view"))
@@ -558,6 +558,18 @@ async function loadHousingForOrganization(
     rooms: rooms.error ? [] : ((rooms.data ?? []) as HousingRoomRow[]),
     assignments: assignments.error ? [] : ((assignments.data ?? []) as HousingAssignmentRow[]),
   };
+}
+
+function hasAnyRequestViewPermission(permissionKeys: readonly string[]) {
+  return permissionKeys.some((permissionKey) =>
+    [
+      "app_requests.view",
+      "app_requests.leave.view",
+      "app_requests.maintenance.view",
+      "app_requests.meeting.view",
+      "app_requests.oil_change.view",
+    ].includes(permissionKey),
+  );
 }
 
 async function loadAppRequests(

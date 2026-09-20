@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import { getOrganizationPermissions } from "@/features/permissions/server";
+import { canViewRequestType } from "@/features/app-requests/authorization";
+import type { DriverAppRequestType } from "@/features/app-requests/types";
 import type { Database } from "@/types/database";
 
 type PhotoType =
@@ -118,7 +120,7 @@ async function resolveRequestDriverPhotoPath(
 
   const { data: appRequest, error: requestError } = await admin.supabase
     .from("driver_app_requests")
-    .select("id, organization_id, driver_id")
+    .select("id, organization_id, driver_id, request_type")
     .eq("id", requestId)
     .maybeSingle();
 
@@ -129,7 +131,7 @@ async function resolveRequestDriverPhotoPath(
     admin.profile,
     appRequest.organization_id,
   );
-  if (!permissions.has("app_requests.view")) {
+  if (!canViewRequestType(permissions, appRequest.request_type as DriverAppRequestType)) {
     return failure(403, "Forbidden");
   }
 
@@ -169,7 +171,7 @@ async function resolveOdometerPhotoPath(
     admin.profile,
     shift.organization_id,
   );
-  if (!permissions.has("odometer.manage")) {
+  if (!permissions.has("odometer.manage") && !permissions.has("odometer.view")) {
     return failure(403, "Forbidden");
   }
 

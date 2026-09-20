@@ -16,6 +16,7 @@ import type { SystemExpiryAlertsResult } from "@/features/expiry-alerts/types";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
 import type { ProfileRole } from "@/types/profile";
+import type { OrganizationPermissionKey } from "@/features/permissions/registry";
 
 type DashboardShellProps = {
   locale: Locale;
@@ -203,22 +204,33 @@ export function DashboardShell({
   const displayedAppNotifications = liveAppNotifications ?? appNotifications;
   const displayedOilMaintenanceAlerts =
     liveOilMaintenanceAlerts ?? oilMaintenanceAlerts;
+  const granularRequestNotificationKeys: OrganizationPermissionKey[] = [
+    "app_requests.leave.view",
+    "app_requests.leave.review",
+    "app_requests.maintenance.view",
+    "app_requests.maintenance.review",
+    "app_requests.meeting.view",
+    "app_requests.meeting.review",
+    "app_requests.oil_change.view",
+    "app_requests.oil_change.review",
+  ];
   const canSubscribeToRequestNotifications =
     appNotifications.canViewNotifications &&
-    organizations.some((organization) =>
+    (user.role === "system_owner" || organizations.some((organization) =>
       organization.permissionKeys.includes("notifications.view") &&
-      organization.permissionKeys.includes("app_requests.view"),
-    );
+      (organization.permissionKeys.includes("app_requests.view") ||
+        granularRequestNotificationKeys.some((key) =>
+          organization.permissionKeys.includes(key),
+        )),
+    ));
   const canSubscribeToOilMaintenanceAlerts = organizations.some(
     (organization) =>
-      organization.navigation.appRequests &&
-      organization.permissionKeys.includes("app_requests.view"),
+      organization.navigation.appRequestOilChange,
   );
   const oilMaintenanceOrganizationIds = organizations
     .filter(
       (organization) =>
-        organization.navigation.appRequests &&
-        organization.permissionKeys.includes("app_requests.view"),
+        organization.navigation.appRequestOilChange,
     )
     .map((organization) => organization.id);
   const oilMaintenanceRealtimeFilter =

@@ -24,6 +24,7 @@ import { markRequestNotificationsReadForCurrentUser } from "@/features/notificat
 import { getOrganizationPageAccessByCode } from "@/features/organizations/queries";
 import { getDictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
+import { canReviewRequestType, canViewRequestType } from "@/features/app-requests/authorization";
 
 export async function RequestPage({
   locale,
@@ -54,7 +55,7 @@ export async function RequestPage({
 
   const organization = access.organization;
 
-  if (!organization.navigation.appRequests) {
+  if (!canViewRequestType(organization.permissionKeys, requestType)) {
     return <AccessDenied locale={locale} />;
   }
 
@@ -143,7 +144,7 @@ export async function RequestPage({
             organizationId={organization.id}
             requestType={requestType}
             rows={data.rows}
-            canReview={organization.permissionKeys.includes("app_requests.review")}
+            canReview={canReviewRequestType(organization.permissionKeys, requestType)}
             canAssignMaintenance={organization.permissionKeys.includes("maintenance_jobs.assign")}
             maintenanceProviderOptions={maintenanceProviderOptions}
           />

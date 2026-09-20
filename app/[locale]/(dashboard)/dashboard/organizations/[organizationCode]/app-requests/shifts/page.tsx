@@ -25,7 +25,7 @@ export default async function ShiftRequestsRoute({ params }: RouteProps) {
   if (access.status === "not_found") notFound();
   if (access.status !== "success") return <AccessDenied locale={locale} />;
   const organization = access.organization;
-  if (!organization.navigation.appRequests) return <AccessDenied locale={locale} />;
+  if (!organization.permissionKeys.some((key) => ["app_requests.view", "app_requests.shift_change.view"].includes(key))) return <AccessDenied locale={locale} />;
   const requests = await getShiftChangeRequestsPage(organization.id);
   return (
     <div className="min-h-full bg-background">
@@ -34,7 +34,7 @@ export default async function ShiftRequestsRoute({ params }: RouteProps) {
         <p className="mt-2 text-sm leading-6 text-muted">{dictionary.description}</p>
       </div>
       <div className="px-5 py-6 sm:px-7">
-        <ShiftRequestsTable rows={requests} canReview={organization.permissionKeys.includes("app_requests.review")} dictionary={dictionary} />
+        <ShiftRequestsTable rows={requests} canReview={organization.permissionKeys.some((key) => ["app_requests.review", "app_requests.shift_change.review"].includes(key))} dictionary={dictionary} />
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import {
   normalizePermissionKeys,
   stripLegacyPermissionKeys,
 } from "@/features/permissions/registry";
+import type { OrganizationPermissionKey } from "@/features/permissions/registry";
 import { applyGlobalPermissionDependencies, isGlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 
@@ -181,6 +182,7 @@ export function normalizeAndValidatePermissionsInput(
     organizationId: entry.organizationId.trim(),
     permissionKeys: applyPermissionDependencies(entry.permissionKeys),
   }));
+  const homePermissions = applyPermissionDependencies(input.homePermissions);
   const globalPermissions = applyGlobalPermissionDependencies(input.globalPermissions);
   const seenOrganizationIds = new Set<string>();
 
@@ -208,14 +210,47 @@ export function normalizeAndValidatePermissionsInput(
     return { valid: false };
   }
 
+  if (homePermissions.some((key) => !isOrganizationPermissionKey(key))) {
+    return { valid: false };
+  }
+
   return {
     valid: true,
     input: {
       targetUserId,
+      homePermissions,
       additionalAccess,
       globalPermissions,
     },
   };
+}
+
+export function parseGranularHomePermissions(value: FormDataEntryValue | null) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return [] satisfies OrganizationPermissionKey[];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some(
+      (permissionKey) =>
+        typeof permissionKey !== "string" ||
+        !isOrganizationPermissionKey(permissionKey),
+    )
+  ) {
+    return null;
+  }
+
+  return applyPermissionDependencies(
+    stripLegacyPermissionKeys(normalizePermissionKeys(parsed)),
+  );
 }
 
 export function isUuid(value: string) {

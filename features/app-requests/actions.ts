@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { AppRequestActionState } from "@/features/app-requests/types";
+import { requestReviewPermission } from "@/features/app-requests/authorization";
+import type { AppRequestActionState, DriverAppRequestType } from "@/features/app-requests/types";
 import type { Database, Json } from "@/types/database";
 import { isLocale } from "@/types/locale";
 
@@ -33,6 +34,25 @@ type AppRequestsActionDatabase = Database & {
           target_permission_key: string;
         };
         Returns: boolean;
+      };
+      admin_update_shift_odometer_reading: {
+        Args: {
+          p_shift_id: string;
+          p_phase: string;
+          p_odometer_reading: number;
+          p_reason?: string | null;
+        };
+        Returns: Json;
+      };
+      admin_set_vehicle_odometer_baseline: {
+        Args: {
+          p_vehicle_id: string;
+          p_baseline_reading: number;
+          p_reset_at?: string | null;
+          p_reason: string;
+          p_note?: string | null;
+        };
+        Returns: Json;
       };
     };
   };
@@ -76,6 +96,7 @@ export async function reviewOdometerShiftAction(
 
   const canReview =
     admin.profile.role === "system_owner" ||
+    (await hasPermission(admin.supabase, admin.profile.id, organizationId, action === "approved" ? "odometer.approve" : "odometer.reject")) ||
     (await hasPermission(admin.supabase, admin.profile.id, organizationId, "odometer.manage"));
 
   if (!canReview) {
@@ -136,24 +157,6 @@ export async function reviewDriverAppRequestAction(
     return { status: "error", code: "unauthorized" };
   }
 
-  const canReview =
-    admin.profile.role === "system_owner" ||
-    (await hasPermission(admin.supabase, admin.profile.id, organizationId, "app_requests.review"));
-
-  if (!canReview) {
-    logReviewDiagnostic({
-      stage: "authorization",
-      decision,
-      requestId,
-      organizationId,
-      actingUserId: admin.profile.id,
-      requestedStatus: decisionToStatus(decision),
-      affectedRowCount: 0,
-      error: { message: "review permission denied" },
-    });
-    return { status: "error", code: "review_permission_denied" };
-  }
-
   let mutationClient;
 
   try {
@@ -195,6 +198,30 @@ export async function reviewDriverAppRequestAction(
       error: { message: "request not found" },
     });
     return { status: "error", code: "request_not_found" };
+  }
+
+  const canReview =
+    admin.profile.role === "system_owner" ||
+    (await hasPermission(
+      admin.supabase,
+      admin.profile.id,
+      organizationId,
+      requestReviewPermission(request.request_type as DriverAppRequestType),
+    )) ||
+    (await hasPermission(admin.supabase, admin.profile.id, organizationId, "app_requests.review"));
+
+  if (!canReview) {
+    logReviewDiagnostic({
+      stage: "authorization",
+      decision,
+      requestId,
+      organizationId,
+      actingUserId: admin.profile.id,
+      requestedStatus: decisionToStatus(decision),
+      affectedRowCount: 0,
+      error: { message: "review permission denied" },
+    });
+    return { status: "error", code: "review_permission_denied" };
   }
 
   if (decision === "complete") {
@@ -425,7 +452,7 @@ async function hasPermission(
   supabase: Awaited<ReturnType<typeof getAuthenticatedAdmin>>["supabase"],
   _userId: string,
   organizationId: string,
-  permissionKey: "app_requests.review" | "odometer.manage" | "maintenance_jobs.assign",
+  permissionKey: string,
 ) {
   const permissionClient =
     supabase as SupabaseClient<AppRequestsActionDatabase>;
@@ -613,14 +640,15 @@ export async function updateOdometerShiftReadingAction(
 
   const canManage =
     admin.profile.role === "system_owner" ||
+    (await hasPermission(admin.supabase, admin.profile.id, organizationId, "odometer.edit")) ||
     (await hasPermission(admin.supabase, admin.profile.id, organizationId, "odometer.manage"));
 
   if (!canManage) {
     return { status: "error", code: "unauthorized" };
   }
 
-  // @ts-ignore: Temporary bypass until types are regenerated
-  const { error } = await admin.supabase.rpc("admin_update_shift_odometer_reading", {
+  const actionClient = admin.supabase as SupabaseClient<AppRequestsActionDatabase>;
+  const { error } = await actionClient.rpc("admin_update_shift_odometer_reading", {
     p_shift_id: shiftId,
     p_phase: phase,
     p_odometer_reading: reading,
@@ -665,14 +693,15 @@ export async function resetVehicleOdometerBaselineAction(
 
   const canManage =
     admin.profile.role === "system_owner" ||
+    (await hasPermission(admin.supabase, admin.profile.id, organizationId, "odometer.edit")) ||
     (await hasPermission(admin.supabase, admin.profile.id, organizationId, "odometer.manage"));
 
   if (!canManage) {
     return { status: "error", code: "unauthorized" };
   }
 
-  // @ts-ignore: Temporary bypass until types are regenerated
-  const { error } = await admin.supabase.rpc("admin_set_vehicle_odometer_baseline", {
+  const actionClient = admin.supabase as SupabaseClient<AppRequestsActionDatabase>;
+  const { error } = await actionClient.rpc("admin_set_vehicle_odometer_baseline", {
     p_vehicle_id: vehicleId,
     p_baseline_reading: baseline,
     p_reset_at: resetAt,

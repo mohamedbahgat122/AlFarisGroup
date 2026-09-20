@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { getOrganizationPermissions } from "@/features/permissions/server";
 
 export type ShiftChangeRequest = {
   id: string;
@@ -32,6 +33,20 @@ export type ShiftChangeRequest = {
 export async function getShiftChangeRequestsPage(organizationId: string): Promise<ShiftChangeRequest[]> {
   const admin = await getAuthenticatedAdmin();
   if (admin.status !== "authorized") {
+    return [];
+  }
+
+  const permissions = await getOrganizationPermissions(
+    admin.supabase,
+    admin.profile,
+    organizationId,
+  );
+  if (
+    admin.profile.role !== "system_owner" &&
+    !permissions.has("app_requests.view") &&
+    !permissions.has("app_requests.shift_change.view") &&
+    !permissions.has("app_requests.shift_change.review")
+  ) {
     return [];
   }
 

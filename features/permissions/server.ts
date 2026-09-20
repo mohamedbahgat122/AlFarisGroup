@@ -16,6 +16,11 @@ export type OrganizationNavigationPermissions = {
   fuelManagement: boolean;
   fuelReports: boolean;
   appRequests: boolean;
+  appRequestLeave: boolean;
+  appRequestMaintenance: boolean;
+  appRequestMeeting: boolean;
+  appRequestOilChange: boolean;
+  appRequestShiftChange: boolean;
   notifications: boolean;
   odometerManagement: boolean;
   driverWarnings: boolean;
@@ -139,8 +144,13 @@ export function getAccessibleOrganizationNavigation(
     fuelManagement: permissions.has("fuel.manage"),
     fuelReports: permissions.has("fuel.reports.view"),
     appRequests: permissions.has("app_requests.view"),
+    appRequestLeave: permissions.has("app_requests.leave.view") || permissions.has("app_requests.view"),
+    appRequestMaintenance: permissions.has("app_requests.maintenance.view") || permissions.has("app_requests.view"),
+    appRequestMeeting: permissions.has("app_requests.meeting.view") || permissions.has("app_requests.view"),
+    appRequestOilChange: permissions.has("app_requests.oil_change.view") || permissions.has("app_requests.view"),
+    appRequestShiftChange: permissions.has("app_requests.shift_change.view") || permissions.has("app_requests.view"),
     notifications: permissions.has("notifications.view"),
-    odometerManagement: permissions.has("odometer.manage"),
+    odometerManagement: permissions.has("odometer.manage") || permissions.has("odometer.view"),
     driverWarnings: permissions.has("driver_warnings.view"),
     shifts: permissions.has("shifts.view"),
     orderPeriods: permissions.has("order_periods.view"),

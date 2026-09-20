@@ -76,6 +76,11 @@ export function DashboardSidebar({
     fuelManagement: true,
     fuelReports: true,
     appRequests: true,
+    appRequestLeave: true,
+    appRequestMaintenance: true,
+    appRequestMeeting: true,
+    appRequestOilChange: true,
+    appRequestShiftChange: true,
     notifications: true,
     odometerManagement: true,
     driverWarnings: true,
@@ -835,7 +840,7 @@ export function DashboardSidebar({
                       ) : null}
                     </>
                   ) : null}
-                  {(navigation.odometerManagement || navigation.appRequests) &&
+                  {(navigation.odometerManagement || navigation.appRequestLeave || navigation.appRequestMaintenance || navigation.appRequestMeeting || navigation.appRequestOilChange || navigation.appRequestShiftChange) &&
                   organizationOdometerHref &&
                   organizationLeaveRequestsHref &&
                   organizationMaintenanceRequestsHref &&
@@ -898,9 +903,9 @@ export function DashboardSidebar({
                               <span>{dictionary.appRequests.odometerNavLabel}</span>
                             </Link>
                           ) : null}
-                          {navigation.appRequests ? (
+                          {(navigation.appRequestLeave || navigation.appRequestMaintenance || navigation.appRequestMeeting || navigation.appRequestOilChange || navigation.appRequestShiftChange) ? (
                             <>
-                              <Link
+                              {navigation.appRequestLeave ? <Link
                                 href={organizationLeaveRequestsHref}
                                 aria-current={
                                   isOrganizationLeaveRequestsActive
@@ -922,8 +927,8 @@ export function DashboardSidebar({
                                   />
                                 )}
                                 <span>{dictionary.appRequests.leaveNavLabel}</span>
-                              </Link>
-                              <Link
+                              </Link> : null}
+                              {navigation.appRequestMaintenance ? <Link
                                 href={organizationMaintenanceRequestsHref}
                                 aria-current={
                                   isOrganizationMaintenanceRequestsActive
@@ -947,8 +952,8 @@ export function DashboardSidebar({
                                 <span>
                                   {dictionary.appRequests.maintenanceNavLabel}
                                 </span>
-                              </Link>
-                              <Link
+                              </Link> : null}
+                              {navigation.appRequestMeeting ? <Link
                                 href={organizationMeetingRequestsHref}
                                 aria-current={
                                   isOrganizationMeetingRequestsActive
@@ -970,8 +975,8 @@ export function DashboardSidebar({
                                   />
                                 )}
                                 <span>{dictionary.appRequests.meetingsNavLabel}</span>
-                              </Link>
-                              <Link
+                              </Link> : null}
+                              {navigation.appRequestOilChange ? <Link
                                 href={organizationOilChangeRequestsHref}
                                 aria-current={
                                   isOrganizationOilChangeRequestsActive
@@ -993,8 +998,8 @@ export function DashboardSidebar({
                                   />
                                 )}
                                 <span>{dictionary.appRequests.oilChangeNavLabel}</span>
-                              </Link>
-                              <Link
+                              </Link> : null}
+                              {navigation.appRequestShiftChange ? <Link
                                 href={organizationShiftChangeRequestsHref}
                                 aria-current={
                                   isOrganizationShiftChangeRequestsActive
@@ -1016,7 +1021,7 @@ export function DashboardSidebar({
                                   />
                                 )}
                                 <span>{dictionary.appRequests.shiftChangeNavLabel}</span>
-                              </Link>
+                              </Link> : null}
                             </>
                           ) : null}
                         </div>
@@ -1284,13 +1289,21 @@ export function DashboardSidebar({
                 </div>
               ) : null}
               {organizationOdometerHref &&
-              (navigation.odometerManagement || navigation.appRequests) ? (
+              (navigation.odometerManagement || navigation.appRequestLeave || navigation.appRequestMaintenance || navigation.appRequestMeeting || navigation.appRequestOilChange || navigation.appRequestShiftChange) ? (
                 <div className={collapsed ? "hidden lg:block" : "hidden"}>
                   <Link
                     href={
                       navigation.odometerManagement
                         ? organizationOdometerHref
-                        : organizationLeaveRequestsHref ?? organizationOdometerHref
+                        : navigation.appRequestLeave
+                          ? organizationLeaveRequestsHref ?? organizationOdometerHref
+                          : navigation.appRequestMaintenance
+                            ? organizationMaintenanceRequestsHref ?? organizationOdometerHref
+                            : navigation.appRequestMeeting
+                              ? organizationMeetingRequestsHref ?? organizationOdometerHref
+                              : navigation.appRequestOilChange
+                                ? organizationOilChangeRequestsHref ?? organizationOdometerHref
+                                : organizationShiftChangeRequestsHref ?? organizationOdometerHref
                     }
                     aria-current={
                       isOrganizationAppRequestsActive ? "page" : undefined
@@ -1299,7 +1312,15 @@ export function DashboardSidebar({
                     onClick={(e) => handleLinkClick(
                       navigation.odometerManagement
                         ? organizationOdometerHref
-                        : organizationLeaveRequestsHref ?? organizationOdometerHref,
+                        : navigation.appRequestLeave
+                          ? organizationLeaveRequestsHref ?? organizationOdometerHref
+                          : navigation.appRequestMaintenance
+                            ? organizationMaintenanceRequestsHref ?? organizationOdometerHref
+                            : navigation.appRequestMeeting
+                              ? organizationMeetingRequestsHref ?? organizationOdometerHref
+                              : navigation.appRequestOilChange
+                                ? organizationOilChangeRequestsHref ?? organizationOdometerHref
+                                : organizationShiftChangeRequestsHref ?? organizationOdometerHref,
                       e
                     )}
                     className={`${navItemClassName(

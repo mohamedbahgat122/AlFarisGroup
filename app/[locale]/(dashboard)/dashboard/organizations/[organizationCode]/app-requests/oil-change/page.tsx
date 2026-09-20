@@ -27,6 +27,7 @@ import { getOrganizationPageAccessByCode } from "@/features/organizations/querie
 import { getDictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/types/locale";
 import { isLocale } from "@/types/locale";
+import { canReviewRequestType, canViewRequestType } from "@/features/app-requests/authorization";
 
 type RouteProps = {
   params: Promise<{ locale: string; organizationCode: string }>;
@@ -62,7 +63,7 @@ export default async function OilChangeRequestsRoute({ params, searchParams }: R
 
   const organization = access.organization;
 
-  if (!organization.navigation.appRequests) {
+  if (!canViewRequestType(organization.permissionKeys, "oil_change")) {
     return <AccessDenied locale={locale} />;
   }
 
@@ -171,7 +172,7 @@ export default async function OilChangeRequestsRoute({ params, searchParams }: R
               organizationId={organization.id}
               requestType="oil_change"
               rows={requestData.rows}
-              canReview={organization.permissionKeys.includes("app_requests.review")}
+              canReview={canReviewRequestType(organization.permissionKeys, "oil_change")}
               canAssignMaintenance={organization.permissionKeys.includes("maintenance_jobs.assign")}
               maintenanceProviderOptions={maintenanceProviderOptions}
             />

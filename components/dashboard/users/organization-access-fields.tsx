@@ -6,9 +6,9 @@ import type {
 } from "@/features/user-management/types";
 import {
   applyPermissionDependencies,
+  normalizeLegacyPermissionsForEditor,
   organizationPermissionGroups,
   organizationPermissionKeys,
-  stripLegacyPermissionKeys,
   viewOnlyOrganizationPermissionKeys,
   type OrganizationPermissionKey,
 } from "@/features/permissions/registry";
@@ -18,6 +18,8 @@ type OrganizationAccessFieldsProps = {
   organizations: ActiveOrganizationOption[];
   homeOrganizationId: string;
   includeHomeOrganization?: boolean;
+  homePermissionKeys?: OrganizationPermissionKey[];
+  onHomeChange?: (permissionKeys: OrganizationPermissionKey[]) => void;
   values: Record<string, OrganizationPermissionKey[]>;
   onChange: (
     organizationId: string,
@@ -30,30 +32,54 @@ export function OrganizationAccessFields({
   organizations,
   homeOrganizationId,
   includeHomeOrganization = true,
+  homePermissionKeys,
+  onHomeChange,
   values,
   onChange,
 }: OrganizationAccessFieldsProps) {
-  const availableOrganizations = includeHomeOrganization
+  const availableOrganizations = includeHomeOrganization && !onHomeChange
     ? organizations
     : organizations.filter((organization) => organization.id !== homeOrganizationId);
 
   return (
-    <fieldset className="space-y-3">
-      <legend className="text-sm font-semibold text-navy">
-        {dictionary.additionalAccess}
-      </legend>
-      <div className="grid gap-4">
-        {availableOrganizations.map((organization) => (
-          <OrganizationPermissionCard
-            key={organization.id}
-            dictionary={dictionary}
-            organization={organization}
-            permissionKeys={values[organization.id] ?? []}
-            onChange={(permissionKeys) => onChange(organization.id, permissionKeys)}
-          />
-        ))}
-      </div>
-    </fieldset>
+    <div className="space-y-5">
+      {onHomeChange && homeOrganizationId ? (
+        <fieldset className="space-y-3">
+          <legend className="text-sm font-semibold text-navy">
+            {dictionary.homeOrganization}
+          </legend>
+          {(() => {
+            const organization = organizations.find(
+              (candidate) => candidate.id === homeOrganizationId,
+            );
+            return organization ? (
+              <OrganizationPermissionCard
+                dictionary={dictionary}
+                organization={organization}
+                permissionKeys={normalizeLegacyPermissionsForEditor(homePermissionKeys ?? [])}
+                onChange={onHomeChange}
+              />
+            ) : null;
+          })()}
+        </fieldset>
+      ) : null}
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-semibold text-navy">
+          {dictionary.additionalAccess}
+        </legend>
+        <div className="grid gap-4">
+          {availableOrganizations.map((organization) => (
+            <OrganizationPermissionCard
+              key={organization.id}
+              dictionary={dictionary}
+              organization={organization}
+                permissionKeys={normalizeLegacyPermissionsForEditor(values[organization.id] ?? [])}
+              onChange={(permissionKeys) => onChange(organization.id, permissionKeys)}
+            />
+          ))}
+        </div>
+      </fieldset>
+    </div>
   );
 }
 
@@ -68,11 +94,12 @@ function OrganizationPermissionCard({
   permissionKeys: OrganizationPermissionKey[];
   onChange: (permissionKeys: OrganizationPermissionKey[]) => void;
 }) {
-  const enabled = permissionKeys.length > 0;
-  const selected = new Set(permissionKeys);
+  const editablePermissionKeys = normalizeLegacyPermissionsForEditor(permissionKeys);
+  const enabled = editablePermissionKeys.length > 0;
+  const selected = new Set(editablePermissionKeys);
 
   function setEnabled(nextEnabled: boolean) {
-    if (!nextEnabled && permissionKeys.length > 0) {
+    if (!nextEnabled && editablePermissionKeys.length > 0) {
       const confirmed = window.confirm(
         dictionary.permissions.disableOrganizationAccessWarning,
       );
@@ -83,7 +110,7 @@ function OrganizationPermissionCard({
   }
 
   function setPermission(permissionKey: OrganizationPermissionKey, checked: boolean) {
-    const next = new Set(stripLegacyPermissionKeys(permissionKeys));
+    const next = new Set(normalizeLegacyPermissionsForEditor(permissionKeys));
     if (checked) {
       next.add(permissionKey);
     } else {
@@ -133,35 +160,155 @@ function OrganizationPermissionCard({
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            {organizationPermissionGroups.filter((group) => group.id !== "fleet").map((group) => (
+            {organizationPermissionGroups.map((group) => (
               <div key={group.id} className="rounded-xl border border-border bg-surface p-4">
                 <h4 className="text-sm font-bold text-navy">
                   {dictionary.permissions.groups[group.id]}
                 </h4>
-                <div className="mt-3 grid gap-2">
-                  {group.permissions.map((permissionKey) => (
-                    <label
-                      key={permissionKey}
-                      className="flex items-start gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-navy"
-                    >
-                      <input
-                        type="checkbox"
+                {group.id === "app_requests" ? (
+                  <AppRequestsPermissionMatrix
+                    dictionary={dictionary}
+                    selected={selected}
+                    onChange={setPermission}
+                  />
+                ) : (
+                  <div className="mt-3 grid gap-2">
+                    {group.permissions.map((permissionKey) => (
+                      <PermissionCheckbox
+                        key={permissionKey}
+                        permissionKey={permissionKey}
+                        label={dictionary.permissions.labels[permissionKey]}
                         checked={selected.has(permissionKey)}
-                        onChange={(event) =>
-                          setPermission(permissionKey, event.target.checked)
-                        }
-                        className="mt-1 size-4 accent-primary"
+                        onChange={setPermission}
                       />
-                      <span>{dictionary.permissions.labels[permissionKey]}</span>
-                    </label>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         </div>
       ) : null}
     </details>
+  );
+}
+
+function PermissionCheckbox({
+  permissionKey,
+  label,
+  checked,
+  onChange,
+}: {
+  permissionKey: OrganizationPermissionKey;
+  label: string;
+  checked: boolean;
+  onChange: (permissionKey: OrganizationPermissionKey, checked: boolean) => void;
+}) {
+  return (
+    <label className="flex min-w-0 items-start gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-navy">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(permissionKey, event.target.checked)}
+        className="mt-1 size-4 shrink-0 accent-primary"
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function AppRequestsPermissionMatrix({
+  dictionary,
+  selected,
+  onChange,
+}: {
+  dictionary: Dictionary["dashboard"]["userManagement"];
+  selected: Set<OrganizationPermissionKey>;
+  onChange: (permissionKey: OrganizationPermissionKey, checked: boolean) => void;
+}) {
+  const requestRows: readonly [string, OrganizationPermissionKey, OrganizationPermissionKey][] = [
+    ["leave", "app_requests.leave.view", "app_requests.leave.review"],
+    ["maintenance", "app_requests.maintenance.view", "app_requests.maintenance.review"],
+    ["meeting", "app_requests.meeting.view", "app_requests.meeting.review"],
+    ["oilChange", "app_requests.oil_change.view", "app_requests.oil_change.review"],
+    ["shiftChange", "app_requests.shift_change.view", "app_requests.shift_change.review"],
+  ];
+  return (
+    <div className="mt-3 space-y-4">
+      <PermissionMatrixTable
+        title={dictionary.permissions.groups.app_requests}
+        columns={[dictionary.permissions.matrix.view, dictionary.permissions.matrix.review]}
+        rows={requestRows.map(([labelKey, viewKey, reviewKey]) => ({
+          label: dictionary.permissions.matrix.requestTypes[labelKey as keyof typeof dictionary.permissions.matrix.requestTypes],
+          cells: [viewKey, reviewKey],
+        }))}
+        selected={selected}
+        onChange={onChange}
+      />
+      <PermissionMatrixTable
+        title={dictionary.permissions.matrix.odometer.title}
+        columns={[
+          dictionary.permissions.matrix.view,
+          dictionary.permissions.matrix.review,
+          dictionary.permissions.matrix.edit,
+          dictionary.permissions.matrix.approve,
+          dictionary.permissions.matrix.reject,
+        ]}
+        rows={[{
+          label: dictionary.permissions.matrix.odometer.title,
+          cells: [
+            "odometer.view",
+            "odometer.review",
+            "odometer.edit",
+            "odometer.approve",
+            "odometer.reject",
+          ],
+        }]}
+        selected={selected}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+function PermissionMatrixTable({
+  title,
+  columns,
+  rows,
+  selected,
+  onChange,
+}: {
+  title: string;
+  columns: string[];
+  rows: { label: string; cells: OrganizationPermissionKey[] }[];
+  selected: Set<OrganizationPermissionKey>;
+  onChange: (permissionKey: OrganizationPermissionKey, checked: boolean) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <div className="min-w-[32rem]">
+        <div className="grid grid-cols-[minmax(10rem,1fr)_repeat(5,minmax(4.75rem,auto))] items-center gap-2 bg-background px-3 py-2 text-xs font-bold text-muted">
+          <span>{title}</span>
+          {columns.map((column) => <span key={column} className="text-center">{column}</span>)}
+        </div>
+        {rows.map((row) => (
+          <div key={row.label} className="grid grid-cols-[minmax(10rem,1fr)_repeat(5,minmax(4.75rem,auto))] items-center gap-2 border-t border-border px-3 py-2">
+            <span className="min-w-0 text-sm font-semibold text-navy">{row.label}</span>
+            {row.cells.map((permissionKey) => (
+              <span key={permissionKey} className="flex justify-center">
+                <input
+                  type="checkbox"
+                  aria-label={permissionKey}
+                  checked={selected.has(permissionKey)}
+                  onChange={(event) => onChange(permissionKey, event.target.checked)}
+                  className="size-4 accent-primary"
+                />
+              </span>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

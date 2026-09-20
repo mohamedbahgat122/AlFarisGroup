@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { getOrganizationPermissions } from "@/features/permissions/server";
 
 const approvalErrorMessages: Record<string, string> = {
   SHIFT_CHANGE_DATE_BEFORE_ACTIVE_ASSIGNMENT:
@@ -67,6 +68,25 @@ export async function rejectShiftChangeRequestAction(
   const admin = await getAuthenticatedAdmin();
   if (admin.status !== "authorized") {
     return { success: false, error: "غير مصرح بتنفيذ هذا الإجراء." };
+  }
+
+  const { data: request } = await admin.supabase
+    .from("driver_shift_change_requests")
+    .select("organization_id")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (!request) return { success: false, error: shiftChangeRejectionFailedMessage };
+  const permissions = await getOrganizationPermissions(
+    admin.supabase,
+    admin.profile,
+    request.organization_id,
+  );
+  if (
+    admin.profile.role !== "system_owner" &&
+    !permissions.has("app_requests.review") &&
+    !permissions.has("app_requests.shift_change.review")
+  ) {
+    return { success: false, error: shiftChangeRejectionFailedMessage };
   }
 
   const { error } = await admin.supabase

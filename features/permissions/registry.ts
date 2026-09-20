@@ -32,7 +32,22 @@ export const organizationPermissionKeys = [
   "fuel.increase.review",
   "app_requests.view",
   "app_requests.review",
+  "app_requests.leave.view",
+  "app_requests.leave.review",
+  "app_requests.maintenance.view",
+  "app_requests.maintenance.review",
+  "app_requests.meeting.view",
+  "app_requests.meeting.review",
+  "app_requests.oil_change.view",
+  "app_requests.oil_change.review",
+  "app_requests.shift_change.view",
+  "app_requests.shift_change.review",
   "odometer.manage",
+  "odometer.view",
+  "odometer.review",
+  "odometer.edit",
+  "odometer.approve",
+  "odometer.reject",
   "notifications.view",
   "driver_warnings.view",
   "driver_warnings.issue",
@@ -93,8 +108,13 @@ export const viewOnlyOrganizationPermissionKeys = [
   "fleet.cars.view",
   "fleet.motorcycles.view",
   "fuel.reports.view",
-  "app_requests.view",
-  "odometer.manage",
+  "app_requests.leave.view",
+  "app_requests.maintenance.view",
+  "app_requests.meeting.view",
+  "app_requests.oil_change.view",
+  "app_requests.shift_change.view",
+  "odometer.view",
+  "odometer.view",
   "notifications.view",
   "driver_warnings.view",
   "shifts.view",
@@ -155,6 +175,8 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
       "fleet.archive",
       "fleet.operating_card.download",
       "fleet.activity.view",
+      "maintenance_materials.view",
+      "maintenance_materials.manage",
     ],
   },
   {
@@ -168,9 +190,21 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
   {
     id: "app_requests",
     permissions: [
-      "odometer.manage",
-      "app_requests.view",
-      "app_requests.review",
+      "app_requests.leave.view",
+      "app_requests.leave.review",
+      "app_requests.maintenance.view",
+      "app_requests.maintenance.review",
+      "app_requests.meeting.view",
+      "app_requests.meeting.review",
+      "app_requests.oil_change.view",
+      "app_requests.oil_change.review",
+      "app_requests.shift_change.view",
+      "app_requests.shift_change.review",
+      "odometer.view",
+      "odometer.review",
+      "odometer.edit",
+      "odometer.approve",
+      "odometer.reject",
     ],
   },
   {
@@ -199,8 +233,6 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
       "maintenance_jobs.view",
       "maintenance_jobs.assign",
       "maintenance_jobs.cancel",
-      "maintenance_materials.view",
-      "maintenance_materials.manage",
     ],
   },
   {
@@ -239,6 +271,53 @@ export function stripLegacyPermissionKeys(
   values: readonly OrganizationPermissionKey[],
 ): OrganizationPermissionKey[] {
   return values.filter((permissionKey) => permissionKey !== "order_periods.manage");
+}
+
+const appRequestViewPermissionKeys = [
+  "app_requests.leave.view",
+  "app_requests.maintenance.view",
+  "app_requests.meeting.view",
+  "app_requests.oil_change.view",
+  "app_requests.shift_change.view",
+] as const satisfies readonly OrganizationPermissionKey[];
+
+const appRequestReviewPermissionKeys = [
+  "app_requests.leave.review",
+  "app_requests.maintenance.review",
+  "app_requests.meeting.review",
+  "app_requests.oil_change.review",
+  "app_requests.shift_change.review",
+] as const satisfies readonly OrganizationPermissionKey[];
+
+const odometerGranularPermissionKeys = [
+  "odometer.view",
+  "odometer.review",
+  "odometer.edit",
+  "odometer.approve",
+  "odometer.reject",
+] as const satisfies readonly OrganizationPermissionKey[];
+
+/** Expands legacy broad grants for the permission editor, then removes them from editable state. */
+export function normalizeLegacyPermissionsForEditor(
+  values: readonly OrganizationPermissionKey[],
+): OrganizationPermissionKey[] {
+  const permissions = new Set(values);
+
+  if (permissions.has("app_requests.view")) {
+    appRequestViewPermissionKeys.forEach((key) => permissions.add(key));
+  }
+  if (permissions.has("app_requests.review")) {
+    appRequestReviewPermissionKeys.forEach((key) => permissions.add(key));
+  }
+  if (permissions.has("odometer.manage")) {
+    odometerGranularPermissionKeys.forEach((key) => permissions.add(key));
+  }
+
+  permissions.delete("app_requests.view");
+  permissions.delete("app_requests.review");
+  permissions.delete("odometer.manage");
+
+  return applyPermissionDependencies(Array.from(permissions));
 }
 
 export function applyPermissionDependencies(
@@ -294,6 +373,20 @@ export function applyPermissionDependencies(
 
   if (permissions.has("app_requests.review")) {
     permissions.add("app_requests.view");
+  }
+
+  for (const [review, view] of [
+    ["app_requests.leave.review", "app_requests.leave.view"],
+    ["app_requests.maintenance.review", "app_requests.maintenance.view"],
+    ["app_requests.meeting.review", "app_requests.meeting.view"],
+    ["app_requests.oil_change.review", "app_requests.oil_change.view"],
+    ["app_requests.shift_change.review", "app_requests.shift_change.view"],
+    ["odometer.review", "odometer.view"],
+    ["odometer.edit", "odometer.view"],
+    ["odometer.approve", "odometer.view"],
+    ["odometer.reject", "odometer.view"],
+  ] as const) {
+    if (permissions.has(review as OrganizationPermissionKey)) permissions.add(view as OrganizationPermissionKey);
   }
 
   if (permissions.has("driver_warnings.issue") || permissions.has("driver_warnings.revoke")) {

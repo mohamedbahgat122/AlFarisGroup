@@ -212,7 +212,7 @@ export async function getManagedUsersForUserManagement({
     .map((p) => p.avatar_path)
     .filter((path): path is string => Boolean(path));
 
-  let signedUrlsMap = new Map<string, string>();
+  const signedUrlsMap = new Map<string, string>();
   if (avatarPaths.length > 0) {
     const { data: urlData } = await currentUser.supabase.storage
       .from("profile-avatars")
@@ -240,7 +240,16 @@ export async function getManagedUsersForUserManagement({
       jobTitle: profile.job_title,
       status: profile.status,
       homeOrganization: profile.home_organization_id
-        ? organizationsById.get(profile.home_organization_id) ?? null
+        ? organizationsById.get(profile.home_organization_id)
+          ? {
+              ...organizationsById.get(profile.home_organization_id)!,
+              permissionKeys: normalizePermissionKeys(
+                permissionsByUserAndOrganization.get(
+                  `${profile.id}:${profile.home_organization_id}`,
+                ) ?? [],
+              ),
+            }
+          : null
         : null,
       additionalAccess: Array.from(
         new Set([
@@ -252,6 +261,9 @@ export async function getManagedUsersForUserManagement({
             .map((key) => key.slice(profile.id.length + 1)),
         ]),
       ).flatMap((organizationId) => {
+        if (organizationId === profile.home_organization_id) {
+          return [];
+        }
         const organization = organizationsById.get(organizationId);
 
         if (!organization) {

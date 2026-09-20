@@ -45,7 +45,7 @@ export default async function OdometerRoute({ params, searchParams }: RouteProps
   if (access.status !== "success") return <AccessDenied locale={locale} />;
 
   const organization = access.organization;
-  if (!organization.navigation.odometerManagement) {
+  if (!organization.permissionKeys.some((key) => ["odometer.manage", "odometer.view"].includes(key))) {
     return <AccessDenied locale={locale} />;
   }
 
@@ -110,7 +110,7 @@ export default async function OdometerRoute({ params, searchParams }: RouteProps
             organizationCode={organizationCode}
             organizationId={organization.id}
             rows={data.rows}
-            canReview={organization.permissionKeys.includes("odometer.manage")}
+            canEdit={organization.permissionKeys.some((key) => ["odometer.manage", "odometer.edit"].includes(key))}
           />
         )}
         {data.totalPages > 1 ? (

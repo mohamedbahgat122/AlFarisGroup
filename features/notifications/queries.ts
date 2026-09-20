@@ -3,6 +3,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getBusinessDateString, getExpiryStatus } from "@/features/drivers/expiry";
 import type { AccessibleOrganization } from "@/features/organizations/types";
+import { canViewRequestType } from "@/features/app-requests/authorization";
+import type { DriverAppRequestType } from "@/features/app-requests/types";
 import type { Database } from "@/types/database";
 import type {
   AppNotification,
@@ -162,25 +164,17 @@ export async function getAppNotificationsForCurrentUser({
     (organization) => organization.id,
   );
 
-  const [notificationsResult, unreadResult] = await Promise.all([
-    supabase
-      .from("app_notifications")
-      .select(
-        "id, type, title, message, entity_type, entity_id, organization_id, is_read, read_at, created_at",
-      )
-      .in("organization_id", organizationIds)
-      .eq("recipient_user_id", recipientUserId)
-      .order("created_at", { ascending: false })
-      .limit(limit),
-    supabase
-      .from("app_notifications")
-      .select("id", { count: "exact", head: true })
-      .in("organization_id", organizationIds)
-      .eq("recipient_user_id", recipientUserId)
-      .is("read_at", null),
-  ]);
+  const notificationsResult = await supabase
+    .from("app_notifications")
+    .select(
+      "id, type, title, message, entity_type, entity_id, organization_id, is_read, read_at, created_at",
+    )
+    .in("organization_id", organizationIds)
+    .eq("recipient_user_id", recipientUserId)
+    .order("created_at", { ascending: false })
+    .limit(Math.max(limit * 5, 100));
 
-  if (notificationsResult.error || unreadResult.error) {
+  if (notificationsResult.error) {
     return {
       status: "load_error",
       notifications: [],
@@ -189,14 +183,16 @@ export async function getAppNotificationsForCurrentUser({
     };
   }
 
-  return {
-    status: "success",
-    notifications: await enrichAppNotifications(
+  const enrichedNotifications = await enrichAppNotifications(
       supabase,
       (notificationsResult.data ?? []) as AppNotificationRow[],
       organizations,
-    ),
-    unreadCount: unreadResult.count ?? 0,
+    );
+
+  return {
+    status: "success",
+    notifications: enrichedNotifications.slice(0, limit),
+    unreadCount: enrichedNotifications.filter((notification) => !notification.isRead).length,
     canViewNotifications: true,
   };
 }
@@ -209,10 +205,28 @@ async function enrichAppNotifications(
   const organizationById = new Map(
     organizations.map((organization) => [organization.id, organization]),
   );
-  const directRequestIds = rows
+  const candidateRows = rows.filter((row) => {
+    if (row.entity_type !== "maintenance_job") {
+      return true;
+    }
+
+    const organization = row.organization_id
+      ? organizationById.get(row.organization_id)
+      : null;
+    if (!organization) {
+      return false;
+    }
+
+    return (
+      organization.permissionKeys.includes("app_requests.view") ||
+      organization.permissionKeys.includes("app_requests.maintenance.view") ||
+      organization.permissionKeys.includes("app_requests.maintenance.review")
+    );
+  });
+  const directRequestIds = candidateRows
     .filter((row) => row.entity_type === "driver_app_request" && row.entity_id)
     .map((row) => row.entity_id as string);
-  const maintenanceJobIds = rows
+  const maintenanceJobIds = candidateRows
     .filter((row) => row.entity_type === "maintenance_job" && row.entity_id)
     .map((row) => row.entity_id as string);
   const requestsById = new Map<string, RequestRow>();
@@ -248,23 +262,78 @@ async function enrichAppNotifications(
       requestsById.set(request.id, request);
     }
 
-    const driverIds = Array.from(
-      new Set((requests ?? []).map((request) => request.driver_id)),
-    );
+  }
 
-    if (driverIds.length > 0) {
-      const { data: drivers } = await supabase
-        .from("drivers")
-        .select("id, full_name")
-        .in("id", driverIds);
+  const visibleRows = candidateRows.filter((row) => {
+    const organization = row.organization_id
+      ? organizationById.get(row.organization_id)
+      : null;
+    if (!organization) return false;
 
-      for (const driver of (drivers ?? []) as DriverRow[]) {
-        driversById.set(driver.id, driver);
-      }
+    const maintenanceJob =
+      row.entity_type === "maintenance_job" && row.entity_id
+        ? maintenanceJobsById.get(row.entity_id)
+        : null;
+    const requestId =
+      row.entity_type === "driver_app_request"
+        ? row.entity_id
+        : maintenanceJob?.request_id ?? null;
+    const request = requestId ? requestsById.get(requestId) : null;
+    const requestType = request?.request_type ?? maintenanceJob?.job_type ?? null;
+
+    if (isDriverAppRequestType(requestType)) {
+      return canViewRequestType(organization.permissionKeys, requestType);
+    }
+    if (row.entity_type === "driver_app_request") {
+      return false;
+    }
+    if (row.entity_type === "driver_shift_change_request" || row.type.includes("shift_change")) {
+      return organization.permissionKeys.includes("app_requests.view") ||
+        organization.permissionKeys.includes("app_requests.shift_change.view") ||
+        organization.permissionKeys.includes("app_requests.shift_change.review");
+    }
+    if (row.entity_type === "driver_shift" || row.type.includes("odometer")) {
+      return organization.permissionKeys.includes("odometer.manage") ||
+        organization.permissionKeys.includes("odometer.view") ||
+        organization.permissionKeys.includes("odometer.review") ||
+        organization.permissionKeys.includes("odometer.edit") ||
+        organization.permissionKeys.includes("odometer.approve") ||
+        organization.permissionKeys.includes("odometer.reject");
+    }
+    if (row.type.includes("order_shift") || row.type.includes("order_period")) {
+      return organization.permissionKeys.includes("order_periods.manage") ||
+        organization.permissionKeys.includes("order_periods.requests.review");
+    }
+    return true;
+  });
+
+  const visibleDriverIds = Array.from(
+    new Set(
+      visibleRows.flatMap((row) => {
+        const maintenanceJob =
+          row.entity_type === "maintenance_job" && row.entity_id
+            ? maintenanceJobsById.get(row.entity_id)
+            : null;
+        const requestId =
+          row.entity_type === "driver_app_request"
+            ? row.entity_id
+            : maintenanceJob?.request_id ?? null;
+        const request = requestId ? requestsById.get(requestId) : null;
+        return request?.driver_id ? [request.driver_id] : [];
+      }),
+    ),
+  );
+  if (visibleDriverIds.length > 0) {
+    const { data: drivers } = await supabase
+      .from("drivers")
+      .select("id, full_name")
+      .in("id", visibleDriverIds);
+    for (const driver of drivers ?? []) {
+      driversById.set(driver.id, driver);
     }
   }
 
-  return rows.map((row) => {
+  return visibleRows.map((row) => {
     const organization = row.organization_id
       ? organizationById.get(row.organization_id)
       : null;
@@ -299,6 +368,17 @@ async function enrichAppNotifications(
       createdAt: row.created_at,
     };
   });
+}
+
+function isDriverAppRequestType(
+  value: string | null,
+): value is DriverAppRequestType {
+  return (
+    value === "leave" ||
+    value === "maintenance" ||
+    value === "meeting" ||
+    value === "oil_change"
+  );
 }
 
 function buildDriverAlerts(

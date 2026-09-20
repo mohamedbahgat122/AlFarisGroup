@@ -19,6 +19,8 @@ import type {
 import type { AccessibleOrganization } from "@/features/organizations/types";
 import type { Database } from "@/types/database";
 import type { Locale } from "@/types/locale";
+import { canViewRequestType } from "@/features/app-requests/authorization";
+import { getOrganizationPermissions } from "@/features/permissions/server";
 
 type RequestRecord = {
   id: string;
@@ -308,8 +310,7 @@ export async function getOilMaintenanceAlertsForDashboard({
 }): Promise<OilMaintenanceAlertsResult> {
   const visibleOrganizations = organizations.filter(
     (organization) =>
-      organization.navigation.appRequests &&
-      organization.permissionKeys.includes("app_requests.view"),
+      canViewRequestType(organization.permissionKeys, "oil_change"),
   );
 
   if (visibleOrganizations.length === 0) {
@@ -540,6 +541,15 @@ export async function getAppRequestPage({
   const admin = await getAuthenticatedAdmin();
 
   if (admin.status !== "authorized") {
+    return { status: "unauthorized", rows: [] };
+  }
+
+  const permissions = await getOrganizationPermissions(
+    admin.supabase,
+    admin.profile,
+    organizationId,
+  );
+  if (!canViewRequestType(permissions, requestType)) {
     return { status: "unauthorized", rows: [] };
   }
 
