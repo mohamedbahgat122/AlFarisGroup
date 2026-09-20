@@ -362,8 +362,8 @@ export async function updateManagedUserPermissions(
     p_actor_user_id: currentUser.user.id,
     p_target_user_id: normalizedInput.targetUserId,
     p_access: normalizedInput.additionalAccess.map((access) => ({
-      organizationId: access.organizationId,
-      permissionKeys: access.permissionKeys,
+      organization_id: access.organizationId,
+      permission_keys: access.permissionKeys,
     })),
   });
 

@@ -12,6 +12,7 @@ import type {
 import type { DriverSummary, DriverStatus } from "@/features/drivers/types";
 import { getBusinessDateString } from "@/features/drivers/expiry";
 import type { Database } from "@/types/database";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createDriverDocumentSignedUrls } from "@/features/drivers/storage";
 type DriverRow = Database["public"]["Tables"]["drivers"]["Row"];
 type BankRow = Database["public"]["Tables"]["driver_bank_details"]["Row"];
@@ -77,6 +78,9 @@ export async function getDriversForOrganization(
 
   const requestedPage = normalizePage(options?.page);
   const pageSize = normalizePageSize(options?.pageSize);
+  const vehicleDocumentDriverIds = options?.documentStatus
+    ? await getVehicleDocumentDriverIds(admin.supabase, organizationId)
+    : null;
   let queryColumnMode: DriverQueryColumnMode = "withVehicleIdAndNfc";
   let matchingAppAccountIds: string[] | null | "not_linked" | "empty" = null;
   if (options?.appAccountStatus) {
@@ -106,7 +110,14 @@ export async function getDriversForOrganization(
   }
 
   const fetchPage = (page: number, columnMode: DriverQueryColumnMode) =>
-    buildDriversPageQuery(admin.supabase, organizationId, options, columnMode, matchingAppAccountIds)
+    buildDriversPageQuery(
+      admin.supabase,
+      organizationId,
+      options,
+      columnMode,
+      matchingAppAccountIds,
+      vehicleDocumentDriverIds,
+    )
       .order("full_name", { ascending: true })
       .range((page - 1) * pageSize, page * pageSize - 1);
 
@@ -183,9 +194,12 @@ export async function getDriversForOrganization(
     ),
   );
   const avatarUrls = await createDriverDocumentSignedUrls(avatarPaths);
+  const vehiclePlateNumbers = await getVehicleDetails(
+    rows.map((driver) => driver.vehicle_id),
+  );
 
   const drivers = rows.map((driver) =>
-    mapDriver(driver, organizationName, actors, appAccounts, avatarUrls, {
+    mapDriver(driver, organizationName, actors, appAccounts, avatarUrls, vehiclePlateNumbers, {
       canViewDocuments,
       canDownloadDocuments,
     }),
@@ -204,12 +218,42 @@ export async function getDriversForOrganization(
   };
 }
 
+async function getVehicleDetails(
+  vehicleIds: Array<string | null>,
+) {
+  const ids = Array.from(new Set(vehicleIds.filter((id): id is string => Boolean(id))));
+  if (ids.length === 0) return new Map<string, { plateNumber: string; authorizationExpiryDate: string | null; operatingCardExpiryDate: string | null }>();
+
+  let serviceClient;
+  try {
+    serviceClient = createAdminClient();
+  } catch {
+    return new Map<string, { plateNumber: string; authorizationExpiryDate: string | null; operatingCardExpiryDate: string | null }>();
+  }
+
+  const { data, error } = await serviceClient
+    .from("fleet_vehicles")
+    .select("id, plate_number, authorization_expiry_date, operating_card_expiry_date")
+    .in("id", ids);
+
+  if (error) return new Map<string, { plateNumber: string; authorizationExpiryDate: string | null; operatingCardExpiryDate: string | null }>();
+  return new Map((data ?? []).map((vehicle) => [vehicle.id, {
+    plateNumber: vehicle.plate_number,
+    authorizationExpiryDate: vehicle.authorization_expiry_date,
+    operatingCardExpiryDate: vehicle.operating_card_expiry_date,
+  }]));
+}
+
 function buildDriversPageQuery(
   supabase: SupabaseClient<Database>,
   organizationId: string,
   options: Parameters<typeof getDriversForOrganization>[2],
   columnMode: DriverQueryColumnMode,
   matchingAppAccountIds?: string[] | null | "not_linked" | "empty",
+  vehicleDocumentDriverIds?: {
+    expired: string[];
+    threshold: string[];
+  } | null,
 ) {
   let query = supabase
     .from("drivers")
@@ -252,26 +296,36 @@ function buildDriversPageQuery(
     const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
     const thresholdDate = getBusinessDateString(new Date(Date.now() + tenDaysMs));
 
-    const expiredCondition = `iqama_expiry_date.lte.${today},driving_license_expiry_date.lte.${today},driver_card_expiry_date.lte.${today},vehicle_authorization_expiry_date.lte.${today},operating_card_expiry_date.lte.${today}`;
-    const expiringSoonCondition = `iqama_expiry_date.lte.${thresholdDate},driving_license_expiry_date.lte.${thresholdDate},driver_card_expiry_date.lte.${thresholdDate},vehicle_authorization_expiry_date.lte.${thresholdDate},operating_card_expiry_date.lte.${thresholdDate}`;
+    const personalExpiredCondition = `iqama_expiry_date.lte.${today},driving_license_expiry_date.lte.${today},driver_card_expiry_date.lte.${today}`;
+    const personalThresholdCondition = `iqama_expiry_date.lte.${thresholdDate},driving_license_expiry_date.lte.${thresholdDate},driver_card_expiry_date.lte.${thresholdDate}`;
+    const vehicleExpiredIds = vehicleDocumentDriverIds?.expired ?? [];
+    const vehicleThresholdIds = vehicleDocumentDriverIds?.threshold ?? [];
+    const vehicleExpiredCondition = vehicleExpiredIds.length > 0
+      ? `id.in.(${vehicleExpiredIds.join(",")})`
+      : null;
+    const vehicleThresholdCondition = vehicleThresholdIds.length > 0
+      ? `id.in.(${vehicleThresholdIds.join(",")})`
+      : null;
 
     if (options.documentStatus === "expired") {
-      query = query.or(expiredCondition);
+      query = query.or([personalExpiredCondition, vehicleExpiredCondition].filter(Boolean).join(","));
     } else if (options.documentStatus === "expiring") {
       query = query
-        .or(expiringSoonCondition)
+        .or([personalThresholdCondition, vehicleThresholdCondition].filter(Boolean).join(","))
         .not("iqama_expiry_date", "lte", today)
         .not("driving_license_expiry_date", "lte", today)
-        .not("driver_card_expiry_date", "lte", today)
-        .not("vehicle_authorization_expiry_date", "lte", today)
-        .not("operating_card_expiry_date", "lte", today);
+        .not("driver_card_expiry_date", "lte", today);
+      if (vehicleExpiredIds.length > 0) {
+        query = query.not("id", "in", `(${vehicleExpiredIds.join(",")})`);
+      }
     } else if (options.documentStatus === "valid") {
       query = query
         .not("iqama_expiry_date", "lte", thresholdDate)
         .not("driving_license_expiry_date", "lte", thresholdDate)
-        .not("driver_card_expiry_date", "lte", thresholdDate)
-        .not("vehicle_authorization_expiry_date", "lte", thresholdDate)
-        .not("operating_card_expiry_date", "lte", thresholdDate);
+        .not("driver_card_expiry_date", "lte", thresholdDate);
+      if (vehicleThresholdIds.length > 0) {
+        query = query.not("id", "in", `(${vehicleThresholdIds.join(",")})`);
+      }
     }
   }
 
@@ -288,6 +342,69 @@ function buildDriversPageQuery(
   }
 
   return query;
+}
+
+async function getVehicleDocumentDriverIds(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+) {
+  const empty = { expired: [] as string[], threshold: [] as string[] };
+  const { data: drivers, error: driversError } = await supabase
+    .from("drivers")
+    .select("id, vehicle_id")
+    .eq("organization_id", organizationId);
+
+  if (driversError) return empty;
+
+  const driverVehicleRows = (drivers ?? []) as Array<{ id: string; vehicle_id: string | null }>;
+  const vehicleIds = Array.from(
+    new Set(driverVehicleRows.map((driver) => driver.vehicle_id).filter((id): id is string => Boolean(id))),
+  );
+  if (vehicleIds.length === 0) return empty;
+
+  let fleetClient;
+  try {
+    fleetClient = createAdminClient();
+  } catch {
+    return empty;
+  }
+
+  const { data: vehicles, error: vehiclesError } = await fleetClient
+    .from("fleet_vehicles")
+    .select("id, authorization_expiry_date, operating_card_expiry_date")
+    .in("id", vehicleIds);
+
+  if (vehiclesError) return empty;
+
+  const today = getBusinessDateString();
+  const thresholdDate = getBusinessDateString(new Date(Date.now() + 10 * 24 * 60 * 60 * 1000));
+  const expiredVehicleIds = new Set(
+    (vehicles ?? [])
+      .filter((vehicle) =>
+        [vehicle.authorization_expiry_date, vehicle.operating_card_expiry_date].some(
+          (date) => date && date <= today,
+        ),
+      )
+      .map((vehicle) => vehicle.id),
+  );
+  const thresholdVehicleIds = new Set(
+    (vehicles ?? [])
+      .filter((vehicle) =>
+        [vehicle.authorization_expiry_date, vehicle.operating_card_expiry_date].some(
+          (date) => date && date <= thresholdDate,
+        ),
+      )
+      .map((vehicle) => vehicle.id),
+  );
+
+  return {
+    expired: driverVehicleRows
+      .filter((driver) => driver.vehicle_id && expiredVehicleIds.has(driver.vehicle_id))
+      .map((driver) => driver.id),
+    threshold: driverVehicleRows
+      .filter((driver) => driver.vehicle_id && thresholdVehicleIds.has(driver.vehicle_id))
+      .map((driver) => driver.id),
+  };
 }
 
 function getDriversSelectColumns(columnMode: DriverQueryColumnMode) {
@@ -389,6 +506,7 @@ function mapDriver(
   actors: Map<string, DriverActor>,
   appAccounts: Map<string, ProfileRow>,
   avatarUrls: Map<string, string>,
+  vehiclePlateNumbers: Map<string, { plateNumber: string; authorizationExpiryDate: string | null; operatingCardExpiryDate: string | null }>,
   documentPermissions: {
     canViewDocuments: boolean;
     canDownloadDocuments: boolean;
@@ -440,7 +558,9 @@ function mapDriver(
     nfcNumber: "nfc_number" in driver ? driver.nfc_number ?? null : null,
     vehicleType: driver.vehicle_type,
     vehicleId: driver.vehicle_id || null,
-    vehicleNumber: driver.vehicle_number,
+    vehicleNumber: driver.vehicle_id
+      ? vehiclePlateNumbers.get(driver.vehicle_id)?.plateNumber ?? ""
+      : "",
     keetaVehiclePlateNumber: driver.keeta_vehicle_plate_number ?? null,
     organizationName,
     status: driver.status,
@@ -456,8 +576,12 @@ function mapDriver(
     drivingLicenseExpiryDate: driver.driving_license_expiry_date,
     driverCardNumber: driver.driver_card_number,
     driverCardExpiryDate: driver.driver_card_expiry_date,
-    vehicleAuthorizationExpiryDate: driver.vehicle_authorization_expiry_date ?? "",
-    operatingCardExpiryDate: driver.operating_card_expiry_date,
+    vehicleAuthorizationExpiryDate: driver.vehicle_id
+      ? vehiclePlateNumbers.get(driver.vehicle_id)?.authorizationExpiryDate ?? ""
+      : "",
+    operatingCardExpiryDate: driver.vehicle_id
+      ? vehiclePlateNumbers.get(driver.vehicle_id)?.operatingCardExpiryDate ?? null
+      : null,
     iban: driver.driver_bank_details?.iban ?? null,
     bankName: driver.driver_bank_details?.bank_name ?? null,
     accountNumber: driver.driver_bank_details?.account_number ?? null,
@@ -703,9 +827,12 @@ export async function getDriversExportData(
     admin.supabase,
     rows.map((driver) => driver.auth_user_id),
   );
+  const vehiclePlateNumbers = await getVehicleDetails(
+    rows.map((driver) => driver.vehicle_id),
+  );
 
   return rows.map((driver) =>
-    mapDriver(driver, organizationName, actors, appAccounts, new Map(), {
+    mapDriver(driver, organizationName, actors, appAccounts, new Map(), vehiclePlateNumbers, {
       canViewDocuments,
       canDownloadDocuments,
     }),

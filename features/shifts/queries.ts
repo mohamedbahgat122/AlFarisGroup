@@ -29,11 +29,12 @@ type DriverOptionRow = Pick<
   | "mobile_number"
   | "status"
   | "settlement_type"
+  | "vehicle_id"
 >;
 
 type VehicleRow = Pick<
   Database["public"]["Tables"]["fleet_vehicles"]["Row"],
-  "plate_number" | "vehicle_type" | "assigned_driver_id" | "authorized_driver_id"
+  "id" | "plate_number" | "vehicle_type"
 >;
 
 type ShiftAssignmentLookupRow = Pick<
@@ -113,7 +114,6 @@ export async function getShiftManagementData({
     shiftsResult,
     assignmentsResult,
     driversResult,
-    vehiclesResult,
     scheduledChangesResult,
     attendancePoliciesResult,
   ] = await Promise.all([
@@ -143,11 +143,6 @@ export async function getShiftManagementData({
       .eq("settlement_type", "tiers")
       .order("full_name", { ascending: true }),
     admin.supabase
-      .from("fleet_vehicles")
-      .select("plate_number, vehicle_type, assigned_driver_id, authorized_driver_id")
-      .eq("organization_id", organizationId)
-      .is("archived_at", null),
-    admin.supabase
       .from("driver_shift_change_requests")
       .select(
         `
@@ -176,7 +171,6 @@ export async function getShiftManagementData({
     shiftsResult.error ||
     assignmentsResult.error ||
     driversResult.error ||
-    vehiclesResult.error ||
     scheduledChangesResult.error ||
     attendancePoliciesResult.error
   ) {
@@ -194,7 +188,14 @@ export async function getShiftManagementData({
   const shifts = (shiftsResult.data ?? []) as ShiftTemplateTableRow[];
   const assignments = (assignmentsResult.data ?? []) as ShiftAssignmentLookupRow[];
   const drivers = (driversResult.data ?? []) as DriverOptionRow[];
-  const vehicles = (vehiclesResult.data ?? []) as VehicleRow[];
+  const vehicleIds = Array.from(new Set(drivers.map((driver) => driver.vehicle_id).filter(Boolean))) as string[];
+  const { data: vehicleData, error: vehicleError } = vehicleIds.length
+    ? await createAdminClient().from("fleet_vehicles").select("id, plate_number, vehicle_type").in("id", vehicleIds).is("archived_at", null)
+    : { data: [], error: null };
+  if (vehicleError) {
+    return { status: "load_error", shifts: [], drivers: [], scheduledChanges: [], shiftChangeRequestDays: [], permissions, weeks: emptyWeeks(weeks) };
+  }
+  const vehicles = (vehicleData ?? []) as VehicleRow[];
   const attendancePolicies = new Map(
     ((attendancePoliciesResult.data ?? []) as {
       shift_template_id: string;
@@ -327,16 +328,11 @@ function mapWeeks(
   attendancePolicies: Map<string, { start_open_before_minutes: number | null; minimum_work_minutes: number | null }>,
 ): { current: ShiftWeekData; next: ShiftWeekData } {
   const driverById = new Map(drivers.map((driver) => [driver.id, driver]));
-  const vehicleByDriverId = new Map<string, VehicleRow>();
-
-  for (const vehicle of vehicles) {
-    if (vehicle.assigned_driver_id) vehicleByDriverId.set(vehicle.assigned_driver_id, vehicle);
-    if (vehicle.authorized_driver_id) vehicleByDriverId.set(vehicle.authorized_driver_id, vehicle);
-  }
+  const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
 
   return {
-    current: mapWeek(ranges.current, shifts, assignments, driverById, vehicleByDriverId, attendancePolicies),
-    next: mapWeek(ranges.next, shifts, assignments, driverById, vehicleByDriverId, attendancePolicies),
+    current: mapWeek(ranges.current, shifts, assignments, driverById, vehicleById, attendancePolicies),
+    next: mapWeek(ranges.next, shifts, assignments, driverById, vehicleById, attendancePolicies),
   };
 }
 
@@ -345,7 +341,7 @@ function mapWeek(
   shifts: ShiftTemplateTableRow[],
   assignments: ShiftAssignmentLookupRow[],
   driverById: Map<string, DriverOptionRow>,
-  vehicleByDriverId: Map<string, VehicleRow>,
+  vehicleById: Map<string, VehicleRow>,
   attendancePolicies: Map<string, { start_open_before_minutes: number | null; minimum_work_minutes: number | null }>,
 ): ShiftWeekData {
   const assignmentByDriverId = new Map<string, ShiftAssignmentLookupRow>();
@@ -370,7 +366,7 @@ function mapWeek(
     const driver = driverById.get(assignment.driver_id);
     if (!row || !driver) continue;
 
-    const vehicle = vehicleByDriverId.get(driver.id);
+    const vehicle = vehicleById.get(driver.vehicle_id ?? "");
     row.assignedDrivers.push({
       assignmentId: assignment.id,
       driverId: driver.id,
@@ -436,24 +432,14 @@ function mapDrivers(
       assignmentByDriverId.set(assignment.driver_id, assignment);
     }
   }
-  const vehicleByDriverId = new Map<string, VehicleRow>();
-
-  for (const vehicle of vehicles) {
-    if (vehicle.assigned_driver_id) {
-      vehicleByDriverId.set(vehicle.assigned_driver_id, vehicle);
-    }
-
-    if (vehicle.authorized_driver_id) {
-      vehicleByDriverId.set(vehicle.authorized_driver_id, vehicle);
-    }
-  }
+  const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
 
   return drivers.map((driver) => {
     const assignment = assignmentByDriverId.get(driver.id);
     const shift = assignment
       ? shiftById.get(assignment.shift_template_id)
       : null;
-    const vehicle = vehicleByDriverId.get(driver.id);
+    const vehicle = vehicleById.get(driver.vehicle_id ?? "");
 
     return {
       id: driver.id,

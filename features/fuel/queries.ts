@@ -27,6 +27,7 @@ type DriverRow = Pick<
   | "keeta_driver_id"
   | "keeta_vehicle_plate_number"
   | "organization_id"
+  | "vehicle_id"
   | "vehicle_number"
   | "vehicle_type"
 >;
@@ -37,6 +38,7 @@ type FuelReportDriverRow = Pick<
   | "keeta_driver_id"
   | "keeta_vehicle_plate_number"
   | "organization_id"
+  | "vehicle_id"
   | "vehicle_number"
   | "vehicle_type"
 >;
@@ -57,6 +59,7 @@ type KafaratplusDriverScopeRow = Pick<
   | "full_name"
   | "iqama_number"
   | "organization_id"
+  | "vehicle_id"
   | "status"
   | "vehicle_number"
   | "vehicle_type"
@@ -236,7 +239,7 @@ async function getLocalVehiclePlateScope(
   const { data: drivers, error: driversError } = await admin.supabase
     .from("drivers")
     .select(
-      "id, full_name, iqama_number, organization_id, status, vehicle_number, vehicle_type, keeta_vehicle_plate_number",
+      "id, full_name, iqama_number, organization_id, status, vehicle_id, vehicle_number, vehicle_type, keeta_vehicle_plate_number",
     )
     .eq("organization_id", organizationId)
     .eq("status", "active")
@@ -248,49 +251,44 @@ async function getLocalVehiclePlateScope(
   }
 
   const driverRows = (drivers ?? []) as KafaratplusDriverScopeRow[];
-  const actualPlates = Array.from(
-    new Set(
-      driverRows
-        .map((driver) => normalizePlateForFleet(driver.vehicle_number))
-        .filter(Boolean),
-    ),
-  );
-  const vehicleMetadataByPlate = await getFleetVehicleMetadataByPlate(actualPlates, admin.supabase);
+  const vehicleIds = Array.from(new Set(driverRows.map((driver) => driver.vehicle_id).filter(Boolean))) as string[];
+  const vehicleMetadataById = await getFleetVehicleMetadataById(vehicleIds, admin.supabase);
+  const actualPlates = Array.from(new Set(Array.from(vehicleMetadataById.values()).map((vehicle) => normalizePlateForFleet(vehicle.plate_number)).filter(Boolean)));
   const localVehiclesByPlate = new Map<string, LocalVehicleInfo>();
   const diagnostics = createDiagnostics(actualPlates, [], []);
   diagnostics.driversFound = driverRows.map((driver) => ({
     driver: driver.full_name,
-    actualPlate: driver.vehicle_number || null,
+    actualPlate: driver.vehicle_id ? vehicleMetadataById.get(driver.vehicle_id)?.plate_number ?? null : null,
     dashPlate: driver.keeta_vehicle_plate_number || null,
   }));
   diagnostics.actualPlatesUsed = actualPlates.sort();
   diagnostics.unmatchedDrivers = driverRows
-    .filter((driver) => !normalizePlateForFleet(driver.vehicle_number))
+    .filter((driver) => !driver.vehicle_id || !vehicleMetadataById.has(driver.vehicle_id))
     .map((driver) => ({
       driver: driver.full_name,
-      actualPlate: driver.vehicle_number || null,
+      actualPlate: driver.vehicle_id ? vehicleMetadataById.get(driver.vehicle_id)?.plate_number ?? null : null,
       reason: "missing actual plate number",
     }));
 
   for (const driver of driverRows) {
-    const normalizedPlate = normalizePlateForFleet(driver.vehicle_number);
+    const vehicle = driver.vehicle_id ? vehicleMetadataById.get(driver.vehicle_id) : undefined;
+    const normalizedPlate = vehicle ? normalizePlateForFleet(vehicle.plate_number) : null;
     if (!normalizedPlate) continue;
     if (localVehiclesByPlate.has(normalizedPlate)) {
       diagnostics.unmatchedDrivers = [
         ...(diagnostics.unmatchedDrivers ?? []),
         {
           driver: driver.full_name,
-          actualPlate: driver.vehicle_number,
+          actualPlate: vehicle?.plate_number ?? null,
           reason: "actual plate is shared with another active driver; fuel operations are attributed once to avoid duplicate totals",
         },
       ];
       continue;
     }
 
-    const vehicle = vehicleMetadataByPlate.get(normalizedPlate);
     localVehiclesByPlate.set(normalizedPlate, {
       id: vehicle?.id ?? driver.id,
-      plate: driver.vehicle_number,
+      plate: vehicle?.plate_number ?? normalizedPlate,
       normalizedPlate,
       vehicle: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
       driver: driver.full_name,
@@ -333,6 +331,28 @@ async function getFleetVehicleMetadataByPlate(
   }
 
   return vehiclesByPlate;
+}
+
+async function getFleetVehicleMetadataById(
+  ids: string[],
+  supabase: SupabaseClient<Database>,
+) {
+  const vehiclesById = new Map<string, FleetVehicleRow>();
+  if (ids.length === 0) return vehiclesById;
+
+  const { data, error } = await supabase
+    .from("fleet_vehicles")
+    .select("id, vehicle_type, plate_number, normalized_plate_number, assigned_driver_id, authorized_driver_id, organization_id, assigned_organization_id")
+    .in("id", ids)
+    .is("archived_at", null);
+
+  if (!error) {
+    for (const vehicle of (data ?? []) as FleetVehicleRow[]) {
+      vehiclesById.set(vehicle.id, vehicle);
+    }
+  }
+
+  return vehiclesById;
 }
 
 const fetchAllKafaratplusOperations = cache(
@@ -907,7 +927,7 @@ export async function getFuelManagementData({
       admin.supabase
         .from("drivers")
         .select(
-          "id, full_name, keeta_driver_id, keeta_vehicle_plate_number, organization_id, vehicle_number, vehicle_type",
+          "id, full_name, keeta_driver_id, keeta_vehicle_plate_number, organization_id, vehicle_id, vehicle_number, vehicle_type",
         )
         .eq("organization_id", organizationId)
         .eq("status", "active")
@@ -943,6 +963,7 @@ export async function getFuelManagementData({
 
   const vehiclesByDriverId = mapVehiclesByDriver(
     (vehiclesResult.data ?? []) as FleetVehicleRow[],
+    (driversResult.data ?? []) as DriverRow[],
   );
   const transactionsByDriverId = groupByDriver(
     (transactionsResult.data ?? []) as FuelTransactionRow[],
@@ -960,6 +981,7 @@ export async function getFuelManagementData({
     rows: ((driversResult.data ?? []) as DriverRow[]).map((driver) => {
       const vehicle = vehiclesByDriverId.get(driver.id);
       const registeredVehicle = resolveRegisteredDriverVehicle(driver, {
+        vehicle: vehicle ?? null,
         vehicleLabel: vehicle?.vehicle_type ?? null,
         vehiclePlate: vehicle?.plate_number ?? null,
       });
@@ -1408,7 +1430,7 @@ async function applyCurrentDriverVehicles(
   const { data, error } = await supabase
     .from("drivers")
     .select(
-      "id, organization_id, full_name, keeta_driver_id, vehicle_type, vehicle_number, keeta_vehicle_plate_number",
+        "id, organization_id, full_name, keeta_driver_id, vehicle_id, vehicle_type, vehicle_number, keeta_vehicle_plate_number",
     )
     .eq("organization_id", organizationId)
     .in("id", driverIds);
@@ -1430,6 +1452,11 @@ async function applyCurrentDriverVehicles(
       driver,
     ]),
   );
+  const vehicleIds = Array.from(new Set(Array.from(driversById.values()).map((driver) => driver.vehicle_id).filter(Boolean))) as string[];
+  const { data: vehicleRows } = vehicleIds.length
+    ? await supabase.from("fleet_vehicles").select("id, vehicle_type, plate_number, normalized_plate_number, assigned_driver_id, authorized_driver_id, organization_id, assigned_organization_id").in("id", vehicleIds).is("archived_at", null)
+    : { data: [] };
+  const vehiclesById = new Map(((vehicleRows ?? []) as FleetVehicleRow[]).map((vehicle) => [vehicle.id, vehicle]));
 
   for (const row of rows) {
     const driver = driversById.get(row.driverId);
@@ -1441,6 +1468,7 @@ async function applyCurrentDriverVehicles(
     row.driverName = driver.full_name;
     row.driverIdentifier = driver.keeta_driver_id;
     const registeredVehicle = resolveRegisteredDriverVehicle(driver, {
+      vehicle: driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) ?? null : null,
       vehicleLabel: row.vehicleLabel,
       vehiclePlate: row.vehiclePlate,
     });
@@ -1453,19 +1481,18 @@ async function applyCurrentDriverVehicles(
 function resolveRegisteredDriverVehicle(
   driver: Pick<
     FuelReportDriverRow,
-    "keeta_vehicle_plate_number" | "vehicle_number" | "vehicle_type"
+    "keeta_vehicle_plate_number" | "vehicle_type"
   >,
   fallback: {
+    vehicle: FleetVehicleRow | null;
     vehicleLabel: string | null;
     vehiclePlate: string | null;
   },
 ) {
   return {
-    vehicleLabel: driver.vehicle_type ?? fallback.vehicleLabel,
+    vehicleLabel: fallback.vehicle?.vehicle_type ?? fallback.vehicleLabel ?? driver.vehicle_type,
     vehiclePlate:
-      driver.keeta_vehicle_plate_number ??
-      driver.vehicle_number ??
-      fallback.vehiclePlate,
+      fallback.vehicle?.plate_number ?? driver.keeta_vehicle_plate_number ?? fallback.vehiclePlate,
   };
 }
 
@@ -1517,18 +1544,12 @@ function stripAccumulatorFields(row: FuelReportAccumulator): FuelReportRow {
   };
 }
 
-function mapVehiclesByDriver(vehicles: FleetVehicleRow[]) {
+function mapVehiclesByDriver(vehicles: FleetVehicleRow[], drivers: DriverRow[]) {
   const map = new Map<string, FleetVehicleRow>();
-
-  for (const vehicle of vehicles) {
-    for (const driverId of [
-      vehicle.assigned_driver_id,
-      vehicle.authorized_driver_id,
-    ]) {
-      if (driverId && !map.has(driverId)) {
-        map.set(driverId, vehicle);
-      }
-    }
+  const vehiclesById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  for (const driver of drivers) {
+    const vehicle = driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined;
+    if (vehicle) map.set(driver.id, vehicle);
   }
 
   return map;

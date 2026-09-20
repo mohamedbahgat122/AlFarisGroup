@@ -70,6 +70,7 @@ export function DashboardSidebar({
     organizationHome: true,
     drivers: true,
     driverReports: true,
+    driverOrderReports: true,
     fleetCars: true,
     fleetMotorcycles: true,
     fuelManagement: true,
@@ -90,6 +91,9 @@ export function DashboardSidebar({
     : null;
   const organizationDriversReportsHref = organizationDriversHref
     ? `${organizationDriversHref}/reports`
+    : null;
+  const organizationDriversOrderReportsHref = organizationDriversHref
+    ? `${organizationDriversHref}/order-reports`
     : null;
   const organizationDriversResignationsHref = organizationDriversHref
     ? `${organizationDriversHref}/resignations`
@@ -146,6 +150,8 @@ export function DashboardSidebar({
     Boolean(organizationDriversHref) && checkActive(organizationDriversHref, true);
   const isOrganizationDriversReportsActive =
     Boolean(organizationDriversReportsHref) && checkActive(organizationDriversReportsHref);
+  const isOrganizationDriversOrderReportsActive =
+    Boolean(organizationDriversOrderReportsHref) && checkActive(organizationDriversOrderReportsHref);
   const isOrganizationDriversResignationsActive =
     Boolean(organizationDriversResignationsHref) && checkActive(organizationDriversResignationsHref);
   const isOrganizationFuelActive =
@@ -203,6 +209,7 @@ export function DashboardSidebar({
   const isOrganizationHomePending = pendingHref === organizationHomeHref;
   const isOrganizationDriversPending = pendingHref === organizationDriversHref;
   const isOrganizationDriversReportsPending = pendingHref === organizationDriversReportsHref;
+  const isOrganizationDriversOrderReportsPending = pendingHref === organizationDriversOrderReportsHref;
   const isOrganizationDriversResignationsPending = pendingHref === organizationDriversResignationsHref;
   const isOrganizationFuelManagementPending = pendingHref === organizationFuelManagementHref;
   const isOrganizationFuelReportsPending = pendingHref === organizationFuelReportsHref;
@@ -503,8 +510,8 @@ export function DashboardSidebar({
                 aria-controls={globalSupervisorsGroupId}
                 aria-label={
                   globalSupervisorsGroupOpen
-                    ? "طي قائمة المشرفين"
-                    : "فتح قائمة المشرفين"
+                    ? dictionary.supervisorsNavigation.collapse
+                    : dictionary.supervisorsNavigation.expand
                 }
                 onClick={() => setManualGlobalSupervisorsGroupOpen((open) => !open)}
                 className={`${navItemClassName(isGlobalSupervisorShiftsActive, collapsed)} w-full`}
@@ -512,7 +519,7 @@ export function DashboardSidebar({
                 <span className={navIconClassName(isGlobalSupervisorShiftsActive)}>
                   <ShiftsIcon />
                 </span>
-                <span className={collapsed ? "lg:hidden" : ""}>{"المشرفين"}</span>
+                <span className={collapsed ? "lg:hidden" : ""}>{dictionary.supervisorsNavigation.group}</span>
                 <span
                   className={`ms-auto transition-transform duration-200 ${collapsed ? "lg:hidden" : ""} ${
                     globalSupervisorsGroupOpen ? "rotate-180" : ""
@@ -543,7 +550,7 @@ export function DashboardSidebar({
                           )}
                         />
                       )}
-                      <span>{"شيفتات المشرفين"}</span>
+                      <span>{dictionary.supervisorsNavigation.shifts}</span>
                     </Link>
                   ) : null}
                   {/*
@@ -682,6 +689,17 @@ export function DashboardSidebar({
                             />
                           )}
                           <span>{dictionary.drivers.reportsNavLabel}</span>
+                        </Link>
+                      ) : null}
+                      {organizationDriversOrderReportsHref && navigation.driverOrderReports ? (
+                        <Link
+                          href={organizationDriversOrderReportsHref}
+                          aria-current={isOrganizationDriversOrderReportsActive ? "page" : undefined}
+                          onClick={(e) => handleLinkClick(organizationDriversOrderReportsHref, e)}
+                          className={`${subNavItemClassName(isOrganizationDriversOrderReportsActive)} ${isOrganizationDriversOrderReportsPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationDriversOrderReportsPending ? <SidebarSpinnerActive className="size-3" /> : <span className={subNavDotClassName(isOrganizationDriversOrderReportsActive)} />}
+                          <span>{dictionary.drivers.orderReportsNavLabel}</span>
                         </Link>
                       ) : null}
                       {organizationDriversResignationsHref && navigation.drivers ? (
@@ -1190,6 +1208,17 @@ export function DashboardSidebar({
                             />
                           )}
                           <span>{dictionary.drivers.reportsNavLabel}</span>
+                        </Link>
+                      ) : null}
+                      {navigation.driverOrderReports ? (
+                        <Link
+                          href={organizationDriversOrderReportsHref!}
+                          aria-current={isOrganizationDriversOrderReportsActive ? "page" : undefined}
+                          onClick={(e) => handleLinkClick(organizationDriversOrderReportsHref, e)}
+                          className={`${subNavItemClassName(isOrganizationDriversOrderReportsActive)} ${isOrganizationDriversOrderReportsPending ? "pointer-events-none cursor-wait" : ""}`}
+                        >
+                          {isOrganizationDriversOrderReportsPending ? <SidebarSpinnerActive className="size-3" /> : <span className={subNavDotClassName(isOrganizationDriversOrderReportsActive)} />}
+                          <span>{dictionary.drivers.orderReportsNavLabel}</span>
                         </Link>
                       ) : null}
                       {/*

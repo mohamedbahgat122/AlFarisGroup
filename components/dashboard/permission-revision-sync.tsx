@@ -2,16 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type PermissionRevisionSyncProps = {
   initialRevision: string;
-  intervalMs?: number;
+  userId: string;
   message: string;
 };
 
+const fallbackIntervalMs = 300000;
+const revisionCheckDebounceMs = 350;
+
 export function PermissionRevisionSync({
   initialRevision,
-  intervalMs = 12000,
+  userId,
   message,
 }: PermissionRevisionSyncProps) {
   const router = useRouter();
@@ -26,7 +30,8 @@ export function PermissionRevisionSync({
 
   useEffect(() => {
     let cancelled = false;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let debounceTimeout: ReturnType<typeof setTimeout> | null = null;
+    let notificationTimeout: ReturnType<typeof setTimeout> | null = null;
 
     async function checkRevision() {
       if (checkingRef.current) {
@@ -57,10 +62,10 @@ export function PermissionRevisionSync({
           revisionRef.current = payload.revision;
           setVisible(true);
           router.refresh();
-          if (timeout) {
-            window.clearTimeout(timeout);
+          if (notificationTimeout) {
+            window.clearTimeout(notificationTimeout);
           }
-          timeout = setTimeout(() => {
+          notificationTimeout = setTimeout(() => {
             if (!cancelled) {
               setVisible(false);
               refreshingRef.current = false;
@@ -74,23 +79,85 @@ export function PermissionRevisionSync({
       }
     }
 
-    function handleFocus() {
-      void checkRevision();
+    function scheduleRevisionCheck() {
+      if (cancelled || debounceTimeout) {
+        return;
+      }
+
+      debounceTimeout = setTimeout(() => {
+        debounceTimeout = null;
+        void checkRevision();
+      }, revisionCheckDebounceMs);
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        scheduleRevisionCheck();
+      }
+    }
+
+    const supabase = createClient();
+    const channels: ReturnType<typeof supabase.channel>[] = [];
+
+    const authorizationSubscriptions = [
+      { table: "profiles", filter: `id=eq.${userId}` },
+      { table: "organization_access", filter: `user_id=eq.${userId}` },
+      {
+        table: "organization_user_permissions",
+        filter: `user_id=eq.${userId}`,
+      },
+      { table: "user_global_permissions", filter: `user_id=eq.${userId}` },
+    ] as const;
+
+    for (const subscription of authorizationSubscriptions) {
+      for (const event of ["INSERT", "UPDATE"] as const) {
+        const channel = supabase.channel(
+          `dashboard-permission-revision-${userId}-${subscription.table}-${event.toLowerCase()}`,
+        );
+        let hasSubscribed = false;
+
+        channel.on(
+          "postgres_changes",
+          {
+            event,
+            schema: "public",
+            table: subscription.table,
+            filter: subscription.filter,
+          },
+          scheduleRevisionCheck,
+        );
+        channel.subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            if (hasSubscribed) {
+              scheduleRevisionCheck();
+            } else {
+              hasSubscribed = true;
+            }
+          }
+        });
+        channels.push(channel);
+      }
     }
 
     void checkRevision();
-    window.addEventListener("focus", handleFocus);
-    const interval = window.setInterval(() => {
-      void checkRevision();
-    }, intervalMs);
+    window.addEventListener("focus", scheduleRevisionCheck);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", scheduleRevisionCheck);
+    const interval = window.setInterval(scheduleRevisionCheck, fallbackIntervalMs);
 
     return () => {
       cancelled = true;
-      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("focus", scheduleRevisionCheck);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", scheduleRevisionCheck);
       window.clearInterval(interval);
-      if (timeout) window.clearTimeout(timeout);
+      if (debounceTimeout) window.clearTimeout(debounceTimeout);
+      if (notificationTimeout) window.clearTimeout(notificationTimeout);
+      for (const channel of channels) {
+        void supabase.removeChannel(channel);
+      }
     };
-  }, [intervalMs, router]);
+  }, [router, userId]);
 
   if (!visible) return null;
 

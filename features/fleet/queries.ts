@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getGlobalPermissions } from "@/features/permissions/server";
 import type {
   FleetActivityLog,
@@ -19,16 +20,16 @@ import type { Database } from "@/types/database";
 
 type DriverOptionRow = Pick<
   Database["public"]["Tables"]["drivers"]["Row"],
-  "id" | "full_name" | "iqama_number" | "mobile_number"
-> & { organizations?: { name: string } | { name: string }[] | null };
+  "id" | "full_name" | "keeta_driver_id" | "iqama_number" | "mobile_number" | "organization_id"
+> & { organizations?: { name: string; code: string } | { name: string; code: string }[] | null };
 type ProfileNameRow = Pick<
   Database["public"]["Tables"]["profiles"]["Row"],
   "id" | "full_name"
 >;
 type LinkedDriverRow = Pick<
   Database["public"]["Tables"]["drivers"]["Row"],
-  "id" | "full_name" | "iqama_number" | "mobile_number" | "vehicle_id"
->;
+  "id" | "full_name" | "keeta_driver_id" | "iqama_number" | "mobile_number" | "organization_id" | "vehicle_id"
+> & { organizations?: { name: string; code: string } | { name: string; code: string }[] | null };
 const emptyFleetSummary: FleetSummaryCounts = {
   total: 0,
   healthy: 0,
@@ -188,10 +189,11 @@ export async function getGlobalFleetPageData({
     if (vehicle.owner_driver_id) driverIds.add(vehicle.owner_driver_id);
   });
 
-  const drivers = await getDriverOptionsByIds(Array.from(driverIds));
+  const drivers = await getDriverOptionsByIds(Array.from(driverIds), true);
   const driverNames = new Map(drivers.map((driver) => [driver.id, driver]));
   const linkedDriversByVehicleId = await getLinkedDriversByVehicleId(
     vehicleRows.map((vehicle) => vehicle.id),
+    true,
   );
 
   const totalRows = count ?? 0;
@@ -253,10 +255,11 @@ export async function getGlobalFleetExportData({
     if (vehicle.owner_driver_id) driverIds.add(vehicle.owner_driver_id);
   });
 
-  const drivers = await getDriverOptionsByIds(Array.from(driverIds));
+  const drivers = await getDriverOptionsByIds(Array.from(driverIds), true);
   const driverNames = new Map(drivers.map((driver) => [driver.id, driver]));
   const linkedDriversByVehicleId = await getLinkedDriversByVehicleId(
     vehicleRows.map((vehicle) => vehicle.id),
+    true,
   );
 
   return {
@@ -267,7 +270,7 @@ export async function getGlobalFleetExportData({
   };
 }
 
-async function getLinkedDriversByVehicleId(vehicleIds: string[]) {
+async function getLinkedDriversByVehicleId(vehicleIds: string[], globalAccess = false) {
   const linkedDrivers = new Map<string, FleetLinkedDriver[]>();
   const ids = Array.from(new Set(vehicleIds.filter(Boolean)));
 
@@ -275,14 +278,25 @@ async function getLinkedDriversByVehicleId(vehicleIds: string[]) {
     return linkedDrivers;
   }
 
-  const admin = await getAuthenticatedAdmin();
-  if (admin.status !== "authorized") {
-    return linkedDrivers;
+  const authenticated = await getAuthenticatedAdmin();
+  if (authenticated.status !== "authorized") return linkedDrivers;
+
+  let client = authenticated.supabase;
+  if (globalAccess) {
+    const permissions = await getGlobalPermissions(authenticated.supabase, authenticated.profile);
+    if (authenticated.profile.role !== "system_owner" && !permissions.has("fleet.view")) {
+      return linkedDrivers;
+    }
+    try {
+      client = createAdminClient();
+    } catch {
+      return linkedDrivers;
+    }
   }
 
-  const { data, error } = await admin.supabase
+  const { data, error } = await client
     .from("drivers")
-    .select("id, full_name, iqama_number, mobile_number, vehicle_id")
+    .select("id, full_name, keeta_driver_id, iqama_number, mobile_number, organization_id, vehicle_id, organizations(name, code)")
     .in("vehicle_id", ids)
     .is("deleted_at", null)
     .order("full_name", { ascending: true });
@@ -297,12 +311,7 @@ async function getLinkedDriversByVehicleId(vehicleIds: string[]) {
     }
 
     const current = linkedDrivers.get(driver.vehicle_id) ?? [];
-    current.push({
-      id: driver.id,
-      fullName: driver.full_name,
-      iqamaNumber: driver.iqama_number,
-      mobileNumber: driver.mobile_number,
-    });
+    current.push(mapDriverOption(driver));
     linkedDrivers.set(driver.vehicle_id, current);
   }
 
@@ -358,7 +367,7 @@ async function buildGlobalFleetSearchFilter(search: string) {
     return "";
   }
 
-  const driverIds = await findFleetSearchDriverIds(value);
+  const driverMatches = await findFleetSearchDrivers(value);
   const organizationIds = await findFleetSearchOrganizationIds(value);
   const normalizedPlate = normalizePlateForFleet(value);
   const likeValue = sanitizeLike(value);
@@ -376,11 +385,15 @@ async function buildGlobalFleetSearchFilter(search: string) {
     `ownership_type.ilike.%${likeValue}%`,
   ];
 
-  if (driverIds.length > 0) {
-    const ids = driverIds.join(",");
+  if (driverMatches.driverIds.length > 0) {
+    const ids = driverMatches.driverIds.join(",");
     filters.push(`assigned_driver_id.in.(${ids})`);
     filters.push(`authorized_driver_id.in.(${ids})`);
     filters.push(`owner_driver_id.in.(${ids})`);
+  }
+
+  if (driverMatches.vehicleIds.length > 0) {
+    filters.push(`id.in.(${driverMatches.vehicleIds.join(",")})`);
   }
 
   if (organizationIds.length > 0) {
@@ -390,20 +403,20 @@ async function buildGlobalFleetSearchFilter(search: string) {
   return filters.join(",");
 }
 
-async function findFleetSearchDriverIds(search: string) {
+async function findFleetSearchDrivers(search: string) {
   const admin = await getAuthenticatedAdmin();
   if (admin.status !== "authorized") {
-    return [];
+    return { driverIds: [], vehicleIds: [] };
   }
 
   const searchQuery = normalizeDriverSearchQuery(search);
   if (searchQuery.length < 2) {
-    return [];
+    return { driverIds: [], vehicleIds: [] };
   }
 
   const { data, error } = await admin.supabase
     .from("drivers")
-    .select("id")
+    .select("id, vehicle_id")
     .or(
       [
         `full_name.ilike.%${searchQuery}%`,
@@ -414,10 +427,15 @@ async function findFleetSearchDriverIds(search: string) {
     .limit(200);
 
   if (error) {
-    return [];
+    return { driverIds: [], vehicleIds: [] };
   }
 
-  return (data ?? []).map((driver) => driver.id);
+  return {
+    driverIds: (data ?? []).map((driver) => driver.id),
+    vehicleIds: Array.from(
+      new Set((data ?? []).map((driver) => driver.vehicle_id).filter((id): id is string => Boolean(id))),
+    ),
+  };
 }
 
 async function findFleetSearchOrganizationIds(search: string) {
@@ -450,7 +468,7 @@ export async function searchGlobalFleetDrivers(
   }
 
   const globalPermissions = await getGlobalPermissions(admin.supabase, admin.profile);
-  if (admin.profile.role !== "system_owner" && !globalPermissions.has("fleet.view")) {
+  if (admin.profile.role !== "system_owner" && !globalPermissions.has("fleet.update")) {
     return [];
   }
 
@@ -459,18 +477,28 @@ export async function searchGlobalFleetDrivers(
     return [];
   }
 
-  const { data, error } = await admin.supabase
+  let serviceClient;
+  try {
+    serviceClient = createAdminClient();
+  } catch {
+    return [];
+  }
+
+  let driverQuery = serviceClient
     .from("drivers")
-    .select("id, full_name, iqama_number, mobile_number, organizations(name)")
+    .select("id, full_name, keeta_driver_id, iqama_number, mobile_number, organization_id, organizations(name, code)")
     .eq("status", "active")
     .is("deleted_at", null)
     .or(
       [
         `full_name.ilike.%${searchQuery}%`,
+        `keeta_driver_id.ilike.%${searchQuery}%`,
         `iqama_number.ilike.%${searchQuery}%`,
         `mobile_number.ilike.%${searchQuery}%`,
       ].join(","),
-    )
+    );
+
+  const { data, error } = await driverQuery
     .order("full_name", { ascending: true })
     .limit(Math.min(Math.max(limit, 1), 50));
 
@@ -495,7 +523,7 @@ export async function getFleetDriverOptions(
 
   const { data, error } = await admin.supabase
     .from("drivers")
-    .select("id, full_name, iqama_number, mobile_number, organizations(name)")
+    .select("id, full_name, keeta_driver_id, iqama_number, mobile_number, organization_id, organizations(name, code)")
     .eq("organization_id", organizationId)
     .eq("status", "active")
     .is("deleted_at", null)
@@ -511,19 +539,28 @@ export async function getFleetDriverOptions(
   };
 }
 
-async function getDriverOptionsByIds(driverIds: string[]) {
+async function getDriverOptionsByIds(driverIds: string[], globalAccess = false) {
   if (driverIds.length === 0) {
     return [];
   }
 
-  const admin = await getAuthenticatedAdmin();
-  if (admin.status !== "authorized") {
-    return [];
+  const authenticated = await getAuthenticatedAdmin();
+  if (authenticated.status !== "authorized") return [];
+
+  let client = authenticated.supabase;
+  if (globalAccess) {
+    const permissions = await getGlobalPermissions(authenticated.supabase, authenticated.profile);
+    if (authenticated.profile.role !== "system_owner" && !permissions.has("fleet.view")) return [];
+    try {
+      client = createAdminClient();
+    } catch {
+      return [];
+    }
   }
 
-  const { data, error } = await admin.supabase
+  const { data, error } = await client
     .from("drivers")
-    .select("id, full_name, iqama_number, mobile_number, organizations(name)")
+    .select("id, full_name, keeta_driver_id, iqama_number, mobile_number, organization_id, organizations(name, code)")
     .in("id", driverIds);
 
   if (error) {
@@ -541,9 +578,12 @@ function mapDriverOption(driver: DriverOptionRow): FleetDriverOption {
   return {
     id: driver.id,
     fullName: driver.full_name,
+    keetaDriverId: driver.keeta_driver_id,
     iqamaNumber: driver.iqama_number,
     mobileNumber: driver.mobile_number,
+    organizationId: driver.organization_id,
     organizationName: organization?.name,
+    organizationCode: organization?.code,
   };
 }
 

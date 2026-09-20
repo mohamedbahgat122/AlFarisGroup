@@ -100,7 +100,7 @@ export function DriverResignationsClient({
           <SearchIcon className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
           <input
             type="search"
-            placeholder={dictionary.searchResignations || "بحث..."}
+            placeholder={dictionary.searchResignations}
             className="h-10 w-full rounded-xl border border-border bg-background pe-10 ps-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             defaultValue={searchTerm}
             onChange={(e) => {
@@ -118,13 +118,13 @@ export function DriverResignationsClient({
               <thead className="bg-background text-xs font-bold uppercase text-muted">
                 <tr>
                   <TableHeader className="min-w-48">{dictionary.tableDriver}</TableHeader>
-                  <TableHeader className="whitespace-nowrap">{dictionary.keetaIdAtResignation || "رقم كيتا"}</TableHeader>
-                  <TableHeader className="whitespace-nowrap">{dictionary.resignationDate || "تاريخ الاستقالة"}</TableHeader>
-                  <TableHeader className="whitespace-nowrap text-center">{dictionary.ordersCount || "عدد الطلبات"}</TableHeader>
-                  <TableHeader className="whitespace-nowrap text-center">{dictionary.rating || "التقييم"}</TableHeader>
-                  <TableHeader className="min-w-48 whitespace-nowrap">{dictionary.notes || "ملاحظات"}</TableHeader>
-                  <TableHeader className="whitespace-nowrap text-center">حالة المحاسبة</TableHeader>
-                  <TableHeader className="whitespace-nowrap text-center">{dictionary.createdBy || "بواسطة"}</TableHeader>
+                  <TableHeader className="whitespace-nowrap">{dictionary.keetaIdAtResignation}</TableHeader>
+                  <TableHeader className="whitespace-nowrap">{dictionary.resignationDate}</TableHeader>
+                  <TableHeader className="whitespace-nowrap text-center">{dictionary.ordersCount}</TableHeader>
+                  <TableHeader className="whitespace-nowrap text-center">{dictionary.rating}</TableHeader>
+                  <TableHeader className="min-w-48 whitespace-nowrap">{dictionary.notes}</TableHeader>
+                  <TableHeader className="whitespace-nowrap text-center">{dictionary.accountingStatus}</TableHeader>
+                  <TableHeader className="whitespace-nowrap text-center">{dictionary.createdBy}</TableHeader>
                   <TableHeader className="whitespace-nowrap w-24">{""}</TableHeader>
                 </tr>
               </thead>
@@ -132,7 +132,7 @@ export function DriverResignationsClient({
                 {resignations.items.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted">
-                      لا يوجد استقالات مسجلة.
+                      {dictionary.noResignations}
                     </td>
                   </tr>
                 ) : (
@@ -153,11 +153,11 @@ export function DriverResignationsClient({
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
                         <div className="flex flex-col">
-                          <span className="text-sm font-medium text-navy" title="معرف كيتا عند الاستقالة">
+                          <span className="text-sm font-medium text-navy" title={dictionary.keetaIdAtResignation}>
                             {resignation.keetaDriverId || "-"}
                           </span>
                           {resignation.newKeetaDriverId && (
-                            <span className="text-xs font-bold text-primary mt-0.5" title="معرف كيتا الجديد">
+                            <span className="text-xs font-bold text-primary mt-0.5" title={dictionary.newKeetaId}>
                               {resignation.newKeetaDriverId}
                             </span>
                           )}
@@ -187,11 +187,11 @@ export function DriverResignationsClient({
                       <td className="whitespace-nowrap px-4 py-4 text-center">
                         {resignation.isSettled ? (
                           <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
-                            تمّت المحاسبة
+                            {dictionary.settled}
                           </span>
                         ) : (
                           <span className="inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">
-                            غير محاسب
+                            {dictionary.unsettled}
                           </span>
                         )}
                       </td>
@@ -216,9 +216,9 @@ export function DriverResignationsClient({
         {resignations.total > 0 && (
           <div className={`mt-4 flex flex-col gap-3 text-sm font-semibold text-muted transition-opacity sm:flex-row sm:items-center sm:justify-between ${isPending ? "opacity-70" : ""}`}>
             <div className="space-y-1">
-              <p>إجمالي {resignations.total.toLocaleString("ar-SA")} استقالة</p>
+              <p>{dictionary.totalSummary.replace("{count}", resignations.total.toLocaleString())}</p>
               <p>
-                عرض {(((page - 1) * 20) + 1).toLocaleString("ar-SA")} إلى {Math.min(page * 20, resignations.total).toLocaleString("ar-SA")} من أصل {resignations.total.toLocaleString("ar-SA")}
+                {dictionary.showing.replace("{from}", (((page - 1) * 20) + 1).toLocaleString()).replace("{to}", Math.min(page * 20, resignations.total).toLocaleString()).replace("{total}", resignations.total.toLocaleString())}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -229,15 +229,15 @@ export function DriverResignationsClient({
                   onClick={() => handlePageChange(page - 1)}
                   className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary disabled:opacity-60"
                 >
-                  السابق
+                  {dictionary.previous}
                 </button>
               ) : (
                 <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
-                  السابق
+                  {dictionary.previous}
                 </span>
               )}
               <span className="whitespace-nowrap px-2">
-                الصفحة {page.toLocaleString("ar-SA")} من {Math.ceil(resignations.total / 20).toLocaleString("ar-SA")}
+                {dictionary.pageOf.replace("{page}", page.toLocaleString()).replace("{total}", Math.ceil(resignations.total / 20).toLocaleString())}
               </span>
               {resignations.hasMore ? (
                 <button
@@ -246,11 +246,11 @@ export function DriverResignationsClient({
                   onClick={() => handlePageChange(page + 1)}
                   className="rounded-lg border border-border bg-surface px-3 py-2 text-navy transition hover:border-primary/40 hover:text-primary disabled:opacity-60"
                 >
-                  التالي
+                  {dictionary.next}
                 </button>
               ) : (
                 <span className="rounded-lg border border-border bg-surface px-3 py-2 opacity-45">
-                  التالي
+                  {dictionary.next}
                 </span>
               )}
             </div>
@@ -260,4 +260,3 @@ export function DriverResignationsClient({
     </>
   );
 }
-

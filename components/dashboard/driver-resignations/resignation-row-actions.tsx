@@ -61,7 +61,7 @@ export function ResignationRowActions({
     const ratingValue = formData.get("rating") as string;
     
     if (!ratingValue) {
-      setError(dictionary.rating ? `يرجى اختيار ${dictionary.rating}` : "الرجاء اختيار التقييم");
+      setError(dictionary.selectRating);
       return;
     }
 
@@ -96,27 +96,27 @@ export function ResignationRowActions({
   return (
     <>
       <div className="flex items-center gap-2">
-        <ActionButton label="تعديل" onClick={() => setActiveModal("edit")}>
+        <ActionButton label={dictionary.editResignation} onClick={() => setActiveModal("edit")}>
           <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none">
             <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
           </svg>
         </ActionButton>
 
         {!resignation.isSettled ? (
-          <ActionButton label="تأكيد التسوية" onClick={() => setActiveModal("settle")}>
+          <ActionButton label={dictionary.confirmSettlement} onClick={() => setActiveModal("settle")}>
             <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none">
               <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
             </svg>
           </ActionButton>
         ) : (
-          <ActionButton label="إلغاء التسوية" onClick={() => setActiveModal("unsettle")}>
+          <ActionButton label={dictionary.cancelSettlement} onClick={() => setActiveModal("unsettle")}>
             <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none">
               <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
             </svg>
           </ActionButton>
         )}
 
-        <ActionButton label="حذف" destructive onClick={() => setActiveModal("delete")}>
+        <ActionButton label={dictionary.deleteResignation} destructive onClick={() => setActiveModal("delete")}>
           <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none">
             <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 002 2h8a2 2 0 002-2l1-12M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
           </svg>
@@ -131,7 +131,7 @@ export function ResignationRowActions({
         >
           <div className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto overflow-x-hidden rounded-2xl border border-border bg-surface shadow-[0_24px_80px_rgba(16,35,63,0.22)]">
             <div className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-border bg-surface px-5 py-4">
-              <h2 className="text-xl font-bold text-navy">تعديل الاستقالة</h2>
+              <h2 className="text-xl font-bold text-navy">{dictionary.editResignation}</h2>
               <button 
                 type="button"
                 onClick={() => setActiveModal(null)}
@@ -152,24 +152,24 @@ export function ResignationRowActions({
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-navy">{dictionary.keetaIdAtResignation || "معرف كيتا عند الاستقالة"}</label>
+                  <label className="block text-sm font-semibold text-navy">{dictionary.keetaIdAtResignation}</label>
                   <div className="min-h-11 w-full rounded-xl border border-border bg-gray-50 px-4 py-2 text-sm text-muted">
-                    {resignation.keetaDriverId || dictionary.notAvailable || "غير متاح"}
+                    {resignation.keetaDriverId || dictionary.notAvailable}
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-navy">{(dictionary as any).newKeetaId || "معرف كيتا الجديد"} <span className="text-muted font-normal text-xs">(اختياري)</span></label>
+                  <label className="block text-sm font-semibold text-navy">{dictionary.newKeetaId} <span className="text-muted font-normal text-xs">({dictionary.optional})</span></label>
                   <input
                     type="text"
                     name="newKeetaDriverId"
                     defaultValue={resignation.newKeetaDriverId || ""}
                     className="min-h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
-                    placeholder="أدخل معرف كيتا الجديد إن وجد"
+                    placeholder={dictionary.newKeetaId}
                   />
                 </div>
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="block text-sm font-semibold text-navy">{dictionary.resignationDate || "تاريخ الاستقالة"}</label>
+                    <label className="block text-sm font-semibold text-navy">{dictionary.resignationDate}</label>
                     <input
                       type="date"
                       name="resignationDate"
@@ -179,7 +179,7 @@ export function ResignationRowActions({
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="block text-sm font-semibold text-navy">{dictionary.ordersCount || "عدد الطلبات"}</label>
+                    <label className="block text-sm font-semibold text-navy">{dictionary.ordersCount}</label>
                     <input
                       type="number"
                       name="ordersCount"
@@ -191,14 +191,14 @@ export function ResignationRowActions({
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-navy">{dictionary.rating || "التقييم"}</label>
+                  <label className="block text-sm font-semibold text-navy">{dictionary.rating}</label>
                   <select
                     name="rating"
                     defaultValue={resignation.rating}
                     className="min-h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
                     required
                   >
-                    <option value="">اختيار التقييم</option>
+                    <option value="">{dictionary.selectRating}</option>
                     <option value="A">A</option>
                     <option value="B">B</option>
                     <option value="C">C</option>
@@ -206,7 +206,7 @@ export function ResignationRowActions({
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="block text-sm font-semibold text-navy">{dictionary.notes || "ملاحظات"}</label>
+                  <label className="block text-sm font-semibold text-navy">{dictionary.notes}</label>
                   <textarea
                     name="notes"
                     defaultValue={resignation.notes || ""}
@@ -220,10 +220,10 @@ export function ResignationRowActions({
                     onClick={() => setActiveModal(null)}
                     className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:bg-primary-soft hover:text-primary"
                   >
-                    إلغاء
+                    {dictionary.cancel}
                   </button>
                   <Button type="submit" disabled={isPending} className="min-h-12">
-                    {isPending ? "..." : dictionary.save || "حفظ"}
+                    {isPending ? "..." : dictionary.save}
                   </Button>
                 </div>
               </form>
@@ -236,12 +236,12 @@ export function ResignationRowActions({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/45 p-4 sm:p-0">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 shadow-xl">
             <h3 className="mb-2 text-lg font-bold text-navy">
-              {activeModal === "settle" ? "تأكيد التسوية" : "إلغاء التسوية"}
+              {activeModal === "settle" ? dictionary.confirmSettlement : dictionary.cancelSettlement}
             </h3>
             <p className="mb-6 text-sm text-muted">
               {activeModal === "settle" 
-                ? "هل أنت متأكد من تأكيد التسوية والمحاسبة لهذا المندوب؟" 
-                : "هل أنت متأكد من إلغاء حالة التسوية؟"}
+                ? dictionary.confirmSettlementMessage
+                : dictionary.cancelSettlementMessage}
             </p>
             {error && <div className="mb-4 text-sm text-danger">{error}</div>}
             <div className="flex justify-end gap-3">
@@ -251,7 +251,7 @@ export function ResignationRowActions({
                 onClick={() => setActiveModal(null)}
                 className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-semibold text-navy hover:bg-gray-100"
               >
-                إلغاء
+                {dictionary.cancel}
               </button>
               <Button 
                 disabled={isPending}
@@ -261,7 +261,7 @@ export function ResignationRowActions({
                 )}
                 className="h-11"
               >
-                {isPending ? "..." : "تأكيد"}
+                {isPending ? "..." : dictionary.confirm}
               </Button>
             </div>
           </div>
@@ -271,9 +271,9 @@ export function ResignationRowActions({
       {activeModal === "delete" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/45 p-4 sm:p-0">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 shadow-xl">
-            <h3 className="mb-2 text-lg font-bold text-danger">حذف الاستقالة</h3>
+            <h3 className="mb-2 text-lg font-bold text-danger">{dictionary.deleteResignation}</h3>
             <p className="mb-6 text-sm text-muted">
-              هل أنت متأكد من حذف هذه الاستقالة بشكل نهائي؟ هذا الإجراء لن يؤثر على بيانات المندوب الأساسية.
+              {dictionary.deleteResignationMessage}
             </p>
             {error && <div className="mb-4 text-sm text-danger">{error}</div>}
             <div className="flex justify-end gap-3">
@@ -283,7 +283,7 @@ export function ResignationRowActions({
                 onClick={() => setActiveModal(null)}
                 className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-semibold text-navy hover:bg-gray-100"
               >
-                إلغاء
+                {dictionary.cancel}
               </button>
               <button 
                 type="button"
@@ -291,7 +291,7 @@ export function ResignationRowActions({
                 onClick={() => handleAction(() => deleteDriverResignationAction(organizationId, resignation.id))}
                 className="inline-flex h-11 items-center justify-center rounded-xl bg-danger px-4 text-sm font-semibold text-white hover:bg-danger/90"
               >
-                {isPending ? "..." : "حذف"}
+                {isPending ? "..." : dictionary.deleteResignation}
               </button>
             </div>
           </div>

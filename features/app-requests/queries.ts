@@ -386,7 +386,6 @@ export async function getOilMaintenanceAlertsForDashboard({
         vehicleLabel: vehicle.vehicle_type ?? driver.vehicle_type ?? null,
         vehiclePlate:
           vehicle.plate_number ??
-          driver.vehicle_number ??
           driver.keeta_vehicle_plate_number ??
           null,
         remainingKm: derived.remainingKm,
@@ -501,7 +500,6 @@ export async function getOilMaintenanceTrackingPage({
         vehicleLabel: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
         vehiclePlate:
           vehicle?.plate_number ??
-          driver.vehicle_number ??
           driver.keeta_vehicle_plate_number ??
           null,
         lastOilChangeOdometer: event?.odometer_reading ?? null,
@@ -1085,33 +1083,20 @@ async function loadCurrentOilVehicles(
   const vehiclesByDriverId = new Map<string, VehicleRecord>();
 
   if (drivers.length === 0) return vehiclesByDriverId;
+  const vehicleIds = drivers.map((driver) => driver.vehicle_id).filter((id): id is string => Boolean(id));
+  if (vehicleIds.length === 0) return vehiclesByDriverId;
 
   const { data } = await supabase
     .from("fleet_vehicles")
-    .select("id, vehicle_type, plate_number, assigned_driver_id, authorized_driver_id")
-    .or(`organization_id.eq.${organizationId},assigned_organization_id.eq.${organizationId}`)
+    .select("id, vehicle_type, plate_number")
+    .in("id", vehicleIds)
     .is("archived_at", null)
     .order("created_at", { ascending: false });
 
   const vehicles = (data ?? []) as VehicleRecord[];
   const vehiclesById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
-  const assignedVehiclesByDriverId = new Map<string, VehicleRecord>();
-  const authorizedVehiclesByDriverId = new Map<string, VehicleRecord>();
-
-  for (const vehicle of vehicles) {
-    if (vehicle.assigned_driver_id && !assignedVehiclesByDriverId.has(vehicle.assigned_driver_id)) {
-      assignedVehiclesByDriverId.set(vehicle.assigned_driver_id, vehicle);
-    }
-    if (vehicle.authorized_driver_id && !authorizedVehiclesByDriverId.has(vehicle.authorized_driver_id)) {
-      authorizedVehiclesByDriverId.set(vehicle.authorized_driver_id, vehicle);
-    }
-  }
-
   for (const driver of drivers) {
-    const vehicle =
-      (driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined) ??
-      assignedVehiclesByDriverId.get(driver.id) ??
-      authorizedVehiclesByDriverId.get(driver.id);
+    const vehicle = driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined;
 
     if (vehicle) {
       vehiclesByDriverId.set(driver.id, vehicle);
@@ -1129,48 +1114,20 @@ async function loadCurrentOilVehiclesForOrganizations(
   const vehiclesByDriverId = new Map<string, VehicleRecord>();
 
   if (drivers.length === 0 || organizationIds.length === 0) return vehiclesByDriverId;
+  const vehicleIds = drivers.map((driver) => driver.vehicle_id).filter((id): id is string => Boolean(id));
+  if (vehicleIds.length === 0) return vehiclesByDriverId;
 
-  const [ownedResult, assignedResult] = await Promise.all([
-    supabase
-      .from("fleet_vehicles")
-      .select(
-        "id, organization_id, assigned_organization_id, vehicle_type, plate_number, assigned_driver_id, authorized_driver_id",
-      )
-      .in("organization_id", organizationIds)
-      .is("archived_at", null)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("fleet_vehicles")
-      .select(
-        "id, organization_id, assigned_organization_id, vehicle_type, plate_number, assigned_driver_id, authorized_driver_id",
-      )
-      .in("assigned_organization_id", organizationIds)
-      .is("archived_at", null)
-      .order("created_at", { ascending: false }),
-  ]);
+  const { data } = await supabase
+    .from("fleet_vehicles")
+    .select("id, organization_id, assigned_organization_id, vehicle_type, plate_number")
+    .in("id", vehicleIds)
+    .is("archived_at", null);
 
-  const vehicles = dedupeVehicles([
-    ...((ownedResult.data ?? []) as VehicleRecord[]),
-    ...((assignedResult.data ?? []) as VehicleRecord[]),
-  ]);
+  const vehicles = (data ?? []) as VehicleRecord[];
   const vehiclesById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
-  const assignedVehiclesByDriverId = new Map<string, VehicleRecord>();
-  const authorizedVehiclesByDriverId = new Map<string, VehicleRecord>();
-
-  for (const vehicle of vehicles) {
-    if (vehicle.assigned_driver_id && !assignedVehiclesByDriverId.has(vehicle.assigned_driver_id)) {
-      assignedVehiclesByDriverId.set(vehicle.assigned_driver_id, vehicle);
-    }
-    if (vehicle.authorized_driver_id && !authorizedVehiclesByDriverId.has(vehicle.authorized_driver_id)) {
-      authorizedVehiclesByDriverId.set(vehicle.authorized_driver_id, vehicle);
-    }
-  }
 
   for (const driver of drivers) {
-    const vehicle =
-      (driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined) ??
-      assignedVehiclesByDriverId.get(driver.id) ??
-      authorizedVehiclesByDriverId.get(driver.id);
+    const vehicle = driver.vehicle_id ? vehiclesById.get(driver.vehicle_id) : undefined;
 
     if (vehicle) {
       vehiclesByDriverId.set(driver.id, vehicle);
@@ -1382,7 +1339,6 @@ async function loadLatestOilRequestsForDrivers(
       vehiclePlate:
         request.vehicle_plate_snapshot ??
         vehicle?.plate_number ??
-        driver?.vehicle_number ??
         driver?.keeta_vehicle_plate_number ??
         null,
       reviewerName: null,
@@ -1530,7 +1486,7 @@ function mapDriversToOdometerRows({
         driverIdentifier: driver.keeta_driver_id ?? null,
         organizationName: null,
         vehicleLabel: assignedVehicle?.vehicle_type ?? driver.vehicle_type ?? null,
-        vehiclePlate: assignedVehicle?.plate_number ?? driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
+      vehiclePlate: assignedVehicle?.plate_number ?? driver.keeta_vehicle_plate_number ?? null,
         status: "not_started",
         shiftDate: `${selectedDate}T00:00:00+03:00`,
         startedAt: null,
@@ -1592,7 +1548,7 @@ function mapDriversToOdometerRows({
       driverIdentifier: driver.keeta_driver_id ?? null,
       organizationName: null,
       vehicleLabel: vehicle?.vehicle_type ?? driver.vehicle_type ?? null,
-      vehiclePlate: shift.vehicle_plate_snapshot ?? driver.vehicle_number ?? driver.keeta_vehicle_plate_number ?? null,
+        vehiclePlate: shift.vehicle_plate_snapshot ?? driver.keeta_vehicle_plate_number ?? null,
       status,
       shiftDate: shift.started_at,
       startedAt: shift.started_at,
@@ -1695,7 +1651,6 @@ function buildOdometerAlerts({
   if (hasStarted && startReading === null) {
     alerts.push({
       code: "MISSING_START_READING",
-      message: "قراءة بداية العداد مفقودة",
       severity: "critical",
     });
   }
@@ -1703,7 +1658,6 @@ function buildOdometerAlerts({
   if (shouldHaveEnd && endReading === null) {
     alerts.push({
       code: "MISSING_END_READING",
-      message: "قراءة نهاية العداد مفقودة",
       severity: "critical",
     });
   }
@@ -1711,7 +1665,6 @@ function buildOdometerAlerts({
   if (hasStarted && !startPhotoPathPresent) {
     alerts.push({
       code: "MISSING_START_PHOTO",
-      message: "صورة بداية العداد مفقودة",
       severity: "warning",
     });
   }
@@ -1719,7 +1672,6 @@ function buildOdometerAlerts({
   if (shouldHaveEnd && !endPhotoPathPresent) {
     alerts.push({
       code: "MISSING_END_PHOTO",
-      message: "صورة نهاية العداد مفقودة",
       severity: "warning",
     });
   }
@@ -1732,7 +1684,6 @@ function buildOdometerAlerts({
     const differenceKm = startReading - expectedPreviousReading;
     alerts.push({
       code: "CONTINUITY_MISMATCH",
-      message: `قراءة البداية لا تطابق مرجع المركبة - المتوقع ${formatAlertKm(expectedPreviousReading)} كم، المسجل ${formatAlertKm(startReading)} كم، الفرق ${formatSignedAlertKm(differenceKm)} كم`,
       severity: "warning",
       meta: {
         expected: expectedPreviousReading,
@@ -1745,28 +1696,20 @@ function buildOdometerAlerts({
   if (hasStarted && typeof dailyDistanceKm === "number" && dailyDistanceKm > 0 && dailyDistanceKm < 200) {
     alerts.push({
       code: "LOW_DAILY_DISTANCE",
-      message: `المسافة اليومية منخفضة: ${formatAlertKm(dailyDistanceKm)} كم`,
       severity: "warning",
+      meta: { dailyDistanceKm },
     });
   }
 
   if (typeof dailyDistanceKm === "number" && dailyDistanceKm > 450) {
     alerts.push({
       code: "HIGH_DAILY_DISTANCE",
-      message: `المسافة اليومية مرتفعة: ${formatAlertKm(dailyDistanceKm)} كم`,
       severity: "warning",
+      meta: { dailyDistanceKm },
     });
   }
 
   return alerts;
-}
-
-function formatAlertKm(value: number) {
-  return new Intl.NumberFormat("ar-SA").format(value);
-}
-
-function formatSignedAlertKm(value: number) {
-  return `${value > 0 ? "+" : ""}${formatAlertKm(value)}`;
 }
 
 async function loadDrivers(

@@ -36,7 +36,9 @@ import {
 } from "@/features/fleet/storage";
 import type { FleetBaselinePhotoUrls } from "@/features/fleet/types";
 
-export async function searchGlobalDriversAction(query: string): Promise<FleetDriverOption[]> {
+export async function searchGlobalDriversAction(
+  query: string,
+): Promise<FleetDriverOption[]> {
   return searchGlobalFleetDrivers(query);
 }
 
@@ -101,6 +103,10 @@ function getBaselinePhotoFiles(formData: FormData) {
 
 function isOperationalStatus(value: string): value is FleetOperationalStatus {
   return value === "active" || value === "suspended";
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function buildFieldErrors(locale: string, fields: string[]) {
@@ -179,6 +185,19 @@ async function saveGlobalFleetVehicle(
   }
   diagnostics.mark("input_validation", { success: true });
 
+  const assignedDriverIds = Array.from(
+    new Set(
+      formData
+        .getAll("assignedDriverIds")
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!assignedDriverIds.every(isUuid)) {
+    return { status: "validation_error", code: "validation_error" };
+  }
+
   const input: FleetMutationInput = {
     vehicleCategory: category,
     vehicleType: type,
@@ -201,6 +220,7 @@ async function saveGlobalFleetVehicle(
     operatingCardNumber: getStringValue(formData, "operatingCardNumber"),
     operatingCardExpiryDate: getStringValue(formData, "operatingCardExpiryDate") || null,
     assignedDriverSource,
+    assignedDriverIds,
     assignedDriverId: getStringValue(formData, "assignedDriverId") || null,
     assignedDriverManualName: getStringValue(formData, "assignedDriverManualName"),
     assignedDriverManualIqama: getStringValue(formData, "assignedDriverManualIqama"),

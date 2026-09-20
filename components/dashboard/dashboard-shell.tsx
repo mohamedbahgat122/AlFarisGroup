@@ -67,6 +67,10 @@ export function DashboardShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [liveAppNotifications, setLiveAppNotifications] =
     useState<typeof appNotifications | null>(null);
+  const [liveOilMaintenanceAlerts, setLiveOilMaintenanceAlerts] =
+    useState<OilMaintenanceAlertsResult | null>(null);
+  const appNotificationsRequestRef = useRef<Promise<void> | null>(null);
+  const oilAlertsRequestRef = useRef<Promise<void> | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const pathname = usePathname();
@@ -197,6 +201,8 @@ export function DashboardShell({
 
   const sidebarWidth = collapsed ? "88px" : "292px";
   const displayedAppNotifications = liveAppNotifications ?? appNotifications;
+  const displayedOilMaintenanceAlerts =
+    liveOilMaintenanceAlerts ?? oilMaintenanceAlerts;
   const canSubscribeToRequestNotifications =
     appNotifications.canViewNotifications &&
     organizations.some((organization) =>
@@ -208,24 +214,76 @@ export function DashboardShell({
       organization.navigation.appRequests &&
       organization.permissionKeys.includes("app_requests.view"),
   );
+  const oilMaintenanceOrganizationIds = organizations
+    .filter(
+      (organization) =>
+        organization.navigation.appRequests &&
+        organization.permissionKeys.includes("app_requests.view"),
+    )
+    .map((organization) => organization.id);
+  const oilMaintenanceRealtimeFilter =
+    oilMaintenanceOrganizationIds.length > 0
+      ? `organization_id=in.(${oilMaintenanceOrganizationIds.join(",")})`
+      : undefined;
 
   const refreshAppNotifications = useCallback(async () => {
-    try {
-      const response = await fetch("/api/dashboard/notifications", {
-        cache: "no-store",
-        credentials: "same-origin",
+    if (appNotificationsRequestRef.current) {
+      return appNotificationsRequestRef.current;
+    }
+
+    const request = fetch("/api/dashboard/notifications", {
+      cache: "no-store",
+      credentials: "same-origin",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          return;
+        }
+
+        const nextNotifications = (await response.json()) as typeof appNotifications;
+        setLiveAppNotifications(nextNotifications);
+      })
+      .catch(() => {
+        // Keep the last known shell state until the next Realtime event.
+      })
+      .finally(() => {
+        appNotificationsRequestRef.current = null;
       });
 
-      if (!response.ok) {
-        return;
-      }
-
-      const nextNotifications = (await response.json()) as typeof appNotifications;
-      setLiveAppNotifications(nextNotifications);
-    } catch {
-      // The realtime component still triggers router.refresh() as a fallback.
-    }
+    appNotificationsRequestRef.current = request;
+    return request;
   }, []);
+
+  const refreshOilMaintenanceAlerts = useCallback(() => {
+    if (oilAlertsRequestRef.current) {
+      return oilAlertsRequestRef.current;
+    }
+
+    const request = fetch(
+        `/api/dashboard/oil-maintenance-alerts?locale=${encodeURIComponent(locale)}`,
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      )
+      .then(async (response) => {
+        if (!response.ok) {
+          return;
+        }
+
+        const nextAlerts = (await response.json()) as OilMaintenanceAlertsResult;
+        setLiveOilMaintenanceAlerts(nextAlerts);
+      })
+      .catch(() => {
+        // Keep the last known shell state until the next Realtime event.
+      })
+      .finally(() => {
+        oilAlertsRequestRef.current = null;
+      });
+
+    oilAlertsRequestRef.current = request;
+    return request;
+  }, [locale]);
 
   return (
     <>
@@ -280,25 +338,33 @@ export function DashboardShell({
             channelName={`dashboard-notifications-${user.id}`}
             table="app_notifications"
             filter={`recipient_user_id=eq.${user.id}`}
+            includeDeletes={false}
             toast={dictionary.dashboard.notificationPanel.realtimeUpdated}
             enabled={canSubscribeToRequestNotifications}
+            refreshRoute={false}
             onRefresh={refreshAppNotifications}
           />
           <RealtimeRefresh
             channelName={`dashboard-oil-events-${user.id}`}
             table="fleet_vehicle_oil_change_events"
+            filter={oilMaintenanceRealtimeFilter}
             toast={dictionary.dashboard.oilMaintenancePanel.realtimeUpdated}
-            enabled={canSubscribeToOilMaintenanceAlerts}
+            enabled={canSubscribeToOilMaintenanceAlerts && Boolean(oilMaintenanceRealtimeFilter)}
+            refreshRoute={false}
+            onRefresh={refreshOilMaintenanceAlerts}
           />
           <RealtimeRefresh
             channelName={`dashboard-oil-odometers-${user.id}`}
             table="driver_shifts"
+            filter={oilMaintenanceRealtimeFilter}
             toast={dictionary.dashboard.oilMaintenancePanel.realtimeUpdated}
-            enabled={canSubscribeToOilMaintenanceAlerts}
+            enabled={canSubscribeToOilMaintenanceAlerts && Boolean(oilMaintenanceRealtimeFilter)}
+            refreshRoute={false}
+            onRefresh={refreshOilMaintenanceAlerts}
           />
           <PermissionRevisionSync
             initialRevision={authorizationRevision}
-            intervalMs={12000}
+            userId={user.id}
             message="تم تحديث صلاحيات حسابك. يتم تحديث الواجهة الآن."
           />
           <DashboardHeader
@@ -308,7 +374,7 @@ export function DashboardShell({
             organizations={organizations}
             appNotifications={displayedAppNotifications}
             systemExpiryAlerts={systemExpiryAlerts}
-            oilMaintenanceAlerts={oilMaintenanceAlerts}
+            oilMaintenanceAlerts={displayedOilMaintenanceAlerts}
             onOpenSidebar={() => setMobileOpen(true)}
           />
           <main className="min-h-[calc(100vh-4rem)] w-full">

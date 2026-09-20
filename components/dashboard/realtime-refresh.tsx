@@ -34,12 +34,15 @@ type RealtimeRefreshProps = {
   filter?: string;
   toast: string;
   enabled?: boolean;
+  includeDeletes?: boolean;
+  refreshRoute?: boolean;
   onRefresh?: () => void | Promise<void>;
   shouldSuppressRefresh?: (payload: RealtimeRefreshPayload) => boolean;
 };
 
 type RealtimeRefreshSubscriber = {
   refresh: () => void;
+  refreshRoute: boolean;
   onRefresh?: () => void | Promise<void>;
   showToast: () => void;
 };
@@ -68,7 +71,7 @@ function flushRealtimeRefresh() {
   pendingSubscriberIds.clear();
   if (subscribers.length === 0) return;
 
-  subscribers[0].refresh();
+  subscribers.find((subscriber) => subscriber.refreshRoute)?.refresh();
 
   for (const subscriber of subscribers) {
     void subscriber.onRefresh?.();
@@ -93,6 +96,8 @@ export function RealtimeRefresh({
   filter,
   toast,
   enabled = true,
+  includeDeletes = true,
+  refreshRoute = true,
   onRefresh,
   shouldSuppressRefresh,
 }: RealtimeRefreshProps) {
@@ -104,6 +109,7 @@ export function RealtimeRefresh({
   useEffect(() => {
     realtimeRefreshSubscribers.set(subscriberId, {
       refresh: () => router.refresh(),
+      refreshRoute,
       onRefresh,
       showToast: () => {
         setVisible(true);
@@ -116,7 +122,7 @@ export function RealtimeRefresh({
     return () => {
       removeRealtimeRefreshSubscriber(subscriberId);
     };
-  }, [onRefresh, router, subscriberId]);
+  }, [onRefresh, refreshRoute, router, subscriberId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -124,22 +130,26 @@ export function RealtimeRefresh({
     const supabase = createClient();
     const channel = supabase.channel(channelName);
 
-    channel.on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table,
-        ...(filter ? { filter } : {}),
-      },
-      (payload) => {
-        if (shouldSuppressRefresh?.(payload)) {
-          return;
-        }
+    const handleChange = (payload: RealtimeRefreshPayload) => {
+      if (shouldSuppressRefresh?.(payload)) {
+        return;
+      }
 
-        scheduleRealtimeRefresh(subscriberId);
-      },
-    );
+      scheduleRealtimeRefresh(subscriberId);
+    };
+
+    const subscription = {
+      schema: "public",
+      table,
+      ...(filter ? { filter } : {}),
+    };
+
+    if (includeDeletes) {
+      channel.on("postgres_changes", { event: "*", ...subscription }, handleChange);
+    } else {
+      channel.on("postgres_changes", { event: "INSERT", ...subscription }, handleChange);
+      channel.on("postgres_changes", { event: "UPDATE", ...subscription }, handleChange);
+    }
 
     channel.subscribe();
 
@@ -147,7 +157,7 @@ export function RealtimeRefresh({
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [channelName, enabled, filter, shouldSuppressRefresh, subscriberId, table]);
+  }, [channelName, enabled, filter, includeDeletes, shouldSuppressRefresh, subscriberId, table]);
 
   if (!visible) return null;
 

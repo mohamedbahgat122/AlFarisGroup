@@ -16,6 +16,7 @@ import type {
   DriverAppRequestType,
   MaintenanceJobExecution,
   MaintenanceProviderOption,
+  OdometerAlertCode,
   OdometerShiftRow,
 } from "@/features/app-requests/types";
 import type {
@@ -226,6 +227,7 @@ export function AppRequestsTable({
           title={invoicePreview.title}
           subtitle={invoicePreview.subtitle}
           errorText={dictionary.imageLoadFailed}
+          closeLabel={dictionary.close}
           onClose={() => setInvoicePreview(null)}
         />
       ) : null}
@@ -308,7 +310,7 @@ export function OdometerTable({
                       if (!row.startPhotoUrl) return;
                       setPreview({
                         url: row.startPhotoUrl,
-                        title: locale === "ar" ? "صورة بداية العداد" : "Start odometer photo",
+                        title: dictionary.odometer.photoStartTitle,
                         subtitle: row.driverName,
                       });
                     }}
@@ -329,17 +331,17 @@ export function OdometerTable({
                       if (!row.endPhotoUrl) return;
                       setPreview({
                         url: row.endPhotoUrl,
-                        title: locale === "ar" ? "صورة نهاية العداد" : "End odometer photo",
+                        title: dictionary.odometer.photoEndTitle,
                         subtitle: row.driverName,
                       });
                     }}
                   />
                 </Cell>
                 <Cell nowrap>
-                  <OdometerAlertsIndicator alerts={row.alerts} />
+                  <OdometerAlertsIndicator alerts={row.alerts} dictionary={dictionary} locale={locale} />
                 </Cell>
                 <Cell nowrap>
-                  <OdometerBaselineIndicator shift={row} locale={locale} />
+                  <OdometerBaselineIndicator shift={row} locale={locale} dictionary={dictionary} />
                 </Cell>
                 <Cell nowrap>{formatNullableNumber(row.distance, locale, dictionary.notAvailable)}</Cell>
                 <Cell nowrap>{formatNullableNumber(row.dailyDistanceKm, locale, dictionary.notAvailable)}</Cell>
@@ -347,12 +349,12 @@ export function OdometerTable({
                 <Cell nowrap>
                   <div className="flex items-center gap-2">
                         {row.status !== "not_started" ? (
-                          <button type="button" onClick={() => setSelectedEdit(row)} title="تعديل قراءة العداد" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-navy hover:bg-primary-soft">
+                          <button type="button" onClick={() => setSelectedEdit(row)} title={dictionary.odometer.editReading} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-navy hover:bg-primary-soft">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                           </button>
                         ) : null}
                         {row.vehicleId ? (
-                          <button type="button" onClick={() => setSelectedReset(row)} title="تعيين قراءة أساس للمركبة" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-navy hover:bg-primary-soft">
+                          <button type="button" onClick={() => setSelectedReset(row)} title={dictionary.odometer.setBaseline} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-navy hover:bg-primary-soft">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                           </button>
                         ) : null}
@@ -370,6 +372,7 @@ export function OdometerTable({
           title={preview.title}
           subtitle={preview.subtitle}
           errorText={dictionary.imageLoadFailed}
+          closeLabel={dictionary.close}
           onClose={() => setPreview(null)}
         />
       ) : null}
@@ -495,8 +498,12 @@ function PhotoLink({
 
 function OdometerAlertsIndicator({
   alerts,
+  dictionary,
+  locale,
 }: {
   alerts: OdometerShiftRow["alerts"];
+  dictionary: AppRequestsDictionary;
+  locale: Locale;
 }) {
   if (alerts.length === 0) return null;
 
@@ -512,7 +519,7 @@ function OdometerAlertsIndicator({
     <details className="group relative inline-block">
       <summary
         className={`flex h-8 min-w-8 cursor-pointer list-none items-center justify-center gap-1 rounded-lg border px-2 text-xs font-bold [&::-webkit-details-marker]:hidden ${toneClass}`}
-        aria-label={alerts.map((alert) => alert.message).join("، ")}
+        aria-label={alerts.map((alert) => formatOdometerAlert(alert.code, alert.meta, dictionary, locale)).join("، ")}
       >
         <AlertTriangleIcon />
         <span>{alerts.length}</span>
@@ -520,9 +527,9 @@ function OdometerAlertsIndicator({
       <div className={`absolute end-0 z-30 mt-2 hidden w-72 rounded-lg border p-3 text-xs font-bold leading-6 shadow-xl group-open:block group-hover:block ${panelClass}`}>
         <ul className="space-y-1">
           {alerts.map((alert) => (
-            <li key={`${alert.code}-${alert.message}`} className="flex gap-2">
+            <li key={`${alert.code}-${JSON.stringify(alert.meta)}`} className="flex gap-2">
               <span aria-hidden="true">-</span>
-              <span>{alert.message}</span>
+              <span>{formatOdometerAlert(alert.code, alert.meta, dictionary, locale)}</span>
             </li>
           ))}
         </ul>
@@ -531,22 +538,54 @@ function OdometerAlertsIndicator({
   );
 }
 
+function formatOdometerAlert(
+  code: OdometerAlertCode,
+  meta: OdometerShiftRow["alerts"][number]["meta"],
+  dictionary: AppRequestsDictionary,
+  locale: Locale,
+) {
+  const labels = dictionary.odometer.alerts;
+  const formatKm = (value: number) => `${value.toLocaleString(locale)} ${dictionary.odometer.km}`;
+
+  switch (code) {
+    case "MISSING_START_READING":
+      return labels.missingStartReading;
+    case "MISSING_END_READING":
+      return labels.missingEndReading;
+    case "MISSING_START_PHOTO":
+      return labels.missingStartPhoto;
+    case "MISSING_END_PHOTO":
+      return labels.missingEndPhoto;
+    case "CONTINUITY_MISMATCH":
+      return labels.continuityMismatch
+        .replace("{expected}", formatKm(meta?.expected ?? 0))
+        .replace("{actual}", formatKm(meta?.actual ?? 0))
+        .replace("{difference}", `${meta?.differenceKm && meta.differenceKm > 0 ? "+" : ""}${formatKm(meta?.differenceKm ?? 0)}`);
+    case "LOW_DAILY_DISTANCE":
+      return labels.lowDailyDistance.replace("{distance}", formatKm(meta?.dailyDistanceKm ?? 0));
+    case "HIGH_DAILY_DISTANCE":
+      return labels.highDailyDistance.replace("{distance}", formatKm(meta?.dailyDistanceKm ?? 0));
+  }
+}
+
 function OdometerBaselineIndicator({
   shift,
   locale,
+  dictionary,
 }: {
   shift: OdometerShiftRow;
   locale: Locale;
+  dictionary: AppRequestsDictionary;
 }) {
   if (shift.vehicleBaselineReading === null) {
-    return <span className="text-xs font-bold text-muted">غير محدد</span>;
+    return <span className="text-xs font-bold text-muted">{dictionary.odometer.notSet}</span>;
   }
 
-  const baselineText = `${shift.vehicleBaselineReading.toLocaleString(locale)} كم`;
+  const baselineText = `${shift.vehicleBaselineReading.toLocaleString(locale)} ${dictionary.odometer.km}`;
   const resetAtText = shift.vehicleBaselineResetAt
     ? formatDateTime(shift.vehicleBaselineResetAt, locale, "Asia/Riyadh")
-    : "غير محدد";
-  const reasonText = formatBaselineReason(shift.vehicleBaselineReason, locale);
+    : dictionary.odometer.notSet;
+  const reasonText = formatBaselineReason(shift.vehicleBaselineReason, dictionary);
 
   return (
     <details className="group relative inline-block">
@@ -554,9 +593,9 @@ function OdometerBaselineIndicator({
         {baselineText}
       </summary>
       <div className="absolute end-0 z-30 mt-2 hidden w-72 rounded-lg border border-border bg-surface p-3 text-xs font-bold leading-6 text-navy shadow-xl group-open:block group-hover:block">
-        <p>مرجع العداد الحالي: {baselineText}</p>
-        <p>تاريخ التعيين: {resetAtText}</p>
-        <p>السبب: {reasonText}</p>
+        <p>{dictionary.odometer.currentBaseline}: {baselineText}</p>
+        <p>{dictionary.odometer.assignedAt}: {resetAtText}</p>
+        <p>{dictionary.odometer.reason}: {reasonText}</p>
       </div>
     </details>
   );
@@ -588,12 +627,14 @@ function SecureImagePreviewDialog({
   title,
   subtitle,
   errorText,
+  closeLabel,
   onClose,
 }: {
   imageUrl: string;
   title: string;
   subtitle: string;
   errorText: string;
+  closeLabel: string;
   onClose: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
@@ -628,7 +669,7 @@ function SecureImagePreviewDialog({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={closeLabel}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-xl font-bold text-navy hover:bg-primary-soft"
           >
             X
@@ -711,7 +752,7 @@ function OdometerCorrectionDialog({
       <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto border border-border bg-surface p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-bold text-navy">{dictionary.odometerTitle ?? "تعديل قراءة العداد"}</h2>
+            <h2 className="text-lg font-bold text-navy">{dictionary.odometerTitle}</h2>
             <p className="mt-1 text-sm text-muted">{shift.driverName}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-xl border border-border px-3 py-2 text-sm font-bold">
@@ -731,6 +772,7 @@ function OdometerCorrectionDialog({
           title={preview.title}
           subtitle={preview.subtitle}
           errorText={dictionary.imageLoadFailed}
+          closeLabel={dictionary.close}
           onClose={() => setPreview(null)}
         />
       ) : null}
@@ -779,7 +821,7 @@ function CorrectionPanel({
             if (!photoUrl) return;
             onPreview({
               url: photoUrl,
-              title: isStart ? "صورة بداية العداد" : "صورة نهاية العداد",
+              title: isStart ? dictionary.odometer.photoStartTitle : dictionary.odometer.photoEndTitle,
               subtitle: shift.driverName,
             });
           }}
@@ -787,18 +829,18 @@ function CorrectionPanel({
         <div className="min-w-0 text-sm">
           <p className="font-bold text-navy">{photoLabel}</p>
           <p className="mt-1 text-xs font-semibold text-muted">
-            القراءة الحالية: {reading === null ? "ناقصة" : reading.toLocaleString(locale)}
+            {dictionary.odometer.currentReading}: {reading === null ? dictionary.odometer.missing : reading.toLocaleString(locale)}
           </p>
         </div>
       </div>
       {(state.status === "error" || state.status === "validation_error") && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
-            {state.code === "SHIFT_START_ABOVE_END" ? "قراءة البداية لا يمكن أن تكون أكبر من قراءة النهاية" :
-             state.code === "SHIFT_END_BELOW_START" ? "قراءة النهاية لا يمكن أن تكون أقل من قراءة البداية" :
-             state.code === "SHIFT_START_BELOW_PREVIOUS_VEHICLE_READING" ? "قراءة البداية لا يمكن أن تكون أقل من القراءة السابقة للمركبة" :
-             state.code === "SHIFT_END_ABOVE_NEXT_VEHICLE_READING" ? "قراءة النهاية لا يمكن أن تكون أكبر من القراءة اللاحقة للمركبة" :
-             state.code === "SHIFT_INVALID_READING" ? "القراءة غير صالحة" :
-             state.code === "unauthorized" ? "غير مصرح" :
+            {state.code === "SHIFT_START_ABOVE_END" ? dictionary.odometer.errors.shiftStartAboveEnd :
+             state.code === "SHIFT_END_BELOW_START" ? dictionary.odometer.errors.shiftEndBelowStart :
+             state.code === "SHIFT_START_BELOW_PREVIOUS_VEHICLE_READING" ? dictionary.odometer.errors.shiftStartBelowPrevious :
+             state.code === "SHIFT_END_ABOVE_NEXT_VEHICLE_READING" ? dictionary.odometer.errors.shiftEndAboveNext :
+             state.code === "SHIFT_INVALID_READING" ? dictionary.odometer.errors.invalidReading :
+             state.code === "unauthorized" ? dictionary.odometer.errors.unauthorized :
              state.code}
           </div>
         )}
@@ -810,11 +852,11 @@ function CorrectionPanel({
         <input type="hidden" name="phase" value={phase} />
 
         <div>
-          <label className="mb-1 block text-sm font-bold text-navy">القراءة الحالية: {reading ?? "ناقصة"}</label>
-          <input type="number" min="0" name="odometerReading" defaultValue={reading ?? ""} className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-navy" placeholder="القراءة الصحيحة" required />
+          <label className="mb-1 block text-sm font-bold text-navy">{dictionary.odometer.currentReading}: {reading ?? dictionary.odometer.missing}</label>
+          <input type="number" min="0" name="odometerReading" defaultValue={reading ?? ""} className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-navy" placeholder={dictionary.odometer.correctReading} required />
         </div>
         <button type="submit" className="w-full rounded-xl bg-primary px-3 py-2 text-sm font-bold text-white hover:bg-primary-hover">
-          {isStart ? "حفظ قراءة البداية" : "حفظ قراءة النهاية"}
+          {isStart ? dictionary.odometer.saveStartReading : dictionary.odometer.saveEndReading}
         </button>
       </form>
     </section>
@@ -853,7 +895,7 @@ function OdometerResetDialog({
       <div className="w-full max-w-lg border border-border bg-surface p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-              <h2 className="text-lg font-bold text-navy">تعيين قراءة أساس للمركبة</h2>
+              <h2 className="text-lg font-bold text-navy">{dictionary.odometer.baselineTitle}</h2>
               <p className="mt-1 text-sm text-muted">{shift.vehicleLabel} {shift.vehiclePlate ? `(${shift.vehiclePlate})` : ""}</p>
             </div>
           <button type="button" onClick={onClose} className="rounded-xl border border-border px-3 py-2 text-sm font-bold">
@@ -861,21 +903,21 @@ function OdometerResetDialog({
           </button>
         </div>
         <p className="mt-2 text-sm text-muted">
-          استخدم هذا الإجراء عند استلام مركبة بقراءة مختلفة أو عند تغيير/تصفير عداد المركبة. لن يتم حذف المسافات التاريخية.
+          {dictionary.odometer.baselineDescription}
         </p>
         <div className="mt-4 rounded-lg border border-border bg-background p-3 text-sm font-bold text-navy">
           {shift.vehicleBaselineReading === null ? (
-            <p>لا يوجد مرجع عداد محدد</p>
+            <p>{dictionary.odometer.noBaseline}</p>
           ) : (
             <>
-              <p>مرجع العداد الحالي: {shift.vehicleBaselineReading.toLocaleString(locale)} كم</p>
+              <p>{dictionary.odometer.currentBaseline}: {shift.vehicleBaselineReading.toLocaleString(locale)} {dictionary.odometer.km}</p>
               {shift.vehicleBaselineResetAt ? (
                 <p className="mt-1 text-xs text-muted">
-                  تاريخ التعيين: {formatDateTime(shift.vehicleBaselineResetAt, locale, "Asia/Riyadh")}
+                  {dictionary.odometer.assignedAt}: {formatDateTime(shift.vehicleBaselineResetAt, locale, "Asia/Riyadh")}
                 </p>
               ) : null}
               <p className="mt-1 text-xs text-muted">
-                السبب: {formatBaselineReason(shift.vehicleBaselineReason, locale)}
+                {dictionary.odometer.reason}: {formatBaselineReason(shift.vehicleBaselineReason, dictionary)}
               </p>
             </>
           )}
@@ -887,20 +929,20 @@ function OdometerResetDialog({
           <input type="hidden" name="vehicleId" value={shift.vehicleId!} />
 
           <div>
-            <label className="mb-1 block text-sm font-bold text-navy">قراءة الأساس الجديدة</label>
+            <label className="mb-1 block text-sm font-bold text-navy">{dictionary.odometer.newBaseline}</label>
             <input type="number" min="0" name="baselineReading" required className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-navy" />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-bold text-navy">السبب</label>
+            <label className="mb-1 block text-sm font-bold text-navy">{dictionary.odometer.reason}</label>
             <select name="reason" required className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-navy">
-              <option value="vehicle_initial_baseline">إدخال المركبة للنظام لأول مرة</option>
-              <option value="odometer_cluster_replaced">تغيير عداد المركبة</option>
-              <option value="continuity_correction">تصحيح مرجع العداد</option>
-              <option value="other">أخرى</option>
+              <option value="vehicle_initial_baseline">{dictionary.odometer.reasons.vehicleInitialBaseline}</option>
+              <option value="odometer_cluster_replaced">{dictionary.odometer.reasons.odometerClusterReplaced}</option>
+              <option value="continuity_correction">{dictionary.odometer.reasons.continuityCorrection}</option>
+              <option value="other">{dictionary.odometer.reasons.other}</option>
             </select>
           </div>
           <button type="submit" className="w-full rounded-xl bg-primary px-3 py-2 text-sm font-bold text-white hover:bg-primary-hover">
-            حفظ مرجع العداد
+            {dictionary.odometer.saveBaseline}
           </button>
         </form>
       </div>
@@ -1928,20 +1970,8 @@ function formatNullableNumber(
   return value === null ? fallback : value.toLocaleString(locale);
 }
 
-function formatBaselineReason(value: string | null, locale: Locale) {
-  const labels = locale === "ar"
-    ? {
-        vehicle_initial_baseline: "إدخال المركبة للنظام لأول مرة",
-        odometer_cluster_replaced: "تغيير عداد المركبة",
-        continuity_correction: "تصحيح مرجع العداد",
-        other: "أخرى",
-      }
-    : {
-        vehicle_initial_baseline: "Initial vehicle baseline",
-        odometer_cluster_replaced: "Odometer replaced",
-        continuity_correction: "Odometer reference correction",
-        other: "Other",
-      };
+function formatBaselineReason(value: string | null, dictionary: AppRequestsDictionary) {
+  const labels = dictionary.odometer.reasons;
 
   if (
     value === "vehicle_initial_baseline" ||
@@ -1949,10 +1979,18 @@ function formatBaselineReason(value: string | null, locale: Locale) {
     value === "continuity_correction" ||
     value === "other"
   ) {
-    return labels[value];
+    return labels[
+      value === "vehicle_initial_baseline"
+        ? "vehicleInitialBaseline"
+        : value === "odometer_cluster_replaced"
+          ? "odometerClusterReplaced"
+          : value === "continuity_correction"
+            ? "continuityCorrection"
+            : "other"
+    ];
   }
 
-  return locale === "ar" ? "غير محدد" : "Not specified";
+  return dictionary.odometer.notSet;
 }
 
 function countDays(start: string, end: string) {

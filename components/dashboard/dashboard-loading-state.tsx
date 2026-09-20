@@ -1,4 +1,7 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { useLocaleContext } from "@/components/i18n/locale-provider";
 
 type DashboardLoadingStateProps = {
   message?: string;
@@ -11,35 +14,42 @@ type DashboardMutationOverlayProps = {
   message?: string;
 };
 
-const defaultLoadingMessage = "جاري تحميل البيانات...";
-const defaultLoadingSubtext = "يرجى الانتظار";
-const defaultMutationMessage = "جاري الحفظ...";
+const defaultLoadingMessage = "Loading data...";
+const defaultLoadingSubtext = "Please wait";
+const defaultMutationMessage = "Saving...";
 
 export function DashboardLoadingState({
-  message = defaultLoadingMessage,
-  subtext = defaultLoadingSubtext,
+  message,
+  subtext,
   className = "",
 }: DashboardLoadingStateProps) {
+  const localeContext = useLocaleContext();
+
   return (
     <div
       className={`flex min-h-[calc(100vh-4rem)] items-center justify-center bg-background px-5 py-10 sm:px-7 ${className}`}
     >
-      <LoadingPanel message={message} subtext={subtext} />
+      <LoadingPanel
+        message={message ?? localeContext?.loading.message ?? defaultLoadingMessage}
+        subtext={subtext ?? localeContext?.loading.subtext ?? defaultLoadingSubtext}
+      />
     </div>
   );
 }
 
 export function DashboardMutationOverlay({
   active,
-  message = defaultMutationMessage,
+  message,
 }: DashboardMutationOverlayProps) {
+  const localeContext = useLocaleContext();
+
   if (!active) {
     return null;
   }
 
   return (
     <div className="fixed inset-x-0 bottom-0 top-16 z-[85] flex items-center justify-center bg-background/70 px-5 py-10 backdrop-blur-sm">
-      <LoadingPanel message={message} />
+      <LoadingPanel message={message ?? localeContext?.loading.saving ?? defaultMutationMessage} />
     </div>
   );
 }

@@ -36,9 +36,12 @@ export type FleetActivityRow =
 export type FleetDriverOption = {
   id: string;
   fullName: string;
+  keetaDriverId?: string | null;
   iqamaNumber: string;
   mobileNumber?: string;
+  organizationId?: string;
   organizationName?: string;
+  organizationCode?: string;
 };
 
 export type FleetLinkedDriver = FleetDriverOption;
@@ -179,6 +182,7 @@ export type FleetMutationInput = {
   operatingCardNumber: string | null;
   operatingCardExpiryDate: string | null;
   assignedDriverSource: FleetPersonSource;
+  assignedDriverIds?: string[];
   assignedDriverId: string | null;
   assignedDriverManualName: string | null;
   assignedDriverManualIqama: string | null;

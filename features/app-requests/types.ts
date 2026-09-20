@@ -83,11 +83,24 @@ export type OdometerSummary = {
   alertRows: number;
 };
 
+export type OdometerAlertCode =
+  | "MISSING_START_READING"
+  | "MISSING_END_READING"
+  | "MISSING_START_PHOTO"
+  | "MISSING_END_PHOTO"
+  | "CONTINUITY_MISMATCH"
+  | "LOW_DAILY_DISTANCE"
+  | "HIGH_DAILY_DISTANCE";
+
 export type OdometerAlert = {
-  code: string;
-  message: string;
+  code: OdometerAlertCode;
   severity: "critical" | "warning";
-  meta?: any;
+  meta?: {
+    expected?: number;
+    actual?: number;
+    differenceKm?: number;
+    dailyDistanceKm?: number;
+  };
 };
 
 export type OilMaintenanceStatus =

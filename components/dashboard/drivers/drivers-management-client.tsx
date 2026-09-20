@@ -47,7 +47,6 @@ import type {
 } from "@/features/drivers/types";
 import type { AccessibleOrganization } from "@/features/organizations/types";
 import type { Locale } from "@/types/locale";
-import type { FleetVehicle } from "@/features/fleet/types";
 
 type DriversDictionary = Dictionary["dashboard"]["drivers"];
 
@@ -65,7 +64,6 @@ type DriversManagementClientProps = {
   summary?: DriverSummary;
   today: string;
   initialDriverId: string | null;
-  fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 };
 
 type DialogState =
@@ -115,7 +113,6 @@ export function DriversManagementClient({
   summary,
   today,
   initialDriverId,
-  fleetVehicles,
 }: DriversManagementClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -368,7 +365,6 @@ export function DriversManagementClient({
           onError={handleDriverFormError}
           onSubmit={handleDriverFormSubmit}
           hidden={hideDriverFormDialog}
-          fleetVehicles={fleetVehicles}
         />
       ) : null}
       {dialog?.mode === "suspend" || dialog?.mode === "reactivate" ? (
@@ -1226,7 +1222,6 @@ function DriverDialog({
   onError,
   onSubmit,
   hidden,
-  fleetVehicles,
 }: {
   locale: Locale;
   dictionary: DriversDictionary;
@@ -1240,7 +1235,6 @@ function DriverDialog({
   onError: (message: string) => void;
   onSubmit: () => void;
   hidden: boolean;
-  fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const title =
@@ -1330,7 +1324,6 @@ function DriverDialog({
             }
             onError={onError}
             onSubmit={onSubmit}
-            fleetVehicles={fleetVehicles}
           />
         )}
       </div>
@@ -1601,7 +1594,6 @@ function DriverForm({
   onSuccess,
   onError,
   onSubmit,
-  fleetVehicles,
 }: {
   locale: Locale;
   dictionary: DriversDictionary;
@@ -1611,7 +1603,6 @@ function DriverForm({
   onSuccess: () => void;
   onError: (message: string) => void;
   onSubmit: () => void;
-  fleetVehicles: Pick<FleetVehicle, "id" | "plateNumber" | "vehicleType" | "category">[];
 }) {
   const [state, formAction] = useActionState(
     driver ? updateDriverAction : createDriverAction,
@@ -1621,7 +1612,6 @@ function DriverForm({
   const [drivingLicenseFileName, setDrivingLicenseFileName] = useState("");
   const [driverCardFileName, setDriverCardFileName] = useState("");
   const [profilePhotoFileName, setProfilePhotoFileName] = useState("");
-  const [operatingCardFileName, setOperatingCardFileName] = useState("");
   const hasDrivingLicenseDocument = Boolean(
     driver?.documents.some(
       (document) => document.documentType === "driving_license",
@@ -1884,25 +1874,18 @@ function DriverForm({
             </option>
           ))}
         </SelectField>
-        <SelectField
-          id="driverVehicleId"
-          name="vehicleId"
-          label={dictionary.vehiclePlateNumber}
-          required={false}
-          defaultValue={getFieldValue(
-            values,
-            "vehicleId",
-            driver?.vehicleId ?? "",
-          )}
-          error={fieldErrors.vehicleId}
-        >
-          <option value="">{locale === "ar" ? "بدون مركبة" : "No vehicle"}</option>
-          {fleetVehicles.map((vehicle) => (
-            <option key={vehicle.id} value={vehicle.id}>
-              {vehicle.plateNumber} - {dictionary.vehicleTypes[vehicle.vehicleType as DriverVehicleType] ?? vehicle.vehicleType}
-            </option>
-          ))}
-        </SelectField>
+        <div className="space-y-2">
+          <input type="hidden" name="vehicleId" value={driver?.vehicleId ?? ""} />
+          <p className="text-sm font-semibold text-navy">{dictionary.vehiclePlateNumber}</p>
+          <div className="flex min-h-12 items-center rounded-lg border border-border bg-background px-3 text-sm font-semibold text-navy">
+            {driver?.vehicleNumber || (locale === "ar" ? "بدون مركبة" : "No vehicle")}
+          </div>
+          <p className="text-xs text-muted">
+            {locale === "ar"
+              ? "يتم تحديد المركبة من إدارة الأسطول."
+              : "The vehicle is assigned from Fleet management."}
+          </p>
+        </div>
         <FormField
           id="driverKeetaVehiclePlateNumber"
           name="keetaVehiclePlateNumber"
@@ -2090,6 +2073,7 @@ function DriverForm({
             onChange={setDriverCardFileName}
           />
         </DocumentGroup>
+
       </FormSection>
 
       <div className="sticky bottom-0 z-20 -mb-5 -mx-5 rounded-b-2xl bg-surface px-5 pb-5">

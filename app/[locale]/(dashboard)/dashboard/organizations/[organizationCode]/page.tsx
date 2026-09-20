@@ -90,6 +90,7 @@ export default async function OrganizationRoute({
       data={dashboardData}
       locale={locale}
       accessLabel={getAccessLabel(organization, dictionary)}
+      dictionary={getDictionary(locale).dashboard.organizationDashboard}
     />
   );
 }

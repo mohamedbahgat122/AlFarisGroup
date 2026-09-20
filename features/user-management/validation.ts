@@ -9,6 +9,7 @@ import {
   applyPermissionDependencies,
   isOrganizationPermissionKey,
   normalizePermissionKeys,
+  stripLegacyPermissionKeys,
 } from "@/features/permissions/registry";
 import { applyGlobalPermissionDependencies, isGlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
@@ -326,7 +327,7 @@ export function parseGranularAdditionalAccess(value: FormDataEntryValue | null) 
     }
 
     const normalizedPermissionKeys = applyPermissionDependencies(
-      normalizePermissionKeys(permissionKeys),
+      stripLegacyPermissionKeys(normalizePermissionKeys(permissionKeys)),
     );
 
     if (normalizedPermissionKeys.length > 0) {

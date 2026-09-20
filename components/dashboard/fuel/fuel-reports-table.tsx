@@ -36,14 +36,7 @@ export function FuelReportsTable({
         <table className="w-full min-w-[1100px] border-collapse text-start">
           <thead className="bg-background text-xs font-bold uppercase text-muted">
             <tr>
-              <Header>السائق</Header>
-              <Header>رقم اللوحة</Header>
-              <Header>المركبة</Header>
-              <Header>عدد العمليات</Header>
-              <Header>إجمالي اللترات</Header>
-              <Header>إجمالي التكلفة</Header>
-              <Header>متوسط العملية</Header>
-              <Header>Iqama / ID</Header>
+              <Header>{dictionary.tableDriver}</Header><Header>{dictionary.table.plate}</Header><Header>{dictionary.table.vehicle}</Header><Header>{dictionary.table.operations}</Header><Header>{dictionary.table.litres}</Header><Header>{dictionary.table.cost}</Header><Header>{dictionary.tableAverage}</Header><Header>{dictionary.table.id}</Header>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -66,22 +59,7 @@ export function FuelReportsTable({
         <table className="w-full min-w-[1700px] border-collapse text-start">
           <thead className="bg-background text-xs font-bold uppercase text-muted">
             <tr>
-              <Header>رقم العملية</Header>
-              <Header>التاريخ</Header>
-              <Header>السائق</Header>
-              <Header>المركبة</Header>
-              <Header>رقم اللوحة</Header>
-              <Header>الماركة / الموديل</Header>
-              <Header>العداد</Header>
-              <Header>الفرع</Header>
-              <Header>المزود</Header>
-              <Header>طريقة الدفع</Header>
-              <Header>المنتج</Header>
-              <Header>الكمية</Header>
-              <Header>سعر الوحدة</Header>
-              <Header>الإجمالي</Header>
-              <Header>الضريبة</Header>
-              <Header>الفاتورة</Header>
+              <Header>{dictionary.table.operationNumber}</Header><Header>{dictionary.table.date}</Header><Header>{dictionary.tableDriver}</Header><Header>{dictionary.table.vehicle}</Header><Header>{dictionary.table.plate}</Header><Header>{dictionary.table.brandModel}</Header><Header>{dictionary.table.odometer}</Header><Header>{dictionary.table.branch}</Header><Header>{dictionary.table.provider}</Header><Header>{dictionary.table.paymentMethod}</Header><Header>{dictionary.table.item}</Header><Header>{dictionary.table.quantity}</Header><Header>{dictionary.table.unitPrice}</Header><Header>{dictionary.table.total}</Header><Header>{dictionary.table.tax}</Header><Header>{dictionary.table.invoice}</Header>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -102,7 +80,7 @@ export function FuelReportsTable({
                 <Cell>{formatNullableMoney(row.unitPrice, locale, dictionary)}</Cell>
                 <Cell strong>{formatNullableMoney(row.total, locale, dictionary)}</Cell>
                 <Cell>{formatNullableMoney(row.tax, locale, dictionary)}</Cell>
-                <Cell>{row.invoiceAvailable === null ? dictionary.notAvailable : row.invoiceAvailable ? "متاحة" : "غير متاحة"}</Cell>
+                <Cell>{row.invoiceAvailable === null ? dictionary.notAvailable : row.invoiceAvailable ? dictionary.table.invoiceAvailable : dictionary.table.invoiceUnavailable}</Cell>
               </tr>
             ))}
           </tbody>

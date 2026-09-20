@@ -11,6 +11,8 @@ import { RemoveShiftDialog } from "./remove-shift-dialog";
 import { startSupervisorWorkSession, endSupervisorWorkSession } from "@/features/supervisor-shifts/actions";
 import { calculateShiftDurations } from "@/features/supervisor-shifts/utils";
 import { UserToast, type ToastState } from "@/components/dashboard/users/user-toast";
+import type { Dictionary } from "@/i18n/dictionaries";
+type SupervisorDictionary = Dictionary["dashboard"]["supervisorShifts"];
 
 interface SupervisorShiftsClientProps {
   data: {
@@ -24,6 +26,7 @@ interface SupervisorShiftsClientProps {
     workSessions?: any[];
   };
   locale: string;
+  dictionary: SupervisorDictionary;
 }
 
 // Helper to determine if a shift is currently active in Riyadh timezone
@@ -82,7 +85,7 @@ function isCurrentlyOnDuty(shift: any | null, leaves: any[], supervisorId: strin
   }
 }
 
-export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientProps) => {
+export const SupervisorShiftsClient = ({ data, locale, dictionary }: SupervisorShiftsClientProps) => {
   const [toast, setToast] = useState<ToastState | null>(null);
 
   // Dialog states
@@ -117,18 +120,18 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
   const handleStartWork = async (supervisorId: string) => {
     try {
       await startSupervisorWorkSession(supervisorId);
-      setToast({ message: "تم بدء العمل بنجاح", tone: "success" });
+      setToast({ message: dictionary.working, tone: "success" });
     } catch (err: any) {
-      setToast({ message: err.message || "حدث خطأ أثناء بدء العمل", tone: "error" });
+      setToast({ message: err.message || dictionary.errors.generic, tone: "error" });
     }
   };
 
   const handleEndWork = async (supervisorId: string) => {
     try {
       await endSupervisorWorkSession(supervisorId);
-      setToast({ message: "تم إنهاء العمل بنجاح", tone: "success" });
+      setToast({ message: dictionary.endedWork, tone: "success" });
     } catch (err: any) {
-      setToast({ message: err.message || "حدث خطأ أثناء إنهاء العمل", tone: "error" });
+      setToast({ message: err.message || dictionary.errors.generic, tone: "error" });
     }
   };
 
@@ -137,10 +140,10 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
       <div className="flex flex-col gap-4 border-b border-border bg-surface px-5 py-6 sm:px-7 lg:flex-row lg:items-center lg:justify-between">
         <div className="max-w-3xl">
           <h1 className="text-2xl font-bold tracking-normal text-navy">
-            شيفتات المشرفين
+            {dictionary.title}
           </h1>
           <p className="mt-2 text-sm leading-6 text-muted">
-            إدارة جداول دوام المشرفين والإجازات والتغطيات.
+            {dictionary.description}
           </p>
         </div>
         <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
@@ -149,14 +152,14 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
             onClick={() => setManageShiftsDialogOpen(true)}
             className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-border bg-white px-5 text-sm font-semibold text-navy transition hover:bg-surface focus-visible:outline focus-visible:outline-offset-2"
           >
-            تعيين شيفت
+            {dictionary.assignShift}
           </button>
            <button 
             type="button" 
             onClick={() => setAssignDialogOpen(true)}
             className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-transparent bg-primary px-5 text-sm font-semibold text-white transition hover:bg-primary-hover focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
-            + تعيين مشرف
+            + {dictionary.assignSupervisor}
           </button>
         </div>
       </div>
@@ -164,19 +167,19 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
       <div className="border-b border-border bg-surface px-5 py-6 sm:px-7">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-medium text-muted">إجمالي المشرفين</h3>
+            <h3 className="text-sm font-medium text-muted">{dictionary.totalSupervisors}</h3>
             <p className="mt-2 text-3xl font-bold text-navy">{totalSupervisors}</p>
           </div>
           <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-medium text-muted">يعملون الآن</h3>
+            <h3 className="text-sm font-medium text-muted">{dictionary.workingNow}</h3>
             <p className="mt-2 text-3xl font-bold text-navy text-primary">{activeSessionsCount}</p>
           </div>
           <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-medium text-muted">راحة أسبوعية اليوم</h3>
+            <h3 className="text-sm font-medium text-muted">{dictionary.weeklyOffToday}</h3>
             <p className="mt-2 text-3xl font-bold text-navy">{weeklyOffTodayCount}</p>
           </div>
           <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-medium text-muted">في إجازة اليوم</h3>
+            <h3 className="text-sm font-medium text-muted">{dictionary.onLeaveToday}</h3>
             <p className="mt-2 text-3xl font-bold text-navy">{onLeaveCount}</p>
           </div>
         </div>
@@ -188,13 +191,13 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
             <table className="w-full text-start text-sm">
               <thead className="border-b border-border bg-surface/50 text-muted">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">المشرف</th>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">الشيفت / المؤسسات</th>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">حالة اليوم (تشغيلي)</th>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">حالة الدوام (حضور)</th>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">الراحة الأسبوعية</th>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">وقت العمل</th>
-                  <th className="whitespace-nowrap px-4 py-3.5 text-end font-semibold">الإجراءات</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">{dictionary.supervisor}</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">{dictionary.shiftOrganizations}</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">{dictionary.operationalStatus}</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">{dictionary.attendanceStatus}</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">{dictionary.weeklyOff}</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-start font-semibold">{dictionary.workTime}</th>
+                  <th className="whitespace-nowrap px-4 py-3.5 text-end font-semibold">{dictionary.actions}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border bg-white">
@@ -211,22 +214,22 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                   // Deterministic Status Logic - Separated!
                   let operationalBadge = null;
                   if (activeLeave) {
-                    operationalBadge = <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">في إجازة</span>;
+                    operationalBadge = <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">{dictionary.onLeave}</span>;
                   } else if (weeklyOff && weeklyOff.day_of_week === sysDay) {
-                    operationalBadge = <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-600/10">راحة أسبوعية</span>;
+                    operationalBadge = <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-600/10">{dictionary.weeklyRest}</span>;
                   } else if (!shift) {
-                    operationalBadge = <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">بدون شيفت</span>;
+                    operationalBadge = <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">{dictionary.noShift}</span>;
                   } else {
-                    operationalBadge = <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/10">يوم عمل</span>;
+                    operationalBadge = <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/10">{dictionary.workDay}</span>;
                   }
 
                   let attendanceBadge = null;
                   if (activeSession) {
-                    attendanceBadge = <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">يعمل الآن</span>;
+                    attendanceBadge = <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">{dictionary.working}</span>;
                   } else if (workSession && workSession.ended_at !== null) {
-                    attendanceBadge = <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">أنهى العمل</span>;
+                    attendanceBadge = <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">{dictionary.endedWork}</span>;
                   } else {
-                    attendanceBadge = <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">لم يبدأ</span>;
+                    attendanceBadge = <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">{dictionary.notStarted}</span>;
                   }
 
                   // Weekly Off Coverage resolution
@@ -248,17 +251,15 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                       const diffMs = endT.getTime() - startT.getTime();
                       const hours = Math.floor(diffMs / 3600000);
                       const minutes = Math.floor((diffMs % 3600000) / 60000);
-                      durationStr = `${hours} س و ${minutes} د`;
+                      durationStr = `${hours} ${dictionary.hoursMinutes} ${minutes}`;
                     } else {
-                      durationStr = "قيد العمل...";
+                      durationStr = dictionary.working;
                     }
                   }
 
                   const formatTime = (ts: string) => {
                     return new Date(ts).toLocaleTimeString('en-US', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hour12: false });
                   };
-
-                  const DAYS_LABELS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
                   return (
                     <tr key={row.id} className="transition-colors hover:bg-surface/30">
@@ -279,17 +280,17 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                               <span><span className="font-semibold">{shift.name}</span> ({shift.start_time.substring(0,5)} - {shift.end_time.substring(0,5)})</span>
                               {shift.break_start_time && shift.break_end_time && (
                                 <span className="text-xs text-muted">
-                                  بريك: {shift.break_start_time.substring(0, 5)} - {shift.break_end_time.substring(0, 5)} (صافي {calculateShiftDurations(shift.start_time, shift.end_time, shift.break_start_time, shift.break_end_time).formattedNet})
+                                  {dictionary.breakLabel}: {shift.break_start_time.substring(0, 5)} - {shift.break_end_time.substring(0, 5)} ({dictionary.netLabel} {calculateShiftDurations(shift.start_time, shift.end_time, shift.break_start_time, shift.break_end_time).formattedNet})
                                 </span>
                               )}
                             </div>
                           ) : (
-                            <span className="text-muted">بدون شيفت</span>
+                            <span className="text-muted">{dictionary.noShift}</span>
                           )}
                           <span className="text-xs text-muted max-w-[200px] truncate mt-1 border-t pt-1">
                             {orgs.length > 0 
-                              ? orgs.map(o => o.organizations?.name || o.organization_id).join("، ") 
-                              : "بدون مؤسسات"}
+                              ? orgs.map(o => o.organizations?.name || o.organization_id).join(", ")
+                              : dictionary.organizationsNone}
                           </span>
                         </div>
                       </td>
@@ -297,7 +298,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                         {operationalBadge}
                         {coveringForWeeklyOff.length > 0 && (
                           <div className="mt-1">
-                            <span className="text-xs text-primary font-medium">يغطي اليوم</span>
+                            <span className="text-xs text-primary font-medium">{dictionary.coveringToday}</span>
                           </div>
                         )}
                       </td>
@@ -307,8 +308,8 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                       <td className="whitespace-nowrap px-4 py-4 text-sm text-navy">
                         {weeklyOff ? (
                           <div className="flex flex-col gap-0.5">
-                            <span className="font-medium">{DAYS_LABELS[weeklyOff.day_of_week]}</span>
-                            {weeklyCoverageName && <span className="text-xs text-muted">بديل: {weeklyCoverageName}</span>}
+                            <span className="font-medium">{dictionary.days[weeklyOff.day_of_week]}</span>
+                            {weeklyCoverageName && <span className="text-xs text-muted">{dictionary.replacement}: {weeklyCoverageName}</span>}
                           </div>
                         ) : (
                           <span className="text-muted">-</span>
@@ -318,7 +319,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                         {workSession ? (
                           <div className="flex flex-col gap-0.5">
                             <span className="font-medium">{formatTime(workSession.started_at)} → {workSession.ended_at ? formatTime(workSession.ended_at) : '...'}</span>
-                            <span className="text-xs text-muted">المدة: {durationStr}</span>
+                            <span className="text-xs text-muted">{dictionary.duration}: {durationStr}</span>
                           </div>
                         ) : (
                           <span className="text-muted">-</span>
@@ -332,7 +333,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                               onClick={() => handleEndWork(row.id)}
                               className="text-sm font-medium text-danger hover:bg-danger/10 px-2 py-1 rounded transition"
                             >
-                              إنهاء العمل
+                              {dictionary.endWork}
                             </button>
                           ) : (
                             <button 
@@ -341,7 +342,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                               disabled={workSession?.ended_at !== null && !!workSession}
                               className="text-sm font-medium text-primary hover:bg-primary/10 px-2 py-1 rounded transition disabled:opacity-50"
                             >
-                              بدء العمل
+                              {dictionary.startWork}
                             </button>
                           )}
                           <div className="w-full h-[1px] bg-border my-1"></div>
@@ -350,21 +351,21 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                             onClick={() => { setSelectedSupervisor(row); setTransferDialogOpen(true); }}
                             className="text-xs font-medium text-muted hover:text-navy px-1"
                           >
-                            نقل
+                            {dictionary.edit}
                           </button>
                           <button 
                             type="button" 
                             onClick={() => { setSelectedSupervisor(row); setEditOrgsDialogOpen(true); }}
                             className="text-xs font-medium text-muted hover:text-navy px-1"
                           >
-                            مؤسسات
+                            {dictionary.shiftOrganizations}
                           </button>
                           <button 
                             type="button" 
                             onClick={() => { setSelectedSupervisor(row); setEditWeeklyOffDialogOpen(true); }}
                             className="text-xs font-medium text-muted hover:text-navy px-1"
                           >
-                            الراحة
+                            {dictionary.weeklyOff}
                           </button>
                           {activeLeave ? (
                             <button 
@@ -372,7 +373,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                               onClick={() => { setSelectedLeaveId(activeLeave.id); setCancelLeaveDialogOpen(true); }}
                               className="text-xs font-medium text-danger hover:text-danger/80 px-1"
                             >
-                              إلغاء إجازة
+                              {dictionary.cancelLeave}
                             </button>
                           ) : shiftAssignment ? (
                             <button 
@@ -380,7 +381,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
                               onClick={() => { setSelectedSupervisor(row); setRemoveShiftDialogOpen(true); }}
                               className="text-xs font-medium text-danger hover:text-danger/80 px-1"
                             >
-                              إزالة من الشيفت
+                              {dictionary.removeFromShift}
                             </button>
                           ) : null}
                         </div>
@@ -398,6 +399,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         open={manageShiftsDialogOpen}
         onOpenChange={setManageShiftsDialogOpen}
         shifts={data.shifts || []}
+        dictionary={dictionary}
         onToast={setToast}
       />
       
@@ -410,6 +412,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         shifts={data.shifts || []}
         organizations={data.allOrganizations || []}
         onToast={setToast}
+        dictionary={dictionary}
       />
 
       <CancelLeaveDialog
@@ -417,6 +420,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         onOpenChange={setCancelLeaveDialogOpen}
         leaveId={selectedLeaveId}
         onToast={setToast}
+        dictionary={dictionary}
       />
 
       <TransferShiftDialog
@@ -427,6 +431,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         currentAssignmentStartDate={data.shiftAssignments?.find(a => a.supervisor_id === selectedSupervisor?.id)?.start_date}
         shifts={data.shifts || []}
         onToast={setToast}
+        dictionary={dictionary}
       />
 
       <RemoveShiftDialog
@@ -435,6 +440,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         supervisor={selectedSupervisor}
         currentShiftName={data.shifts?.find(s => s.id === data.shiftAssignments?.find(a => a.supervisor_id === selectedSupervisor?.id)?.shift_id)?.name}
         onToast={setToast}
+        dictionary={dictionary}
       />
 
       <EditOrganizationsDialog
@@ -444,6 +450,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         organizations={data.allOrganizations || []}
         currentOrgAssignments={data.orgAssignments || []}
         onToast={setToast}
+        dictionary={dictionary}
       />
       <EditWeeklyOffDialog
         open={editWeeklyOffDialogOpen}
@@ -452,6 +459,7 @@ export const SupervisorShiftsClient = ({ data, locale }: SupervisorShiftsClientP
         allSupervisors={data.supervisors || []}
         currentWeeklyOff={data.weeklyOffs?.find(w => w.supervisor_id === selectedSupervisor?.id)}
         onToast={setToast}
+        dictionary={dictionary}
       />
     </>
   );

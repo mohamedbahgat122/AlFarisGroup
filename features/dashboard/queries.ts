@@ -27,26 +27,24 @@ type DriverRow = Pick<
   | "id"
   | "full_name"
   | "organization_id"
+  | "vehicle_id"
   | "status"
   | "deleted_at"
   | "is_company_sponsored"
-  | "vehicle_number"
   | "iqama_expiry_date"
   | "driving_license_expiry_date"
   | "driver_card_expiry_date"
-  | "vehicle_authorization_expiry_date"
-  | "operating_card_expiry_date"
 >;
 type FleetVehicleRow = Pick<
   Database["public"]["Tables"]["fleet_vehicles"]["Row"],
   | "id"
-  | "assigned_driver_id"
   | "assigned_organization_id"
   | "archived_at"
   | "technical_status"
   | "fault_location"
   | "operational_status"
   | "operating_card_expiry_date"
+  | "authorization_expiry_date"
   | "vehicle_category"
 >;
 type HousingUnitRow = Pick<Database["public"]["Tables"]["housing_units"]["Row"], "id" | "capacity" | "status" | "archived_at">;
@@ -139,8 +137,8 @@ export async function getOrganizationDashboardData({
     activeDriverIds.has(assignment.driver_id),
   );
   const housedDriverIds = new Set(housingAssignmentsForOrganization.map((assignment) => assignment.driver_id));
-  const driverMetrics = buildDriverMetrics(drivers.rows, housedDriverIds, today);
-  const fleetMetrics = buildFleetMetrics(fleet.rows, today);
+  const driverMetrics = buildDriverMetrics(drivers.rows, housedDriverIds, today, fleet.rows);
+  const fleetMetrics = buildFleetMetrics(fleet.rows, today, drivers.rows);
   const housingMetrics = buildHousingMetrics(housing.units, housing.rooms, housingAssignmentsForOrganization);
   const requestMetrics = {
     ...buildRequestMetrics(appRequests.rows, period.dates, today),
@@ -310,8 +308,8 @@ export async function getExecutiveDashboardData({
   );
   const housedDriverIds = new Set(housingAssignmentsForSelectedDrivers.map((assignment) => assignment.driver_id));
   const housingMetrics = buildHousingMetrics(housing.units, housing.rooms, housing.assignments);
-  const driverMetrics = buildDriverMetrics(drivers.rows, housedDriverIds, today);
-  const fleetMetrics = buildFleetMetrics(fleet.rows, today);
+  const driverMetrics = buildDriverMetrics(drivers.rows, housedDriverIds, today, fleet.rows);
+  const fleetMetrics = buildFleetMetrics(fleet.rows, today, drivers.rows);
   const requestMetrics = {
     ...buildRequestMetrics(appRequests.rows, period.dates, today),
     pending: pendingRequests.count,
@@ -437,7 +435,7 @@ async function loadDrivers(supabase: Supabase, organizationIds: string[]) {
   const { data, error } = await supabase
     .from("drivers")
     .select(
-      "id, full_name, organization_id, status, deleted_at, is_company_sponsored, vehicle_number, iqama_expiry_date, driving_license_expiry_date, driver_card_expiry_date, vehicle_authorization_expiry_date, operating_card_expiry_date",
+      "id, full_name, organization_id, vehicle_id, status, deleted_at, is_company_sponsored, iqama_expiry_date, driving_license_expiry_date, driver_card_expiry_date",
     )
     .in("organization_id", organizationIds);
 
@@ -457,7 +455,7 @@ async function loadFleet(
   let query = supabase
     .from("fleet_vehicles")
     .select(
-      "id, assigned_driver_id, assigned_organization_id, archived_at, technical_status, fault_location, operational_status, operating_card_expiry_date, vehicle_category",
+      "id, assigned_organization_id, archived_at, technical_status, fault_location, operational_status, operating_card_expiry_date, authorization_expiry_date, vehicle_category",
     );
 
   if (!isSystemOwner || isSpecificOrganization) {
@@ -647,8 +645,10 @@ async function loadLocalFuel(
   return { rows: (data ?? []) as FuelTransactionRow[] };
 }
 
-function buildDriverMetrics(rows: DriverRow[], housedDriverIds: Set<string>, today: string) {
+function buildDriverMetrics(rows: DriverRow[], housedDriverIds: Set<string>, today: string, fleetRows: FleetVehicleRow[]) {
   const active = rows.filter((driver) => driver.status === "active" && !driver.deleted_at);
+  const operatingCardExpiryByVehicleId = new Map(fleetRows.map((vehicle) => [vehicle.id, vehicle.operating_card_expiry_date]));
+  const authorizationExpiryByVehicleId = new Map(fleetRows.map((vehicle) => [vehicle.id, vehicle.authorization_expiry_date]));
   return {
     total: rows.filter((driver) => !driver.deleted_at).length,
     active: active.length,
@@ -656,22 +656,23 @@ function buildDriverMetrics(rows: DriverRow[], housedDriverIds: Set<string>, tod
     archived: rows.filter((driver) => Boolean(driver.deleted_at)).length,
     companySponsored: active.filter((driver) => driver.is_company_sponsored).length,
     nonSponsored: active.filter((driver) => !driver.is_company_sponsored).length,
-    withoutAssignedVehicle: active.filter((driver) => !driver.vehicle_number?.trim()).length,
+    withoutAssignedVehicle: active.filter((driver) => !driver.vehicle_id).length,
     withoutHousing: active.filter((driver) => !housedDriverIds.has(driver.id)).length,
     expiringDocuments: active.filter((driver) =>
       [
         driver.iqama_expiry_date,
         driver.driving_license_expiry_date,
         driver.driver_card_expiry_date,
-        driver.vehicle_authorization_expiry_date,
-        driver.operating_card_expiry_date,
+        driver.vehicle_id ? authorizationExpiryByVehicleId.get(driver.vehicle_id) ?? null : null,
+        driver.vehicle_id ? operatingCardExpiryByVehicleId.get(driver.vehicle_id) ?? null : null,
       ].some((date) => date && daysBetween(today, date) <= 10),
     ).length,
   };
 }
 
-function buildFleetMetrics(rows: FleetVehicleRow[], today: string) {
+function buildFleetMetrics(rows: FleetVehicleRow[], today: string, drivers: DriverRow[]) {
   const active = rows.filter((vehicle) => !vehicle.archived_at);
+  const linkedVehicleIds = new Set(drivers.map((driver) => driver.vehicle_id).filter(Boolean));
   return {
     totalActive: active.length,
     healthy: active.filter((vehicle) => vehicle.technical_status === "healthy").length,
@@ -680,7 +681,7 @@ function buildFleetMetrics(rows: FleetVehicleRow[], today: string) {
     operationalActive: active.filter((vehicle) => vehicle.operational_status === "active").length,
     operationalStopped: active.filter((vehicle) => vehicle.operational_status !== "active").length,
     archived: rows.filter((vehicle) => Boolean(vehicle.archived_at)).length,
-    withoutDriver: active.filter((vehicle) => !vehicle.assigned_driver_id).length,
+    withoutDriver: active.filter((vehicle) => !linkedVehicleIds.has(vehicle.id)).length,
     withoutOrganization: active.filter((vehicle) => !vehicle.assigned_organization_id).length,
     expiringOperatingCards: active.filter((vehicle) =>
       vehicle.operating_card_expiry_date && daysBetween(today, vehicle.operating_card_expiry_date) <= 10,

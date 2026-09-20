@@ -8,6 +8,7 @@ import {
   applyPermissionDependencies,
   organizationPermissionGroups,
   organizationPermissionKeys,
+  stripLegacyPermissionKeys,
   viewOnlyOrganizationPermissionKeys,
   type OrganizationPermissionKey,
 } from "@/features/permissions/registry";
@@ -82,7 +83,7 @@ function OrganizationPermissionCard({
   }
 
   function setPermission(permissionKey: OrganizationPermissionKey, checked: boolean) {
-    const next = new Set(permissionKeys);
+    const next = new Set(stripLegacyPermissionKeys(permissionKeys));
     if (checked) {
       next.add(permissionKey);
     } else {

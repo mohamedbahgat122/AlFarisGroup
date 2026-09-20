@@ -13,6 +13,11 @@ export const organizationPermissionKeys = [
   "driver_reports.import",
   "driver_reports.replace",
   "driver_reports.details.view",
+  "driver_order_reports.view",
+  "driver_order_reports.import",
+  "driver_order_reports.replace",
+  "driver_order_reports.details.view",
+  "driver_order_reports.edit",
   "fleet.cars.view",
   "fleet.motorcycles.view",
   "fleet.create",
@@ -46,7 +51,14 @@ export const organizationPermissionKeys = [
   "maintenance_materials.manage",
   "order_periods.view",
   "order_periods.manage",
+  "order_periods.create",
+  "order_periods.update",
   "order_periods.assign",
+  "order_periods.open_now",
+  "order_periods.requests.review",
+  "order_periods.settings",
+  "order_periods.archive",
+  "order_periods.activity.view",
 ] as const;
 
 export type OrganizationPermissionKey =
@@ -57,6 +69,7 @@ export type OrganizationPermissionGroup = {
     | "organization"
     | "drivers"
     | "driver_reports"
+    | "driver_order_reports"
     | "fleet"
     | "fuel"
     | "app_requests"
@@ -76,6 +89,7 @@ export const viewOnlyOrganizationPermissionKeys = [
   "organization.dashboard.view",
   "drivers.view",
   "driver_reports.view",
+  "driver_order_reports.view",
   "fleet.cars.view",
   "fleet.motorcycles.view",
   "fuel.reports.view",
@@ -88,6 +102,7 @@ export const viewOnlyOrganizationPermissionKeys = [
   "maintenance_jobs.view",
   "maintenance_materials.view",
   "order_periods.view",
+  "order_periods.activity.view",
 ] as const satisfies readonly OrganizationPermissionKey[];
 
 export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
@@ -116,6 +131,16 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
       "driver_reports.import",
       "driver_reports.replace",
       "driver_reports.details.view",
+    ],
+  },
+  {
+    id: "driver_order_reports",
+    permissions: [
+      "driver_order_reports.view",
+      "driver_order_reports.import",
+      "driver_order_reports.replace",
+      "driver_order_reports.details.view",
+      "driver_order_reports.edit",
     ],
   },
   {
@@ -182,8 +207,14 @@ export const organizationPermissionGroups: OrganizationPermissionGroup[] = [
     id: "order_periods",
     permissions: [
       "order_periods.view",
-      "order_periods.manage",
+      "order_periods.create",
+      "order_periods.update",
       "order_periods.assign",
+      "order_periods.open_now",
+      "order_periods.requests.review",
+      "order_periods.settings",
+      "order_periods.archive",
+      "order_periods.activity.view",
     ],
   },
   {
@@ -202,6 +233,12 @@ export function normalizePermissionKeys(
   values: readonly string[],
 ): OrganizationPermissionKey[] {
   return Array.from(new Set(values)).filter(isOrganizationPermissionKey);
+}
+
+export function stripLegacyPermissionKeys(
+  values: readonly OrganizationPermissionKey[],
+): OrganizationPermissionKey[] {
+  return values.filter((permissionKey) => permissionKey !== "order_periods.manage");
 }
 
 export function applyPermissionDependencies(
@@ -242,6 +279,15 @@ export function applyPermissionDependencies(
     permissions.add("driver_reports.view");
   }
 
+  if (
+    permissions.has("driver_order_reports.import") ||
+    permissions.has("driver_order_reports.replace") ||
+    permissions.has("driver_order_reports.details.view") ||
+    permissions.has("driver_order_reports.edit")
+  ) {
+    permissions.add("driver_order_reports.view");
+  }
+
   if (permissions.has("fuel.manage") || permissions.has("fuel.increase.review")) {
     permissions.add("fuel.reports.view");
   }
@@ -280,9 +326,30 @@ export function applyPermissionDependencies(
 
   if (
     permissions.has("order_periods.manage") ||
-    permissions.has("order_periods.assign")
+    permissions.has("order_periods.create") ||
+    permissions.has("order_periods.update") ||
+    permissions.has("order_periods.assign") ||
+    permissions.has("order_periods.open_now") ||
+    permissions.has("order_periods.requests.review") ||
+    permissions.has("order_periods.settings") ||
+    permissions.has("order_periods.archive")
   ) {
     permissions.add("order_periods.view");
+  }
+
+  if (permissions.has("order_periods.activity.view")) {
+    permissions.add("order_periods.view");
+  }
+
+  if (permissions.has("order_periods.manage")) {
+    permissions.add("order_periods.create");
+    permissions.add("order_periods.update");
+    permissions.add("order_periods.assign");
+    permissions.add("order_periods.open_now");
+    permissions.add("order_periods.requests.review");
+    permissions.add("order_periods.settings");
+    permissions.add("order_periods.archive");
+    permissions.add("order_periods.activity.view");
   }
 
   return Array.from(permissions).filter(isOrganizationPermissionKey);

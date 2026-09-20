@@ -50,12 +50,9 @@ type DriverUpdateStage =
   | "load_target_driver"
   | "validate_permissions"
   | "validate_profile_photo"
-  | "validate_operating_card_file"
   | "upload_profile_photo"
-  | "upload_operating_card_file"
   | "update_driver_database"
   | "remove_replaced_profile_photo"
-  | "remove_replaced_operating_card_file"
   | "revalidate_routes";
 type DriverAccountMutationResult =
   | { success: true }
@@ -143,7 +140,7 @@ export async function createDriverForOrganization({
   const vehicleResolution = await resolveDriverFleetVehicle({
     admin,
     organizationId: access.organization.id,
-    vehicleId: validation.input.vehicleId,
+    vehicleId: undefined,
   });
 
   if (!vehicleResolution.success) {
@@ -323,7 +320,7 @@ export async function updateDriverForOrganization({
 
   const { data: existingDriver, error: driverError } = await admin
     .from("drivers")
-    .select("id, organization_id, deleted_at, profile_photo_path, operating_card_file_path")
+    .select("id, organization_id, vehicle_id, deleted_at, profile_photo_path")
     .eq("id", validation.input.driverId)
     .maybeSingle();
 
@@ -368,7 +365,7 @@ export async function updateDriverForOrganization({
   const vehicleResolution = await resolveDriverFleetVehicle({
     admin,
     organizationId: access.organization.id,
-    vehicleId: validation.input.vehicleId,
+    vehicleId: existingDriver.vehicle_id ?? undefined,
   });
 
   if (!vehicleResolution.success) {

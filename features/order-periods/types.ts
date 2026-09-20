@@ -12,17 +12,30 @@ export type OrderPeriodTemplate = {
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
+  hasBreak: boolean;
+  breakStartTime: string | null;
+  breakEndTime: string | null;
   isPublished: boolean;
   isActive: boolean;
   archivedAt: string | null;
   openBeforeMinutes: number | null;
   closeAfterMinutes: number | null;
+  endBeforeMinutes: number | null;
   minimumWorkMinutes: number | null;
 };
 
 export type OrderPeriodAssignment = OrderPeriodDriver & {
   assignmentId: string;
   templateId: string;
+  openNowEligible: boolean;
+  attendanceExists: boolean;
+  manualOverrideActive: boolean;
+  manualOverrideId: string | null;
+  manualOverrideScheduledBusinessDate: string | null;
+  manualOverrideOpenedAt: string | null;
+  manualOverrideExpiresAt: string | null;
+  openNowState: "available" | "manually_opened" | "attendance_exists" | "occurrence_expired" | "no_current_occurrence";
+  openNowUnavailableReason: "occurrence_expired" | "attendance_exists" | "no_current_occurrence" | "template_unavailable" | null;
 };
 
 export type OrderPeriodWeek = {
@@ -38,9 +51,66 @@ export type OrderPeriodWeek = {
 };
 
 export type OrderPeriodManagementPermissions = {
-  manage: boolean;
+  create: boolean;
+  update: boolean;
   assign: boolean;
+  openNow: boolean;
+  reviewRequests: boolean;
+  settings: boolean;
+  archive: boolean;
+  activityView: boolean;
 };
+
+export type OrderShiftHistoryFilters = {
+  organizationCode: string;
+  page: number;
+  action: string;
+  actorId: string;
+  dateFrom: string;
+  dateTo: string;
+};
+
+export type OrderShiftHistoryChange = {
+  field: string;
+  before: string | null;
+  after: string | null;
+};
+
+export type OrderShiftHistoryDriverSnapshot = {
+  id: string;
+  name: string;
+};
+
+export type OrderShiftHistoryItem = {
+  id: string;
+  action: string;
+  actorName: string | null;
+  driverName: string | null;
+  driverIdentifier: string | null;
+  templateName: string | null;
+  sourceTemplateName: string | null;
+  targetTemplateName: string | null;
+  requestStatus: string | null;
+  requestNote: string | null;
+  addedDrivers: OrderShiftHistoryDriverSnapshot[];
+  removedDrivers: OrderShiftHistoryDriverSnapshot[];
+  addedCount: number | null;
+  removedCount: number | null;
+  changes: OrderShiftHistoryChange[];
+  createdAt: string;
+};
+
+export type OrderShiftHistoryResult =
+  | {
+      status: "success";
+      items: OrderShiftHistoryItem[];
+      page: number;
+      pageSize: 25;
+      total: number;
+      totalPages: number;
+      actorOptions: Array<{ id: string; name: string }>;
+    }
+  | { status: "unauthorized" | "error"; items: []; page: 1; pageSize: 25; total: 0; totalPages: 1; actorOptions: []; message: string };
 
 export type OrderShiftChangeRequest = {
   id: string;
@@ -150,8 +220,8 @@ export type OrderPeriodManagementDictionary = {
   requestRejected: string;
   actionFailed: string;
   openBefore: string;
-  closeAfter: string;
-  minimumWork: string;
+  endDelay: string;
+  hours: string;
   minutes: string;
   unconfigured: string;
   operationalSettings: string;
@@ -159,6 +229,13 @@ export type OrderPeriodManagementDictionary = {
   operationalPreview: string;
   opensAt: string;
   closesAt: string;
+  openBeforeOptional: string;
+  endDelayOptional: string;
+  openBeforeHelper: string;
+  endDelayHelper: string;
+  endDelayPreview: string;
+  endDelayNotConfigured: string;
+  afterActualStart: string;
   published: string;
   unpublished: string;
   disabled: string;
@@ -172,10 +249,37 @@ export type OrderPeriodManagementDictionary = {
   disableConfirm: string;
   archiveImpact: string;
   openNow: string;
+  cancelOpenNow: string;
+  cancelOpenNowConfirm: string;
   openNowTitle: string;
   openNowConfirm: string;
   openNowSuccess: string;
   policySaved: string;
   lifecycleSuccess: string;
   moreActions: string;
+  changeHistory: string;
+  changeHistoryDescription: string;
+  changeHistoryRefresh: string;
+  changeHistoryLoading: string;
+  changeHistoryEmpty: string;
+  changeHistoryError: string;
+  changeHistoryClose: string;
+  changeHistoryPrevious: string;
+  changeHistoryNext: string;
+  changeHistoryPage: string;
+  changeHistoryAction: string;
+  changeHistoryActor: string;
+  changeHistoryFrom: string;
+  changeHistoryTo: string;
+  changeHistoryAllActions: string;
+  changeHistoryNoActor: string;
+  changeHistoryAffectedDriver: string;
+  changeHistoryAffectedShift: string;
+  changeHistoryChanges: string;
+  changeHistoryAddedDrivers: string;
+  changeHistoryRemovedDrivers: string;
+  changeHistoryAddedCount: string;
+  changeHistoryRemovedCount: string;
+  changeHistoryActions: Record<string, string>;
+  changeHistoryFields: Record<string, string>;
 };

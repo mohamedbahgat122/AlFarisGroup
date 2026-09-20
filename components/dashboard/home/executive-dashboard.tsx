@@ -50,6 +50,13 @@ const metricIcons: Record<string, DashboardIconName> = {
 
 export function ExecutiveDashboard({ data, locale }: ExecutiveDashboardProps) {
   const maxTrend = Math.max(...data.requests.trend.map((point) => point.total), 1);
+  const shiftOrganizationIds = data.selectedOrganizations
+    .filter((organization) => organization.permissionKeys.includes("shifts.view"))
+    .map((organization) => organization.id);
+  const shiftRealtimeFilter =
+    shiftOrganizationIds.length > 0
+      ? `organization_id=in.(${shiftOrganizationIds.join(",")})`
+      : undefined;
 
   return (
     <div className="space-y-6" dir={locale === "ar" ? "rtl" : "ltr"}>
@@ -61,6 +68,8 @@ export function ExecutiveDashboard({ data, locale }: ExecutiveDashboardProps) {
       <RealtimeRefresh
         channelName="executive-dashboard-shifts"
         table="driver_shifts"
+        filter={shiftRealtimeFilter}
+        enabled={Boolean(shiftRealtimeFilter)}
         toast="تم تحديث لوحة التحكم"
       />
       <RealtimeRefresh

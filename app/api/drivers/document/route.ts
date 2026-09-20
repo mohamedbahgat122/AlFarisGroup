@@ -5,6 +5,7 @@ import {
   createDriverDocumentSignedUrl,
   createDriverDocumentDownloadSignedUrl,
 } from "@/features/drivers/storage";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { DriverDocumentType } from "@/features/drivers/types";
 
 const VALID_DOCUMENT_TYPES = new Set<string>(["iqama", "driver_card", "driving_license"]);
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
   // 1. Fetch driver via user client to enforce RLS and check driver existence
   const { data: driver, error: driverError } = await admin.supabase
     .from("drivers")
-    .select("id, organization_id, profile_photo_path, operating_card_file_path")
+    .select("id, organization_id, vehicle_id, profile_photo_path")
     .eq("id", driverId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -74,7 +75,14 @@ export async function GET(request: NextRequest) {
     storagePath = driver.profile_photo_path;
     originalFilename = storagePath ? storagePath.split("/").pop() ?? "profile-photo" : "profile-photo";
   } else if (type === "operating-card") {
-    storagePath = driver.operating_card_file_path;
+    const { data: vehicle } = driver.vehicle_id
+      ? await createAdminClient()
+          .from("fleet_vehicles")
+          .select("operating_card_file_path")
+          .eq("id", driver.vehicle_id)
+          .maybeSingle()
+      : { data: null };
+    storagePath = vehicle?.operating_card_file_path ?? null;
     originalFilename = storagePath ? storagePath.split("/").pop() ?? "operating-card" : "operating-card";
   } else {
     // Retrieve document path from driver_documents table

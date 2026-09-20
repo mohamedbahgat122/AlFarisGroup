@@ -3,6 +3,8 @@
 import React, { useState, useTransition } from "react";
 import { assignSupervisorAction } from "@/features/supervisor-shifts/actions";
 import type { ToastState } from "@/components/dashboard/users/user-toast";
+import type { Dictionary } from "@/i18n/dictionaries";
+type SupervisorDictionary = Dictionary["dashboard"]["supervisorShifts"];
 
 type Props = {
   open: boolean;
@@ -11,9 +13,10 @@ type Props = {
   shifts: any[];
   organizations: any[];
   onToast: (toast: ToastState) => void;
+  dictionary?: SupervisorDictionary;
 };
 
-export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts, organizations, onToast }: Props) {
+export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts, organizations, onToast, dictionary }: Props) {
   const [isPending, startTransition] = useTransition();
 
   const [supervisorId, setSupervisorId] = useState("");
@@ -32,6 +35,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
   }, [open]);
 
   if (!open) return null;
+  const text = dictionary!.dialogs;
 
   const handleOrgToggle = (orgId: string) => {
     setSelectedOrgs((prev) => 
@@ -43,19 +47,19 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
     e.preventDefault();
 
     if (!supervisorId) {
-      onToast({ message: "يرجى اختيار المشرف", tone: "error" });
+      onToast({ message: text.selectSupervisor, tone: "error" });
       return;
     }
     if (!shiftId) {
-      onToast({ message: "يرجى اختيار الشيفت", tone: "error" });
+      onToast({ message: text.selectShift, tone: "error" });
       return;
     }
     if (!startDate) {
-      onToast({ message: "يرجى اختيار تاريخ البداية", tone: "error" });
+      onToast({ message: text.startDate, tone: "error" });
       return;
     }
     if (selectedOrgs.length === 0) {
-      onToast({ message: "يجب اختيار مؤسسة واحدة على الأقل", tone: "error" });
+      onToast({ message: text.selectAtLeastOneOrganization, tone: "error" });
       return;
     }
 
@@ -68,11 +72,11 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
           organization_ids: selectedOrgs,
         });
 
-        onToast({ message: "تم تعيين المشرف بنجاح", tone: "success" });
+        onToast({ message: text.success, tone: "success" });
         onOpenChange(false);
       } catch (err: any) {
         console.error("Assign error:", err);
-        onToast({ message: err.message || "حدث خطأ أثناء التعيين", tone: "error" });
+        onToast({ message: err.message || text.unexpectedError, tone: "error" });
       }
     });
   };
@@ -81,7 +85,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-navy">تعيين مشرف</h2>
+          <h2 className="text-xl font-bold text-navy">{text.assignTitle}</h2>
           <button 
             onClick={() => onOpenChange(false)} 
             disabled={isPending}
@@ -94,7 +98,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
         <div className="flex-1 overflow-y-auto pr-2">
           <form id="assign-supervisor-form" onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-navy mb-1">المشرف *</label>
+              <label className="block text-sm font-medium text-navy mb-1">{text.selectSupervisor} *</label>
               <select
                 value={supervisorId}
                 onChange={(e) => setSupervisorId(e.target.value)}
@@ -102,7 +106,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
                 className="w-full rounded-md border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
                 required
               >
-                <option value="">اختر المشرف...</option>
+                <option value="">{text.selectSupervisor}</option>
                 {supervisors.map(s => (
                   <option key={s.id} value={s.id}>{s.full_name}</option>
                 ))}
@@ -110,7 +114,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-navy mb-1">الشيفت *</label>
+              <label className="block text-sm font-medium text-navy mb-1">{text.selectShift} *</label>
               <select
                 value={shiftId}
                 onChange={(e) => setShiftId(e.target.value)}
@@ -118,7 +122,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
                 className="w-full rounded-md border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
                 required
               >
-                <option value="">اختر الشيفت...</option>
+                <option value="">{text.selectShift}</option>
                 {shifts.filter(s => s.is_active).map(s => (
                   <option key={s.id} value={s.id}>{s.name} ({s.start_time.substring(0,5)} - {s.end_time.substring(0,5)})</option>
                 ))}
@@ -126,7 +130,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-navy mb-1">تاريخ البداية *</label>
+              <label className="block text-sm font-medium text-navy mb-1">{text.startDate} *</label>
               <input
                 type="date"
                 value={startDate}
@@ -138,7 +142,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-navy mb-2">المؤسسات *</label>
+              <label className="block text-sm font-medium text-navy mb-2">{text.organizations} *</label>
               <div className="space-y-2 border border-border rounded-md p-3 max-h-40 overflow-y-auto">
                 {organizations.map(org => {
                   const isChecked = selectedOrgs.includes(org.id);
@@ -156,7 +160,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
                   );
                 })}
                 {organizations.length === 0 && (
-                  <div className="text-sm text-muted text-center py-2">لا يوجد مؤسسات</div>
+                  <div className="text-sm text-muted text-center py-2">{text.noOrganizations}</div>
                 )}
               </div>
             </div>
@@ -170,7 +174,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
             disabled={isPending}
             className="rounded-md bg-surface px-4 py-2 text-sm font-medium text-navy hover:bg-surface/80 transition disabled:opacity-50"
           >
-            إلغاء
+            {text.cancel}
           </button>
           <button
             type="submit"
@@ -178,7 +182,7 @@ export function AssignSupervisorDialog({ open, onOpenChange, supervisors, shifts
             disabled={isPending}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover transition disabled:opacity-50"
           >
-            {isPending ? "جاري الحفظ..." : "تعيين"}
+            {isPending ? text.saving : text.assign}
           </button>
         </div>
       </div>

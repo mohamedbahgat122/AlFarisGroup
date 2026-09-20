@@ -10,6 +10,7 @@ export type OrganizationNavigationPermissions = {
   organizationHome: boolean;
   drivers: boolean;
   driverReports: boolean;
+  driverOrderReports: boolean;
   fleetCars: boolean;
   fleetMotorcycles: boolean;
   fuelManagement: boolean;
@@ -132,6 +133,7 @@ export function getAccessibleOrganizationNavigation(
     organizationHome: permissions.has("organization.dashboard.view"),
     drivers: permissions.has("drivers.view"),
     driverReports: permissions.has("driver_reports.view"),
+    driverOrderReports: permissions.has("driver_order_reports.view"),
     fleetCars: permissions.has("fleet.cars.view"),
     fleetMotorcycles: permissions.has("fleet.motorcycles.view"),
     fuelManagement: permissions.has("fuel.manage"),

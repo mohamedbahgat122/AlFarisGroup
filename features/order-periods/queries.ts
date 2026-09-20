@@ -1,8 +1,9 @@
 import "server-only";
 
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getOrganizationPermissions } from "@/features/permissions/server";
-import type { OrderPeriodQueryResult, OrderPeriodDriver, OrderPeriodTemplate, OrderPeriodWeek, OrderShiftChangeRequest } from "@/features/order-periods/types";
+import type { OrderPeriodAssignment, OrderPeriodQueryResult, OrderPeriodDriver, OrderPeriodTemplate, OrderPeriodWeek, OrderShiftChangeRequest } from "@/features/order-periods/types";
 
 type RawTemplate = {
   id: string;
@@ -10,11 +11,14 @@ type RawTemplate = {
   start_time: string;
   end_time: string;
   crosses_midnight: boolean;
+  has_break: boolean;
+  break_start_time: string | null;
+  break_end_time: string | null;
   is_published: boolean;
   is_active: boolean;
   archived_at: string | null;
 };
-type RawPolicy = { order_period_template_id: string; open_before_minutes: number | null; close_after_minutes: number | null; minimum_work_minutes: number | null };
+type RawPolicy = { order_period_template_id: string; open_before_minutes: number | null; close_after_minutes: number | null; end_before_minutes: number | null; minimum_work_minutes: number | null };
 type RawAssignment = {
   id: string;
   order_period_template_id: string;
@@ -27,8 +31,10 @@ type RawDriver = {
   full_name: string;
   keeta_driver_id: string | null;
   mobile_number: string | null;
+  vehicle_id: string | null;
 };
 type RawVehicle = {
+  id: string;
   plate_number: string | null;
   vehicle_type: string | null;
   assigned_driver_id: string | null;
@@ -47,6 +53,21 @@ type RawOrderShiftChangeRequest = {
   reviewed_at: string | null;
   created_at: string;
 };
+type RawOpenNowEligibility = {
+  template_id: string;
+  driver_id: string;
+  scheduled_business_date: string | null;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
+  attendance_exists: boolean;
+  manual_override_active: boolean;
+  override_id: string | null;
+  override_opened_at: string | null;
+  override_expires_at: string | null;
+  open_now_state: "available" | "manually_opened" | "attendance_exists" | "occurrence_expired" | "no_current_occurrence";
+  open_now_eligible: boolean;
+  reason_code: "occurrence_expired" | "attendance_exists" | "no_current_occurrence" | "template_unavailable" | null;
+};
 
 const RIYADH_TIME_ZONE = "Asia/Riyadh";
 
@@ -64,8 +85,14 @@ export async function getOrderPeriodManagementData({
     organizationId,
   );
   const permissions = {
-    manage: permissionSet.has("order_periods.manage"),
-    assign: permissionSet.has("order_periods.assign"),
+    create: permissionSet.has("order_periods.create") || permissionSet.has("order_periods.manage"),
+    update: permissionSet.has("order_periods.update") || permissionSet.has("order_periods.manage"),
+    assign: permissionSet.has("order_periods.assign") || permissionSet.has("order_periods.manage"),
+    openNow: permissionSet.has("order_periods.open_now") || permissionSet.has("order_periods.manage"),
+    reviewRequests: permissionSet.has("order_periods.requests.review") || permissionSet.has("order_periods.manage"),
+    settings: permissionSet.has("order_periods.settings") || permissionSet.has("order_periods.manage"),
+    archive: permissionSet.has("order_periods.archive") || permissionSet.has("order_periods.manage"),
+    activityView: permissionSet.has("order_periods.activity.view") || permissionSet.has("order_periods.manage"),
   };
   const ranges = getOrderWeekRanges();
 
@@ -74,11 +101,11 @@ export async function getOrderPeriodManagementData({
   }
 
   const db = admin.supabase as any;
-  const [templatesResult, assignmentsResult, driversResult, vehiclesResult] =
+  const [templatesResult, assignmentsResult, driversResult, eligibilityResult] =
     await Promise.all([
       db
         .from("organization_order_period_templates")
-        .select("id, name, start_time, end_time, crosses_midnight, is_published, is_active, archived_at")
+        .select("id, name, start_time, end_time, crosses_midnight, has_break, break_start_time, break_end_time, is_published, is_active, archived_at")
         .eq("organization_id", organizationId)
         .is("archived_at", null)
         .order("start_time", { ascending: true }),
@@ -92,24 +119,22 @@ export async function getOrderPeriodManagementData({
         .order("assignment_start_date", { ascending: false }),
       db
         .from("drivers")
-        .select("id, full_name, keeta_driver_id, mobile_number")
+        .select("id, full_name, keeta_driver_id, mobile_number, vehicle_id")
         .eq("organization_id", organizationId)
         .eq("status", "active")
         .eq("settlement_type", "per_order")
         .is("deleted_at", null)
         .order("full_name", { ascending: true }),
-      db
-        .from("fleet_vehicles")
-        .select("plate_number, vehicle_type, assigned_driver_id, authorized_driver_id")
-        .eq("organization_id", organizationId)
-        .is("archived_at", null),
+      permissions.openNow
+        ? db.rpc("get_order_period_open_now_eligibility", { p_organization_id: organizationId })
+        : Promise.resolve({ data: { success: true, items: [] }, error: null }),
     ]);
 
   const queryResults = [
     ["templates", templatesResult],
     ["assignments", assignmentsResult],
     ["drivers", driversResult],
-    ["fleet_vehicles", vehiclesResult],
+    ["open_now_eligibility", eligibilityResult],
   ] as const;
 
   for (const [query, result] of queryResults) {
@@ -127,22 +152,35 @@ export async function getOrderPeriodManagementData({
     });
   }
 
-  if (templatesResult.error || assignmentsResult.error || driversResult.error || vehiclesResult.error) {
+  if (templatesResult.error || assignmentsResult.error || driversResult.error) {
     return { ...emptyResult("load_error"), permissions };
   }
 
   const templates = (templatesResult.data ?? []) as RawTemplate[];
   const assignments = (assignmentsResult.data ?? []) as RawAssignment[];
   const drivers = (driversResult.data ?? []) as RawDriver[];
-  const vehicles = (vehiclesResult.data ?? []) as RawVehicle[];
+  const eligibilityPayload = (eligibilityResult.data ?? {}) as { success?: boolean; items?: RawOpenNowEligibility[] };
+  const eligibilityByPair = new Map(
+    (eligibilityPayload.success ? eligibilityPayload.items ?? [] : []).map((item) => [
+      `${item.template_id}:${item.driver_id}`,
+      item,
+    ]),
+  );
+  const vehicleIds = Array.from(new Set(drivers.map((driver) => driver.vehicle_id).filter(Boolean))) as string[];
+  const { data: vehicleData, error: vehicleError } = vehicleIds.length
+    ? await createAdminClient().from("fleet_vehicles").select("id, plate_number, vehicle_type").in("id", vehicleIds).is("archived_at", null)
+    : { data: [], error: null };
+  if (vehicleError) return { ...emptyResult("load_error"), permissions };
+  const vehicles = (vehicleData ?? []) as RawVehicle[];
   const vehicleByDriverId = new Map<string, string>();
+  const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
 
-  for (const vehicle of vehicles) {
+  for (const driver of drivers) {
+    const vehicle = driver.vehicle_id ? vehicleById.get(driver.vehicle_id) : undefined;
+    if (!vehicle) continue;
     const label = vehicle.plate_number ?? vehicle.vehicle_type;
     if (!label) continue;
-    for (const driverId of [vehicle.assigned_driver_id, vehicle.authorized_driver_id]) {
-      if (driverId && !vehicleByDriverId.has(driverId)) vehicleByDriverId.set(driverId, label);
-    }
+    vehicleByDriverId.set(driver.id, label);
   }
 
   const driverById = new Map<string, OrderPeriodDriver>(
@@ -160,11 +198,15 @@ export async function getOrderPeriodManagementData({
     startTime: displayTime(template.start_time),
     endTime: displayTime(template.end_time),
     crossesMidnight: template.crosses_midnight,
+    hasBreak: template.has_break,
+    breakStartTime: template.break_start_time ? displayTime(template.break_start_time) : null,
+    breakEndTime: template.break_end_time ? displayTime(template.break_end_time) : null,
     isPublished: template.is_published,
     isActive: template.is_active,
     archivedAt: template.archived_at,
     openBeforeMinutes: null,
     closeAfterMinutes: null,
+    endBeforeMinutes: null,
     minimumWorkMinutes: null,
   }));
   const driverNames = new Map(drivers.map((driver) => [driver.id, {
@@ -174,7 +216,7 @@ export async function getOrderPeriodManagementData({
   const templateNames = new Map(templateRows.map((template) => [template.id, template.name]));
 
   const [settingsResult, requestsResult, policiesResult] = await Promise.all([
-    permissions.manage
+    permissions.settings
       ? db
         .from("organization_order_shift_change_settings")
         .select("allowed_weekdays")
@@ -186,9 +228,9 @@ export async function getOrderPeriodManagementData({
       .select("id, driver_id, current_order_period_template_id, requested_order_period_template_id, requested_week_start_date, status, reason, review_note, reviewed_by, reviewed_at, created_at")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false }),
-    permissions.manage
+    permissions.settings
       ? db.from("organization_order_period_operational_policies")
-        .select("order_period_template_id, open_before_minutes, close_after_minutes, minimum_work_minutes")
+        .select("order_period_template_id, open_before_minutes, close_after_minutes, end_before_minutes, minimum_work_minutes")
         .eq("organization_id", organizationId)
       : Promise.resolve({ data: [], error: null }),
   ]);
@@ -213,6 +255,7 @@ export async function getOrderPeriodManagementData({
     const policy = policies.get(template.id);
     template.openBeforeMinutes = policy?.open_before_minutes ?? null;
     template.closeAfterMinutes = policy?.close_after_minutes ?? null;
+    template.endBeforeMinutes = policy?.end_before_minutes ?? null;
     template.minimumWorkMinutes = policy?.minimum_work_minutes ?? null;
   }
   const requestRows = requestsResult.error ? [] : (requestsResult.data ?? []) as RawOrderShiftChangeRequest[];
@@ -272,8 +315,8 @@ export async function getOrderPeriodManagementData({
     orderShiftChangeSettings: settings,
     orderShiftChangeRequests,
     weeks: {
-      current: buildWeek("current", ranges.current, templateRows, assignments, driverById),
-      next: buildWeek("next", ranges.next, templateRows, assignments, driverById),
+      current: buildWeek("current", ranges.current, templateRows, assignments, driverById, eligibilityByPair),
+      next: buildWeek("next", ranges.next, templateRows, assignments, driverById, eligibilityByPair),
     },
   };
 }
@@ -284,6 +327,7 @@ function buildWeek(
   templates: OrderPeriodTemplate[],
   assignments: RawAssignment[],
   driverById: Map<string, OrderPeriodDriver>,
+  eligibilityByPair: Map<string, RawOpenNowEligibility>,
 ): OrderPeriodWeek {
   const active = assignments.filter((assignment) =>
     assignment.assignment_start_date <= range.endDate &&
@@ -293,11 +337,25 @@ function buildWeek(
     template,
     drivers: active
       .filter((assignment) => assignment.order_period_template_id === template.id)
-      .map((assignment) => {
+      .map((assignment): OrderPeriodAssignment | null => {
         const driver = driverById.get(assignment.driver_id);
-        return driver ? { ...driver, assignmentId: assignment.id, templateId: template.id } : null;
+        const eligibility = eligibilityByPair.get(`${template.id}:${assignment.driver_id}`);
+        return driver ? {
+          ...driver,
+          assignmentId: assignment.id,
+          templateId: template.id,
+          openNowEligible: eligibility?.open_now_eligible === true,
+          attendanceExists: eligibility?.attendance_exists === true,
+          manualOverrideActive: eligibility?.manual_override_active === true,
+          manualOverrideId: eligibility?.override_id ?? null,
+          manualOverrideScheduledBusinessDate: eligibility?.scheduled_business_date ?? null,
+          manualOverrideOpenedAt: eligibility?.override_opened_at ?? null,
+          manualOverrideExpiresAt: eligibility?.override_expires_at ?? null,
+          openNowState: eligibility?.open_now_state ?? "no_current_occurrence",
+          openNowUnavailableReason: eligibility?.reason_code ?? "no_current_occurrence",
+        } : null;
       })
-      .filter((driver): driver is OrderPeriodWeek["rows"][number]["drivers"][number] => Boolean(driver)),
+      .filter((driver): driver is OrderPeriodAssignment => Boolean(driver)),
   }));
   const assignedIds = new Set(active.map((assignment) => assignment.driver_id));
 
@@ -342,7 +400,16 @@ function emptyResult(status: "unauthorized" | "load_error"): OrderPeriodQueryRes
     weeks: null,
     templates: [],
     drivers: [],
-    permissions: { manage: false, assign: false },
+    permissions: {
+      create: false,
+      update: false,
+      assign: false,
+      openNow: false,
+      reviewRequests: false,
+      settings: false,
+      archive: false,
+      activityView: false,
+    },
     orderShiftChangeSettings: [],
     orderShiftChangeRequests: [],
   };

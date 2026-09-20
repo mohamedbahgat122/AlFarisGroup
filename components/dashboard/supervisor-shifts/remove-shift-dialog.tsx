@@ -4,6 +4,7 @@ import React, { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { removeSupervisorFromShiftAction } from "@/features/supervisor-shifts/actions";
 import type { ToastState } from "@/components/dashboard/users/user-toast";
+import type { Dictionary } from "@/i18n/dictionaries";
 
 type Props = {
   open: boolean;
@@ -11,6 +12,7 @@ type Props = {
   supervisor: any | null;
   currentShiftName?: string | null;
   onToast: (toast: ToastState) => void;
+  dictionary?: Dictionary["dashboard"]["supervisorShifts"];
 };
 
 export function RemoveShiftDialog({
@@ -19,23 +21,25 @@ export function RemoveShiftDialog({
   supervisor,
   currentShiftName,
   onToast,
+  dictionary,
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   if (!open || !supervisor) return null;
+  const text = dictionary!.dialogs;
 
   const handleConfirm = () => {
     startTransition(async () => {
       try {
         await removeSupervisorFromShiftAction(supervisor.id);
-        onToast({ message: "تمت إزالة المشرف من الشيفت بنجاح", tone: "success" });
+        onToast({ message: text.success, tone: "success" });
         onOpenChange(false);
         router.refresh();
       } catch (err: any) {
         console.error("Remove supervisor shift error:", err);
         onToast({
-          message: err.message || "حدث خطأ أثناء إزالة المشرف من الشيفت",
+          message: err.message || text.unexpectedError,
           tone: "error",
         });
       }
@@ -46,7 +50,7 @@ export function RemoveShiftDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
         <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-navy">إزالة المشرف من الشيفت</h2>
+          <h2 className="text-xl font-bold text-navy">{text.removeTitle}</h2>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -58,20 +62,20 @@ export function RemoveShiftDialog({
         </div>
 
         <div className="space-y-4 text-sm text-navy">
-          <p>هل تريد إزالة المشرف من الشيفت الحالي؟</p>
+          <p>{text.confirmRemove}</p>
 
           <div className="rounded-lg border border-border bg-surface p-4">
             <p>
-              <span className="font-semibold">المشرف:</span> {supervisor.full_name}
+              <span className="font-semibold">{dictionary!.supervisor}:</span> {supervisor.full_name}
             </p>
             <p className="mt-2">
-              <span className="font-semibold">الشيفت الحالي:</span>{" "}
-              {currentShiftName || "غير معين"}
+              <span className="font-semibold">{text.currentShift}:</span>{" "}
+              {currentShiftName || text.noActiveShift}
             </p>
           </div>
 
           <p className="text-muted">
-            سيبقى المشرف فعالًا في النظام، وسيظهر بدون شيفت حتى يتم تعيين شيفت جديد له.
+            {text.removeDescription}
           </p>
         </div>
 
@@ -82,7 +86,7 @@ export function RemoveShiftDialog({
             disabled={isPending}
             className="rounded-md bg-surface px-4 py-2 text-sm font-medium text-navy transition hover:bg-surface/80 disabled:opacity-50"
           >
-            إلغاء
+            {text.cancel}
           </button>
           <button
             type="button"
@@ -90,7 +94,7 @@ export function RemoveShiftDialog({
             disabled={isPending}
             className="rounded-md bg-danger px-4 py-2 text-sm font-medium text-white transition hover:bg-danger/80 disabled:opacity-50"
           >
-            {isPending ? "جاري الإزالة..." : "إزالة من الشيفت"}
+            {isPending ? text.processing : text.remove}
           </button>
         </div>
       </div>

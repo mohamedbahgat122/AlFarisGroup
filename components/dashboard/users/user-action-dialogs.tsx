@@ -29,6 +29,7 @@ import type {
   ManagedUserRole,
 } from "@/features/user-management/types";
 import type { OrganizationPermissionKey } from "@/features/permissions/registry";
+import { stripLegacyPermissionKeys } from "@/features/permissions/registry";
 import type { GlobalPermissionKey } from "@/features/permissions/global-registry";
 import type { Locale } from "@/types/locale";
 
@@ -71,7 +72,6 @@ export function EditUserDialog({
     dictionary,
     onSuccess,
     onError,
-    getPermissionActionMessage,
   );
 
   return (
@@ -167,7 +167,7 @@ export function PermissionsDialog({
     Object.fromEntries(
       user.additionalAccess.map((access) => [
         access.organizationId,
-        access.permissionKeys,
+        stripLegacyPermissionKeys(access.permissionKeys),
       ]),
     ),
   );
@@ -187,7 +187,13 @@ export function PermissionsDialog({
     [accessValues, user.role],
   );
 
-  useMutationFeedback(state, dictionary, onSuccess, onError);
+  useMutationFeedback(
+    state,
+    dictionary,
+    onSuccess,
+    onError,
+    getPermissionActionMessage,
+  );
 
   return (
     <DialogFrame

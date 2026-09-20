@@ -614,8 +614,7 @@ function FleetRow({
       <td className="px-4 py-4 font-medium text-muted">
         <LinkedDriversCell
           drivers={vehicle.linkedDrivers}
-          fallbackName={vehicle.assignedDriverName ?? dictionary.notAssigned}
-          fallbackIqama={vehicle.assignedDriverIqama}
+          emptyLabel={dictionary.notAssigned}
         />
       </td>
       <td className="px-4 py-4 font-medium text-muted">
@@ -670,15 +669,13 @@ function FleetRow({
 
 function LinkedDriversCell({
   drivers,
-  fallbackName,
-  fallbackIqama,
+  emptyLabel,
 }: {
   drivers: FleetVehicle["linkedDrivers"];
-  fallbackName: string;
-  fallbackIqama?: string | null;
+  emptyLabel: string;
 }) {
   if (drivers.length === 0) {
-    return <DriverCell name={fallbackName} iqama={fallbackIqama} />;
+    return <DriverCell name={emptyLabel} />;
   }
 
   return (
@@ -735,7 +732,6 @@ function VehicleDialog({
   const [assignedOrganizationId, setAssignedOrganizationId] = useState(
     vehicle?.assignedOrganizationId ?? "",
   );
-  const [assignedDriverSource, setAssignedDriverSource] = useState(vehicle?.assignedDriverSource ?? "none");
   const [authorizedPersonSource, setAuthorizedPersonSource] = useState(vehicle?.authorizedPersonSource ?? "none");
   const [baselinePhotoUrls, setBaselinePhotoUrls] = useState<FleetBaselinePhotoUrls>({
     front: null,
@@ -783,6 +779,10 @@ function VehicleDialog({
         <input type="hidden" name="technicalStatus" value={vehicle?.technicalStatus ?? "healthy"} />
         <input type="hidden" name="faultLocation" value={vehicle?.faultLocation ?? ""} />
         <input type="hidden" name="technicalStatusNote" value={vehicle?.technicalStatusNote ?? ""} />
+        <input type="hidden" name="assignedDriverSource" value={vehicle?.assignedDriverSource ?? "none"} />
+        <input type="hidden" name="assignedDriverId" value={vehicle?.assignedDriverId ?? ""} />
+        <input type="hidden" name="assignedDriverManualName" value={vehicle?.assignedDriverManualName ?? ""} />
+        <input type="hidden" name="assignedDriverManualIqama" value={vehicle?.assignedDriverManualIqama ?? ""} />
 
         <EntityFormBody>
           {state.status === "validation_error" || state.status === "error" ? (
@@ -1014,30 +1014,14 @@ function VehicleDialog({
             </FormSection>
 
             <FormSection title={dictionary.assignedDriverSection}>
-              <SelectField
-                id="fleetAssignedDriverSource"
-                label={dictionary.assignedDriverSource}
-                name="assignedDriverSource"
-                value={assignedDriverSource}
-                onChange={(value) =>
-                  setAssignedDriverSource(
-                    value === "organization_driver" || value === "manual"
-                      ? value
-                      : "none",
-                  )
-                }
-              >
-                {renderOptions(dictionary.personSources)}
-              </SelectField>
-              {assignedDriverSource === "organization_driver" ? (
-                <DriverPicker dictionary={dictionary} drivers={drivers} name="assignedDriverId" defaultValue={vehicle?.assignedDriverId ?? ""} label={dictionary.organizationDriver} />
-              ) : null}
-              {assignedDriverSource === "manual" ? (
-                <>
-                  <FormField id="fleetAssignedDriverManualName" label={dictionary.assignedDriverManualName} name="assignedDriverManualName" defaultValue={vehicle?.assignedDriverManualName ?? ""} error={state.fieldErrors?.assignedDriverManualName} required autoComplete="off" />
-                  <FormField id="fleetAssignedDriverManualIqama" label={dictionary.assignedDriverManualIqama} name="assignedDriverManualIqama" defaultValue={vehicle?.assignedDriverManualIqama ?? ""} error={state.fieldErrors?.assignedDriverManualIqama} required dir="ltr" autoComplete="off" />
-                </>
-              ) : null}
+              <div className="md:col-span-2">
+                <MultiDriverPicker
+                  key={vehicle?.id ?? "new"}
+                  dictionary={dictionary}
+                  locale={locale}
+                  initialDrivers={vehicle?.linkedDrivers ?? []}
+                />
+              </div>
             </FormSection>
 
             <FormSection title={dictionary.authorizedPersonSection}>
@@ -1546,6 +1530,149 @@ function FileField({
       downloadLabel={dictionary.download}
       error={error}
     />
+  );
+}
+
+function MultiDriverPicker({
+  dictionary,
+  locale,
+  initialDrivers,
+}: {
+  dictionary: FleetDictionary;
+  locale: Locale;
+  initialDrivers: FleetDriverOption[];
+}) {
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<FleetDriverOption[]>([]);
+  const [selectedDrivers, setSelectedDrivers] = useState(initialDrivers);
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const selectedIds = new Set(selectedDrivers.map((driver) => driver.id));
+  const availableOptions = options.filter((driver) => !selectedIds.has(driver.id));
+  const label = locale === "ar" ? "المندوبون المعينون" : "Assigned drivers";
+  const removeLabel = locale === "ar" ? "إزالة المندوب" : "Remove driver";
+  const keetaLabel = locale === "ar" ? "كيتا" : "Keeta";
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      return;
+    }
+
+    const handler = setTimeout(() => {
+      startTransition(async () => {
+        setOptions(await searchGlobalDriversAction(query));
+      });
+    }, 300);
+
+    return () => clearTimeout(handler);
+  }, [query]);
+
+  return (
+    <div ref={wrapperRef} className="relative space-y-3">
+      {selectedDrivers.map((driver) => (
+        <input key={driver.id} type="hidden" name="assignedDriverIds" value={driver.id} />
+      ))}
+
+      <label htmlFor="fleetAssignedDriversQuery" className="block text-sm font-semibold text-navy">
+        {label}
+      </label>
+
+      {selectedDrivers.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {selectedDrivers.map((driver) => (
+            <span
+              key={driver.id}
+              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-semibold text-navy"
+            >
+              <span className="min-w-0">
+                <span className="block truncate">{driver.fullName}</span>
+                {driver.organizationName ? (
+                  <span className="block truncate text-xs font-medium text-muted">
+                    {driver.organizationName}
+                  </span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                title={`${removeLabel}: ${driver.fullName}`}
+                aria-label={`${removeLabel}: ${driver.fullName}`}
+                className="inline-flex size-6 items-center justify-center rounded-full text-muted hover:bg-red-50 hover:text-red-700"
+                onClick={() => {
+                  setSelectedDrivers((current) => current.filter((item) => item.id !== driver.id));
+                }}
+              >
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="relative">
+        <input
+          id="fleetAssignedDriversQuery"
+          type="search"
+          value={query}
+          placeholder={dictionary.searchDriverPlaceholder}
+          autoComplete="off"
+          className="min-h-12 w-full rounded-lg border border-border bg-surface px-3 text-sm text-navy outline-none transition focus:border-primary disabled:cursor-not-allowed disabled:bg-background disabled:text-muted"
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+        />
+        {isPending ? (
+          <span className="absolute start-3 top-1/2 size-3 -translate-y-1/2 animate-pulse rounded-full bg-primary" />
+        ) : null}
+      </div>
+
+      {open && query.trim().length >= 2 ? (
+        <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-border bg-surface py-1 text-sm shadow-[0_16px_45px_rgba(16,35,63,0.06)]">
+          {availableOptions.length === 0 && !isPending ? (
+            <li className="px-4 py-2 text-muted">{dictionary.notAvailable}</li>
+          ) : (
+            availableOptions.map((driver) => (
+              <li key={driver.id}>
+                <button
+                  type="button"
+                  className="w-full px-4 py-2 text-start text-navy hover:bg-slate-50"
+                  onClick={() => {
+                    setSelectedDrivers((current) =>
+                      current.some((item) => item.id === driver.id) ? current : [...current, driver],
+                    );
+                    setQuery("");
+                    setOptions([]);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="block font-semibold">{driver.fullName}</span>
+                  <span className="mt-0.5 block text-xs text-muted">
+                    {driver.organizationName ?? driver.organizationCode ?? dictionary.notAvailable}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted" dir="ltr">
+                    {keetaLabel}: {driver.keetaDriverId ?? dictionary.notAvailable}
+                    {driver.mobileNumber ? ` • ${driver.mobileNumber}` : ""}
+                  </span>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 

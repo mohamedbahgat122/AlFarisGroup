@@ -43,6 +43,29 @@ type SupabaseLikeError = {
   hint?: string;
 };
 
+async function replaceAssignedDrivers({
+  vehicleId,
+  driverIds,
+  actorUserId,
+}: {
+  vehicleId: string;
+  driverIds: string[];
+  actorUserId: string;
+}) {
+  const admin = getAdminClientOrNull();
+  if (!admin) return { success: false as const, error: null };
+
+  const { error } = await (admin as any).rpc("set_fleet_vehicle_assigned_drivers", {
+    p_vehicle_id: vehicleId,
+    p_driver_ids: driverIds,
+    p_actor_user_id: actorUserId,
+  });
+
+  return error
+    ? { success: false as const, error: error as SupabaseLikeError }
+    : { success: true as const, error: null };
+}
+
 function createFleetCreateDiagnostics() {
   const startedAt = performance.now();
   let previousAt = startedAt;
@@ -198,6 +221,23 @@ export async function createGlobalFleetVehicle({
     };
   }
 
+  const selectedDriverIds = validation.input.assignedDriverIds ?? [];
+  const assignmentResult = selectedDriverIds.length > 0
+    ? await replaceAssignedDrivers({
+        vehicleId,
+        driverIds: selectedDriverIds,
+        actorUserId: access.actorUserId,
+      })
+    : { success: true as const, error: null };
+  diagnostics.mark("assigned_drivers_replace", { success: assignmentResult.success });
+  if (!assignmentResult.success) {
+    diagnostics.error("assigned_drivers_replace", assignmentResult.error);
+    if (upload?.success) await deleteFleetFiles([upload.path]);
+    if (regUpload?.success) await deleteFleetFiles([regUpload.path]);
+    await deleteCreatedGlobalVehicle(vehicleId);
+    return { success: false, code: "save_failed" };
+  }
+
   const activityResult = await insertActivityLog({
     organizationId: validation.input.assignedOrganizationId!, 
     vehicleId,
@@ -338,6 +378,15 @@ export async function updateGlobalFleetVehicle({
       success: false,
       code: isDuplicateFleetPlateError(error) ? "duplicate_plate" : "save_failed",
     };
+  }
+
+  const assignmentResult = await replaceAssignedDrivers({
+    vehicleId,
+    driverIds: validation.input.assignedDriverIds ?? [],
+    actorUserId: access.actorUserId,
+  });
+  if (!assignmentResult.success) {
+    return { success: false, code: "save_failed" };
   }
 
   if (upload?.success && existing.operating_card_file_path) {

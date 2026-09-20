@@ -43,7 +43,7 @@ export function AddResignationDialog({
     const ratingValue = formData.get("rating") as string;
     
     if (!ratingValue) {
-      setError(dictionary.rating ? `يرجى اختيار ${dictionary.rating}` : "الرجاء اختيار التقييم");
+      setError(dictionary.selectRating);
       return;
     }
     
@@ -143,27 +143,27 @@ export function AddResignationDialog({
 
                 {selectedDriver && (
                   <div className="rounded-xl border border-border bg-gray-50 p-4 text-sm">
-                    <span className="font-semibold text-navy">{dictionary.keetaIdAtResignation || "معرف كيتا عند الاستقالة"}: </span>
-                    <span className="text-muted">{selectedDriver.keetaDriverId || dictionary.notAvailable || "غير متاح"}</span>
+                    <span className="font-semibold text-navy">{dictionary.keetaIdAtResignation}: </span>
+                    <span className="text-muted">{selectedDriver.keetaDriverId || dictionary.notAvailable}</span>
                   </div>
                 )}
 
                 <div className="space-y-2">
                   <label className="block text-sm font-semibold text-navy">
-                    {(dictionary as any).newKeetaId || "معرف كيتا الجديد"} <span className="text-muted font-normal text-xs">(اختياري)</span>
+                    {dictionary.newKeetaId} <span className="text-muted font-normal text-xs">({dictionary.optional})</span>
                   </label>
                   <input
                     type="text"
                     name="newKeetaDriverId"
                     className="min-h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
-                    placeholder="أدخل معرف كيتا الجديد إن وجد"
+                    placeholder={dictionary.newKeetaId}
                   />
                 </div>
 
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="space-y-2">
                     <label className="block text-sm font-semibold text-navy">
-                      {dictionary.resignationDate || "تاريخ الاستقالة"}
+                      {dictionary.resignationDate}
                     </label>
                     <input
                       type="date"
@@ -175,7 +175,7 @@ export function AddResignationDialog({
                   </div>
                   <div className="space-y-2">
                     <label className="block text-sm font-semibold text-navy">
-                      {dictionary.ordersCount || "عدد الطلبات"}
+                      {dictionary.ordersCount}
                     </label>
                     <input
                       type="number"
@@ -190,14 +190,14 @@ export function AddResignationDialog({
 
                 <div className="space-y-2">
                   <label className="block text-sm font-semibold text-navy">
-                    {dictionary.rating || "التقييم"}
+                    {dictionary.rating}
                   </label>
                   <select
                     name="rating"
                     className="min-h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm text-navy outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
                     required
                   >
-                    <option value="">اختيار التقييم</option>
+                    <option value="">{dictionary.selectRating}</option>
                     <option value="A">A</option>
                     <option value="B">B</option>
                     <option value="C">C</option>
@@ -207,7 +207,7 @@ export function AddResignationDialog({
 
                 <div className="space-y-2">
                   <label className="block text-sm font-semibold text-navy">
-                    {dictionary.notes || "ملاحظات"}
+                    {dictionary.notes}
                   </label>
                   <textarea
                     name="notes"
@@ -222,10 +222,10 @@ export function AddResignationDialog({
                     onClick={() => setOpen(false)}
                     className="inline-flex min-h-12 items-center justify-center rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-navy transition hover:border-primary/35 hover:bg-primary-soft hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   >
-                    إلغاء
+                    {dictionary.cancel}
                   </button>
                   <Button type="submit" disabled={isPending} className="min-h-12">
-                    {isPending ? "..." : dictionary.saveResignation || "حفظ الاستقالة"}
+                    {isPending ? "..." : dictionary.save}
                   </Button>
                 </div>
               </form>

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getDriverFuelMetricsForReport, getMonthToDateRange } from "@/features/driver-reports/fuel-metrics";
 import type {
   DriverReport,
@@ -24,12 +25,10 @@ type DriverExpiryRow = Pick<
   | "is_company_sponsored"
   | "nfc_number"
   | "keeta_vehicle_plate_number"
-  | "vehicle_number"
+  | "vehicle_id"
   | "iqama_expiry_date"
   | "driving_license_expiry_date"
   | "driver_card_expiry_date"
-  | "vehicle_authorization_expiry_date"
-  | "operating_card_expiry_date"
 >;
 type MonthlyReportMetricRow = Pick<
   ReportMetricRow,
@@ -353,12 +352,10 @@ async function getDriverExpiriesById({
         "is_company_sponsored",
         "nfc_number",
         "keeta_vehicle_plate_number",
-        "vehicle_number",
+        "vehicle_id",
         "iqama_expiry_date",
         "driving_license_expiry_date",
         "driver_card_expiry_date",
-        "vehicle_authorization_expiry_date",
-        "operating_card_expiry_date",
       ].join(", "),
     )
     .eq("organization_id", organizationId)
@@ -368,17 +365,47 @@ async function getDriverExpiriesById({
     return expiries;
   }
 
-  for (const driver of (data ?? []) as unknown as DriverExpiryRow[]) {
+  const driverRows = (data ?? []) as unknown as DriverExpiryRow[];
+  const vehicleIds = Array.from(
+    new Set(driverRows.map((driver) => driver.vehicle_id).filter((id): id is string => Boolean(id))),
+  );
+  const vehiclePlates = new Map<string, string>();
+  const vehicleAuthorizationExpiries = new Map<string, string | null>();
+  const vehicleOperatingCardExpiries = new Map<string, string | null>();
+  if (vehicleIds.length > 0) {
+    try {
+      const serviceClient = createAdminClient();
+      const { data: vehicles } = await serviceClient
+        .from("fleet_vehicles")
+        .select("id, plate_number, authorization_expiry_date, operating_card_expiry_date")
+        .in("id", vehicleIds);
+      for (const vehicle of vehicles ?? []) {
+        vehiclePlates.set(vehicle.id, vehicle.plate_number);
+        vehicleAuthorizationExpiries.set(vehicle.id, vehicle.authorization_expiry_date);
+        vehicleOperatingCardExpiries.set(vehicle.id, vehicle.operating_card_expiry_date);
+      }
+    } catch {
+      // Keep report data available when server credentials are not configured.
+    }
+  }
+
+  for (const driver of driverRows) {
     expiries.set(driver.id, {
       isCompanySponsored: driver.is_company_sponsored,
       nfcNumber: driver.nfc_number,
-      actualVehiclePlateNumber: driver.vehicle_number,
+      actualVehiclePlateNumber: driver.vehicle_id
+        ? vehiclePlates.get(driver.vehicle_id) ?? null
+        : null,
       keetaDashboardPlateNumber: driver.keeta_vehicle_plate_number,
       iqamaExpiryDate: driver.iqama_expiry_date,
       drivingLicenseExpiryDate: driver.driving_license_expiry_date,
       driverCardExpiryDate: driver.driver_card_expiry_date,
-      vehicleAuthorizationExpiryDate: driver.vehicle_authorization_expiry_date,
-      operatingCardExpiryDate: driver.operating_card_expiry_date,
+      vehicleAuthorizationExpiryDate: driver.vehicle_id
+        ? vehicleAuthorizationExpiries.get(driver.vehicle_id) ?? null
+        : null,
+      operatingCardExpiryDate: driver.vehicle_id
+        ? vehicleOperatingCardExpiries.get(driver.vehicle_id) ?? null
+        : null,
     });
   }
 

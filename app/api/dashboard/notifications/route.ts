@@ -6,7 +6,7 @@ import { getAppNotificationsForCurrentUser } from "@/features/notifications/quer
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const admin = await getAuthenticatedAdmin();
+  const admin = await getAuthenticatedAdmin({ resolveAvatar: false });
 
   if (admin.status !== "authorized") {
     return NextResponse.json(
@@ -39,7 +39,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const admin = await getAuthenticatedAdmin();
+  const admin = await getAuthenticatedAdmin({ resolveAvatar: false });
 
   if (admin.status !== "authorized") {
     return NextResponse.json({ status: "unauthorized" }, { status: 401 });

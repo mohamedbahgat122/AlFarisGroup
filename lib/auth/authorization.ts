@@ -99,8 +99,14 @@ export function validateAdminProfile(profile: Profile | null): ProfileAccessResu
   };
 }
 
+type GetAuthenticatedAdminOptions = {
+  resolveAvatar?: boolean;
+};
+
 export const getAuthenticatedAdmin = cache(
-  async (): Promise<AdminAuthorizationResult> => {
+  async (
+    { resolveAvatar = true }: GetAuthenticatedAdminOptions = {},
+  ): Promise<AdminAuthorizationResult> => {
     const supabase = await createClient();
     const {
       data: { user },
@@ -125,7 +131,7 @@ export const getAuthenticatedAdmin = cache(
     }
 
     let avatarUrl: string | null = null;
-    if (access.profile.avatar_path) {
+    if (resolveAvatar && access.profile.avatar_path) {
       const { data: urlData } = await supabase.storage
         .from("profile-avatars")
         .createSignedUrl(access.profile.avatar_path, 3600); // 1 hour expiration

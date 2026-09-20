@@ -3,9 +3,8 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import type { OrderPeriodManagementDictionary, OrderPeriodActionResult, OrderPeriodDriver, OrderPeriodTemplate, OrderPeriodWeek } from "@/features/order-periods/types";
-import { archiveOrderPeriodTemplateAction, approveOrderShiftChangeRequestAction, moveOrderPeriodDriverAction, rejectOrderShiftChangeRequestAction, replaceOrderPeriodWeekMembersAction, saveOrderPeriodTemplateAction, saveOrderShiftChangeDaysAction, saveOrderPeriodOperationalPolicyAction, openDriverOrderPeriodAction, orderPeriodLifecycleAction } from "@/features/order-periods/actions";
-import type { OrderShiftChangeRequest } from "@/features/order-periods/types";
+import type { OrderPeriodManagementDictionary, OrderPeriodActionResult, OrderPeriodAssignment, OrderPeriodDriver, OrderPeriodTemplate, OrderPeriodWeek, OrderShiftHistoryResult, OrderShiftChangeRequest } from "@/features/order-periods/types";
+import { archiveOrderPeriodTemplateAction, approveOrderShiftChangeRequestAction, cancelDriverOrderPeriodAction, loadOrderShiftHistoryAction, moveOrderPeriodDriverAction, rejectOrderShiftChangeRequestAction, replaceOrderPeriodWeekMembersAction, saveOrderPeriodTemplateAction, saveOrderShiftChangeDaysAction, saveOrderPeriodOperationalPolicyAction, openDriverOrderPeriodAction, orderPeriodLifecycleAction } from "@/features/order-periods/actions";
 
 type Props = {
   locale: "ar" | "en";
@@ -14,7 +13,7 @@ type Props = {
   templates: OrderPeriodTemplate[];
   drivers: OrderPeriodDriver[];
   weeks: { current: OrderPeriodWeek; next: OrderPeriodWeek };
-  permissions: { manage: boolean; assign: boolean };
+  permissions: { create: boolean; update: boolean; assign: boolean; openNow: boolean; reviewRequests: boolean; settings: boolean; archive: boolean; activityView: boolean };
   orderShiftChangeSettings: number[];
   orderShiftChangeRequests: OrderShiftChangeRequest[];
 };
@@ -31,6 +30,7 @@ export function OrderPeriodManagementClient({ locale, organizationCode, dictiona
   const [moveForm, setMoveForm] = useState<{ templateId: string; driver: OrderPeriodDriver; week: OrderPeriodWeek } | null>(null);
   const [policyForm, setPolicyForm] = useState<OrderPeriodTemplate | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedDays, setSelectedDays] = useState<number[]>(orderShiftChangeSettings);
   const [isSavingSettings, startSavingSettings] = useTransition();
   const [settingsSaveState, setSettingsSaveState] = useState<OrderPeriodActionResult>(idle);
@@ -88,16 +88,17 @@ export function OrderPeriodManagementClient({ locale, organizationCode, dictiona
             <p className="mt-1 text-sm leading-6 text-muted">{dictionary.description}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {permissions.manage ? <button type="button" className={secondaryClass} onClick={() => { setSelectedDays(orderShiftChangeSettings); setSettingsSaveState(idle); setSettingsOpen(true); }}>{dictionary.orderShiftChangeSettings}</button> : null}
-            {permissions.manage ? <button type="button" className={buttonClass} onClick={() => setTemplateForm({ mode: "create" })}>+ {dictionary.addTemplate}</button> : null}
+            {permissions.activityView ? <button type="button" className={secondaryClass} onClick={() => setHistoryOpen(true)}><span aria-hidden="true">◷</span><span>{dictionary.changeHistory}</span></button> : null}
+            {permissions.settings ? <button type="button" className={secondaryClass} onClick={() => { setSelectedDays(orderShiftChangeSettings); setSettingsSaveState(idle); setSettingsOpen(true); }}>{dictionary.orderShiftChangeSettings}</button> : null}
+            {permissions.create ? <button type="button" className={buttonClass} onClick={() => setTemplateForm({ mode: "create" })}>+ {dictionary.addTemplate}</button> : null}
           </div>
         </header>
 
         <div className="grid gap-6 xl:grid-cols-2">
-          <WeekSection week={weeks.current} current templates={templates} title={dictionary.currentWeek} expanded={expanded} toggle={toggle} permissions={permissions} locale={locale} organizationCode={organizationCode} dictionary={dictionary} onEdit={(template: OrderPeriodTemplate) => setTemplateForm({ mode: "edit", template })} onMembers={(template: OrderPeriodTemplate, week: OrderPeriodWeek) => setMembersForm({ template, week })} onMove={(templateId: string, driver: OrderPeriodDriver, week: OrderPeriodWeek) => setMoveForm({ templateId, driver, week })} onPolicy={(template: OrderPeriodTemplate) => setPolicyForm(template)} onOpen={(template: OrderPeriodTemplate, driver: OrderPeriodDriver) => { if (!window.confirm(`${dictionary.openNowTitle}\n\n${dictionary.driver}: ${driver.fullName}\n${dictionary.identifier}: ${driver.keetaDriverId ?? "-"}\n${template.name} (${template.startTime} - ${template.endTime})\n\n${dictionary.openNowConfirm}`)) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); form.set("driverId", driver.id); startAction(async () => { const result = await openDriverOrderPeriodAction(form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} archiveAction={archiveAction} archivePending={archivePending} lifecycleBusy={actionBusy} runLifecycle={(kind: "publish" | "unpublish" | "disable" | "enable", template: OrderPeriodTemplate) => { if ((kind === "unpublish" && !window.confirm(dictionary.unpublishConfirm)) || (kind === "disable" && !window.confirm(dictionary.disableConfirm))) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); startAction(async () => { const result = await orderPeriodLifecycleAction(kind, form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} />
-          <WeekSection week={weeks.next} templates={templates} title={dictionary.nextWeek} expanded={expanded} toggle={toggle} permissions={permissions} locale={locale} organizationCode={organizationCode} dictionary={dictionary} onEdit={(template: OrderPeriodTemplate) => setTemplateForm({ mode: "edit", template })} onMembers={(template: OrderPeriodTemplate, week: OrderPeriodWeek) => setMembersForm({ template, week })} onMove={(templateId: string, driver: OrderPeriodDriver, week: OrderPeriodWeek) => setMoveForm({ templateId, driver, week })} onPolicy={(template: OrderPeriodTemplate) => setPolicyForm(template)} onOpen={() => undefined} archiveAction={archiveAction} archivePending={archivePending} lifecycleBusy={actionBusy} runLifecycle={(kind: "publish" | "unpublish" | "disable" | "enable", template: OrderPeriodTemplate) => { if ((kind === "unpublish" && !window.confirm(dictionary.unpublishConfirm)) || (kind === "disable" && !window.confirm(dictionary.disableConfirm))) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); startAction(async () => { const result = await orderPeriodLifecycleAction(kind, form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} />
+          <WeekSection week={weeks.current} current templates={templates} title={dictionary.currentWeek} expanded={expanded} toggle={toggle} permissions={permissions} locale={locale} organizationCode={organizationCode} dictionary={dictionary} onEdit={(template: OrderPeriodTemplate) => setTemplateForm({ mode: "edit", template })} onMembers={(template: OrderPeriodTemplate, week: OrderPeriodWeek) => setMembersForm({ template, week })} onMove={(templateId: string, driver: OrderPeriodDriver, week: OrderPeriodWeek) => setMoveForm({ templateId, driver, week })} onPolicy={(template: OrderPeriodTemplate) => setPolicyForm(template)} onOpen={(template: OrderPeriodTemplate, driver: OrderPeriodDriver) => { if (!window.confirm(`${dictionary.openNowTitle}\n\n${dictionary.driver}: ${driver.fullName}\n${dictionary.identifier}: ${driver.keetaDriverId ?? "-"}\n${template.name} (${template.startTime} - ${template.endTime})\n\n${dictionary.openNowConfirm}`)) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); form.set("driverId", driver.id); startAction(async () => { const result = await openDriverOrderPeriodAction(form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} onCancel={(template: OrderPeriodTemplate, driver: OrderPeriodAssignment) => { if (!window.confirm(`${dictionary.cancelOpenNow}\n\n${dictionary.driver}: ${driver.fullName}\n${dictionary.identifier}: ${driver.keetaDriverId ?? "-"}\n${template.name}\n\n${dictionary.cancelOpenNowConfirm}`)) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); form.set("driverId", driver.id); form.set("scheduledBusinessDate", driver.manualOverrideScheduledBusinessDate ?? ""); startAction(async () => { const result = await cancelDriverOrderPeriodAction(form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} archiveAction={archiveAction} archivePending={archivePending} lifecycleBusy={actionBusy} runLifecycle={(kind: "publish" | "unpublish" | "disable" | "enable", template: OrderPeriodTemplate) => { if ((kind === "unpublish" && !window.confirm(dictionary.unpublishConfirm)) || (kind === "disable" && !window.confirm(dictionary.disableConfirm))) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); startAction(async () => { const result = await orderPeriodLifecycleAction(kind, form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} />
+          <WeekSection week={weeks.next} templates={templates} title={dictionary.nextWeek} expanded={expanded} toggle={toggle} permissions={permissions} locale={locale} organizationCode={organizationCode} dictionary={dictionary} onEdit={(template: OrderPeriodTemplate) => setTemplateForm({ mode: "edit", template })} onMembers={(template: OrderPeriodTemplate, week: OrderPeriodWeek) => setMembersForm({ template, week })} onMove={(templateId: string, driver: OrderPeriodDriver, week: OrderPeriodWeek) => setMoveForm({ templateId, driver, week })} onPolicy={(template: OrderPeriodTemplate) => setPolicyForm(template)} onOpen={() => undefined} onCancel={() => undefined} archiveAction={archiveAction} archivePending={archivePending} lifecycleBusy={actionBusy} runLifecycle={(kind: "publish" | "unpublish" | "disable" | "enable", template: OrderPeriodTemplate) => { if ((kind === "unpublish" && !window.confirm(dictionary.unpublishConfirm)) || (kind === "disable" && !window.confirm(dictionary.disableConfirm))) return; const form = new FormData(); form.set("locale", locale); form.set("organizationCode", organizationCode); form.set("templateId", template.id); startAction(async () => { const result = await orderPeriodLifecycleAction(kind, form); setToast(result.status === "success" || result.status === "error" ? result.message : dictionary.actionFailed); if (result.status === "success") router.refresh(); }); }} />
         </div>
-        <OrderShiftChangeRequestsSection locale={locale} dictionary={dictionary} requests={orderShiftChangeRequests} canReview={permissions.assign} busy={requestBusy} onApprove={(request) => {
+        <OrderShiftChangeRequestsSection locale={locale} dictionary={dictionary} requests={orderShiftChangeRequests} canReview={permissions.reviewRequests} busy={requestBusy} onApprove={(request) => {
           const weekEnd = addDays(request.requestedWeekStartDate, 6);
           const message = `${dictionary.approveOrderShiftChangeConfirm}\n\n${dictionary.driver}: ${request.driverName}\n${dictionary.currentOrderShift}: ${request.currentTemplateName}\n${dictionary.requestedOrderShift}: ${request.requestedTemplateName}\n${dictionary.requestedWeek}: ${formatDateRange(request.requestedWeekStartDate, weekEnd, locale)}`;
           if (!window.confirm(message)) return;
@@ -117,9 +118,102 @@ export function OrderPeriodManagementClient({ locale, organizationCode, dictiona
       {membersForm ? <MembersDialog locale={locale} organizationCode={organizationCode} dictionary={dictionary} form={membersForm} drivers={drivers} action={membersAction} pending={membersPending} state={membersState} onClose={() => setMembersForm(null)} /> : null}
       {moveForm ? <MoveDialog locale={locale} organizationCode={organizationCode} dictionary={dictionary} form={moveForm} templates={templates} action={moveAction} pending={movePending} state={moveState} onClose={() => setMoveForm(null)} /> : null}
       {policyForm ? <OperationalPolicyDialog locale={locale} organizationCode={organizationCode} dictionary={dictionary} template={policyForm} onClose={() => setPolicyForm(null)} onNotify={setToast} onUpdated={router.refresh} /> : null}
+      {historyOpen ? <OrderShiftChangeHistoryDialog locale={locale} organizationCode={organizationCode} dictionary={dictionary} onClose={() => setHistoryOpen(false)} /> : null}
       {toast ? <div className="fixed bottom-5 inset-e-5 z-80 rounded-xl border border-primary/20 bg-surface px-4 py-3 text-sm font-bold text-navy shadow-xl">{toast}</div> : null}
     </div>
   );
+}
+
+function OrderShiftChangeHistoryDialog({
+  locale,
+  organizationCode,
+  dictionary,
+  onClose,
+}: {
+  locale: "ar" | "en";
+  organizationCode: string;
+  dictionary: OrderPeriodManagementDictionary;
+  onClose: () => void;
+}) {
+  const [page, setPage] = useState(1);
+  const [action, setAction] = useState("");
+  const [actorId, setActorId] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [result, setResult] = useState<OrderShiftHistoryResult | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    void loadOrderShiftHistoryAction({ organizationCode, page, action, actorId, dateFrom, dateTo }).then((next) => {
+      if (!active) return;
+      setResult(next);
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, [action, actorId, dateFrom, dateTo, organizationCode, page]);
+
+  const items = result?.status === "success" ? result.items : [];
+  const actorOptions = result?.status === "success" ? result.actorOptions : [];
+  const totalPages = result?.status === "success" ? result.totalPages : 1;
+  const pageText = dictionary.changeHistoryPage.replace("{page}", String(page)).replace("{pages}", String(totalPages));
+  const eventOptions = Object.keys(dictionary.changeHistoryActions);
+  const setFilter = (setter: (value: string) => void, value: string) => { setter(value); setPage(1); };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/45 p-3 sm:p-6" dir={locale === "ar" ? "rtl" : "ltr"}>
+      <div role="dialog" aria-modal="true" className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_24px_80px_rgba(16,35,63,0.22)] sm:max-h-[calc(100vh-3rem)]">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div><h2 className="text-xl font-bold text-navy">{dictionary.changeHistory}</h2><p className="mt-1 text-sm leading-6 text-muted">{dictionary.changeHistoryDescription}</p></div>
+          <button type="button" onClick={onClose} className="flex size-10 shrink-0 items-center justify-center rounded-lg text-2xl text-muted hover:bg-primary-soft hover:text-primary" aria-label={dictionary.changeHistoryClose}>×</button>
+        </div>
+        <div className="grid gap-3 border-b border-border px-5 py-4 md:grid-cols-4">
+          <label className="space-y-1 text-sm font-semibold text-navy"><span>{dictionary.changeHistoryAction}</span><select className={inputClass} value={action} onChange={(event) => setFilter(setAction, event.target.value)}><option value="">{dictionary.changeHistoryAllActions}</option>{eventOptions.map((key) => <option key={key} value={key}>{dictionary.changeHistoryActions[key]}</option>)}</select></label>
+          <label className="space-y-1 text-sm font-semibold text-navy"><span>{dictionary.changeHistoryActor}</span><select className={inputClass} value={actorId} onChange={(event) => setFilter(setActorId, event.target.value)}><option value="">{dictionary.changeHistoryAllActions}</option>{actorOptions.map((actor) => <option key={actor.id} value={actor.id}>{actor.name}</option>)}</select></label>
+          <label className="space-y-1 text-sm font-semibold text-navy"><span>{dictionary.changeHistoryFrom}</span><input className={inputClass} type="date" value={dateFrom} onChange={(event) => setFilter(setDateFrom, event.target.value)} /></label>
+          <label className="space-y-1 text-sm font-semibold text-navy"><span>{dictionary.changeHistoryTo}</span><input className={inputClass} type="date" value={dateTo} onChange={(event) => setFilter(setDateTo, event.target.value)} /></label>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="mb-4 flex justify-end"><button type="button" className={secondaryClass} onClick={() => { setPage(1); setResult(null); }} disabled={loading}>↻ <span>{dictionary.changeHistoryRefresh}</span></button></div>
+          {loading ? <p className="py-16 text-center text-sm font-semibold text-muted">{dictionary.changeHistoryLoading}</p> : result?.status === "error" ? <p className="py-16 text-center text-sm font-semibold text-danger">{dictionary.changeHistoryError}</p> : items.length === 0 ? <p className="py-16 text-center text-sm font-semibold text-muted">{dictionary.changeHistoryEmpty}</p> : <div className="space-y-3">{items.map((item) => <HistoryItem key={item.id} item={item} dictionary={dictionary} locale={locale} />)}</div>}
+        </div>
+        <div className="flex flex-col gap-3 border-t border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-sm font-semibold text-muted">{pageText}</span>
+          <div className="flex gap-2"><button type="button" className={secondaryClass} disabled={loading || page <= 1} onClick={() => setPage((value) => value - 1)}>{dictionary.changeHistoryPrevious}</button><button type="button" className={secondaryClass} disabled={loading || page >= totalPages} onClick={() => setPage((value) => value + 1)}>{dictionary.changeHistoryNext}</button></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryItem({ item, dictionary, locale }: { item: import("@/features/order-periods/types").OrderShiftHistoryItem; dictionary: OrderPeriodManagementDictionary; locale: "ar" | "en" }) {
+  const actionLabel = dictionary.changeHistoryActions[item.action] ?? item.action;
+  const date = new Intl.DateTimeFormat(locale === "ar" ? "ar-SA" : "en-US", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }).format(new Date(item.createdAt));
+  const isMembership = item.action === "order_period_week_membership_replaced";
+  const hasDriverSnapshots = item.addedDrivers.length > 0 || item.removedDrivers.length > 0;
+  return <article className="rounded-xl border border-border bg-background p-4 shadow-sm">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div><p className="font-bold text-navy">{item.actorName ?? dictionary.changeHistoryNoActor}</p><p className="text-sm font-semibold text-primary">{actionLabel}</p></div>
+      <time className="text-xs font-semibold text-muted" dateTime={item.createdAt}>{date}</time>
+    </div>
+    {item.driverName || item.templateName || item.sourceTemplateName || item.targetTemplateName || item.requestStatus ? <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-muted">
+      {item.driverName ? <span className="rounded-full bg-primary-soft px-2.5 py-1">{dictionary.changeHistoryAffectedDriver}: {item.driverName}{item.driverIdentifier ? ` (${item.driverIdentifier})` : ""}</span> : null}
+      {item.templateName ? <span className="rounded-full bg-primary-soft px-2.5 py-1">{dictionary.changeHistoryAffectedShift}: {item.templateName}</span> : null}
+      {item.sourceTemplateName || item.targetTemplateName ? <span className="rounded-full bg-primary-soft px-2.5 py-1">{item.sourceTemplateName ?? "-"} → {item.targetTemplateName ?? "-"}</span> : null}
+      {item.requestStatus ? <span className="rounded-full bg-primary-soft px-2.5 py-1">{item.requestStatus}</span> : null}
+    </div> : null}
+    {item.requestNote ? <p className="mt-3 text-sm text-muted">{item.requestNote}</p> : null}
+    {isMembership && hasDriverSnapshots ? <div className="mt-3 grid gap-3 border-t border-border/70 pt-3 sm:grid-cols-2">
+      {item.addedDrivers.length ? <div><p className="mb-2 text-xs font-bold text-muted">{dictionary.changeHistoryAddedDrivers}</p><div className="flex flex-wrap gap-2">{item.addedDrivers.map((driver) => <span key={driver.id} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">{driver.name}</span>)}</div></div> : null}
+      {item.removedDrivers.length ? <div><p className="mb-2 text-xs font-bold text-muted">{dictionary.changeHistoryRemovedDrivers}</p><div className="flex flex-wrap gap-2">{item.removedDrivers.map((driver) => <span key={driver.id} className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800">{driver.name}</span>)}</div></div> : null}
+    </div> : null}
+    {isMembership && ((item.addedDrivers.length === 0 && item.addedCount !== null) || (item.removedDrivers.length === 0 && item.removedCount !== null)) ? <div className="mt-3 flex flex-wrap gap-2 border-t border-border/70 pt-3 text-xs font-semibold text-muted">
+      {item.addedDrivers.length === 0 && item.addedCount !== null ? <span className="rounded-full bg-surface px-2.5 py-1">{dictionary.changeHistoryAddedCount}: {item.addedCount}</span> : null}
+      {item.removedDrivers.length === 0 && item.removedCount !== null ? <span className="rounded-full bg-surface px-2.5 py-1">{dictionary.changeHistoryRemovedCount}: {item.removedCount}</span> : null}
+    </div> : null}
+    {item.changes.length > 0 ? <div className="mt-3 border-t border-border/70 pt-3"><p className="mb-2 text-xs font-bold uppercase text-muted">{dictionary.changeHistoryChanges}</p><div className="grid gap-2 sm:grid-cols-2">{item.changes.map((change) => <div key={change.field} className="rounded-lg bg-surface px-3 py-2 text-sm"><span className="font-semibold text-muted">{dictionary.changeHistoryFields[change.field] ?? change.field}</span><div className="mt-1 flex flex-wrap items-center gap-2 font-bold text-navy"><span>{change.before ?? "-"}</span><span aria-hidden="true">→</span><span>{change.after ?? "-"}</span></div></div>)}</div></div> : null}
+  </article>;
 }
 
 function OrderShiftChangeSettingsDialog({ locale, dictionary, selectedDays, pending, onClose, onSave }: { locale: "ar" | "en"; dictionary: OrderPeriodManagementDictionary; selectedDays: number[]; pending: boolean; onClose: () => void; onSave: (days: number[]) => void }) {
@@ -134,9 +228,8 @@ function OrderShiftChangeRequestsSection({ locale, dictionary, requests, canRevi
 function OperationalPolicyDialog({ locale, organizationCode, dictionary, template, onClose, onNotify, onUpdated }: any) {
   const [state, action, pending] = useActionState(saveOrderPeriodOperationalPolicyAction, idle);
   const handledSuccessState = useRef<OrderPeriodActionResult | null>(null);
-  const [openBefore, setOpenBefore] = useState(template.openBeforeMinutes?.toString() ?? "");
-  const [closeAfter, setCloseAfter] = useState(template.closeAfterMinutes?.toString() ?? "");
-  const [minimumWork, setMinimumWork] = useState(template.minimumWorkMinutes?.toString() ?? "");
+  const [openBefore, setOpenBefore] = useState(durationParts(template.openBeforeMinutes));
+  const [endBefore, setEndBefore] = useState(durationParts(template.endBeforeMinutes));
 
   useEffect(() => {
     if (state.status === "success" && handledSuccessState.current !== state) {
@@ -153,21 +246,24 @@ function OperationalPolicyDialog({ locale, organizationCode, dictionary, templat
     const total = hour * 60 + minute + delta;
     return `${String(Math.floor((total + 1440) % 1440 / 60)).padStart(2, "0")}:${String((total + 1440) % 60).padStart(2, "0")}`;
   };
-  return <Dialog title={dictionary.operationalSettings} onClose={onClose}><form action={action} className="space-y-4" dir={locale === "ar" ? "rtl" : "ltr"}><HiddenContext locale={locale} organizationCode={organizationCode} /><input type="hidden" name="templateId" value={template.id} /><div className="rounded-lg bg-surface-raised p-3 text-sm font-bold text-navy"><p>{template.name}</p><p dir="ltr">{template.startTime} - {template.endTime}</p></div><label className="block text-sm font-bold text-navy">{dictionary.openBefore}<input className={inputClass} type="number" min="0" max="1440" name="openBeforeMinutes" value={openBefore} onChange={(event) => setOpenBefore(event.target.value)} placeholder={dictionary.unconfigured} /> <span className="text-xs text-muted">{dictionary.minutes}</span></label><label className="block text-sm font-bold text-navy">{dictionary.closeAfter}<input className={inputClass} type="number" min="0" max="1440" name="closeAfterMinutes" value={closeAfter} onChange={(event) => setCloseAfter(event.target.value)} placeholder={dictionary.unconfigured} /> <span className="text-xs text-muted">{dictionary.minutes}</span></label><label className="block text-sm font-bold text-navy">{dictionary.minimumWork}<input className={inputClass} type="number" min="1" max="1440" name="minimumWorkMinutes" value={minimumWork} onChange={(event) => setMinimumWork(event.target.value)} placeholder={dictionary.unconfigured} /> <span className="text-xs text-muted">{dictionary.minutes}</span></label><div className="rounded-lg border border-border px-3 py-2 text-sm text-muted"><p>{dictionary.operationalPreview}</p><p>{dictionary.opensAt}: <span dir="ltr">{openBefore ? preview(template.startTime, -Number(openBefore)) : "-"}</span></p><p>{dictionary.closesAt}: <span dir="ltr">{closeAfter ? preview(template.endTime, Number(closeAfter)) : "-"}</span></p></div><p className="text-sm leading-6 text-muted">{dictionary.operationalSettingsDescription}</p><ActionMessage state={state} /><div className="flex justify-end gap-2"><button type="button" className={secondaryClass} onClick={onClose} disabled={pending}>{dictionary.cancel}</button><button type="submit" className={buttonClass} disabled={pending}>{pending ? dictionary.saving : dictionary.save}</button></div></form></Dialog>;
+  return <Dialog title={dictionary.operationalSettings} onClose={onClose}><form action={action} className="space-y-4" dir={locale === "ar" ? "rtl" : "ltr"}><HiddenContext locale={locale} organizationCode={organizationCode} /><input type="hidden" name="templateId" value={template.id} /><div className="rounded-lg bg-surface-raised p-3 text-sm font-bold text-navy"><p>{template.name}</p><p dir="ltr">{template.startTime} - {template.endTime}</p></div><DurationInputs label={dictionary.openBeforeOptional} helper={dictionary.openBeforeHelper} name="openBefore" value={openBefore} setValue={setOpenBefore} dictionary={dictionary} /><DurationInputs label={dictionary.endDelayOptional} helper={dictionary.endDelayHelper} name="endBefore" value={endBefore} setValue={setEndBefore} dictionary={dictionary} /><div className="rounded-lg border border-border px-3 py-2 text-sm text-muted"><p>{dictionary.operationalPreview}</p><p>{dictionary.opensAt}: <span dir="ltr">{openBefore.configured ? preview(template.startTime, -(openBefore.total)) : dictionary.unconfigured}</span></p><p>{dictionary.closesAt}: <span dir="ltr">{endBefore.configured ? preview(template.endTime, -(endBefore.total)) : dictionary.endDelayNotConfigured}</span></p></div><p className="text-sm leading-6 text-muted">{dictionary.operationalSettingsDescription}</p><ActionMessage state={state} /><div className="flex justify-end gap-2"><button type="button" className={secondaryClass} onClick={onClose} disabled={pending}>{dictionary.cancel}</button><button type="submit" className={buttonClass} disabled={pending}>{pending ? dictionary.saving : dictionary.save}</button></div></form></Dialog>;
 }
+
+function durationParts(total: number | null) { return { hours: total === null ? "" : String(Math.floor(total / 60)), minutes: total === null ? "" : String(total % 60), total: total ?? 0, configured: total !== null }; }
+function DurationInputs({ label, helper, name, value, setValue, dictionary }: any) { return <label className="block text-sm font-bold text-navy">{label}<div className="grid grid-cols-2 gap-2"><input className={inputClass} type="number" min="0" max="24" name={`${name}Hours`} value={value.hours} onChange={(event) => { const hours = event.target.value; setValue({ hours, minutes: value.minutes, total: (Number(hours) || 0) * 60 + (Number(value.minutes) || 0) }); }} placeholder="0" aria-label={`${label} hours`} /><input className={inputClass} type="number" min="0" max="59" name={`${name}Minutes`} value={value.minutes} onChange={(event) => { const minutes = event.target.value; setValue({ hours: value.hours, minutes, total: (Number(value.hours) || 0) * 60 + (Number(minutes) || 0) }); }} placeholder="0" aria-label={`${label} minutes`} /></div><span className="mt-1 block text-xs font-normal text-muted">{dictionary.hours} / {dictionary.minutes} · {helper}</span></label>; }
 
 function addDays(value: string, days: number) { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); }
 function formatDateRange(start: string, end: string, locale: "ar" | "en") { const formatter = new Intl.DateTimeFormat(locale === "ar" ? "ar-SA" : "en-US", { day: "numeric", month: "long" }); return `${formatter.format(new Date(`${start}T00:00:00Z`))} - ${formatter.format(new Date(`${end}T00:00:00Z`))}`; }
 function formatDateTime(value: string, locale: "ar" | "en") { return new Intl.DateTimeFormat(locale === "ar" ? "ar-SA" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 
-function WeekSection({ week, current = false, title, templates, expanded, toggle, permissions, locale, organizationCode, dictionary, onEdit, onMembers, onMove, onPolicy, onOpen, archiveAction, archivePending, lifecycleBusy, runLifecycle }: any) {
+function WeekSection({ week, current = false, title, templates, expanded, toggle, permissions, locale, organizationCode, dictionary, onEdit, onMembers, onMove, onPolicy, onOpen, onCancel, archiveAction, archivePending, lifecycleBusy, runLifecycle }: any) {
   return <section className="space-y-3"><div className="flex items-end justify-between"><div><h2 className="text-lg font-black text-navy">{title}</h2><p className="text-xs font-semibold text-muted" dir="ltr">{week.label}</p></div><span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">{week.rows.length} / {templates.length}</span></div>
-    {week.rows.map((row: any) => <TemplateRow key={`${week.key}-${row.template.id}`} row={row} week={week} current={current} expanded={expanded.has(`${week.key}-${row.template.id}`)} onToggle={() => toggle(`${week.key}-${row.template.id}`)} permissions={permissions} locale={locale} organizationCode={organizationCode} dictionary={dictionary} onEdit={onEdit} onMembers={onMembers} onMove={onMove} onPolicy={onPolicy} onOpen={onOpen} archiveAction={archiveAction} archivePending={archivePending} lifecycleBusy={lifecycleBusy} runLifecycle={runLifecycle} />)}
+    {week.rows.map((row: any) => <TemplateRow key={`${week.key}-${row.template.id}`} row={row} week={week} current={current} expanded={expanded.has(`${week.key}-${row.template.id}`)} onToggle={() => toggle(`${week.key}-${row.template.id}`)} permissions={permissions} locale={locale} organizationCode={organizationCode} dictionary={dictionary} onEdit={onEdit} onMembers={onMembers} onMove={onMove} onPolicy={onPolicy} onOpen={onOpen} onCancel={onCancel} archiveAction={archiveAction} archivePending={archivePending} lifecycleBusy={lifecycleBusy} runLifecycle={runLifecycle} />)}
     <VirtualUnassignedRow week={week} expanded={expanded.has(`${week.key}-unassigned`)} onToggle={() => toggle(`${week.key}-unassigned`)} dictionary={dictionary} />
   </section>;
 }
 
-function TemplateRow({ row, week, current, expanded, onToggle, permissions, locale, organizationCode, dictionary, onEdit, onMembers, onMove, onPolicy, onOpen, archiveAction, archivePending, lifecycleBusy, runLifecycle }: any) {
+function TemplateRow({ row, week, current, expanded, onToggle, permissions, locale, organizationCode, dictionary, onEdit, onMembers, onMove, onPolicy, onOpen, onCancel, archiveAction, archivePending, lifecycleBusy, runLifecycle }: any) {
   const [menuOpen, setMenuOpen] = useState(false);
   const ids = row.drivers.map((driver: any) => driver.keetaDriverId).filter(Boolean);
   const stateLabel = row.template.archivedAt ? dictionary.archived : !row.template.isActive ? dictionary.disabled : !row.template.isPublished ? dictionary.unpublished : dictionary.published;
@@ -178,39 +274,39 @@ function TemplateRow({ row, week, current, expanded, onToggle, permissions, loca
         <div className="min-w-[180px] flex-1">
           <h3 className="font-black text-navy">{row.template.name}</h3>
           <p className="mt-1 text-sm font-semibold text-muted" dir="ltr">{row.template.startTime} - {row.template.endTime} {row.template.crossesMidnight ? `• ${dictionary.overnight}` : ""}</p>
+          {row.template.hasBreak && row.template.breakStartTime && row.template.breakEndTime ? <p className="mt-1 text-xs font-semibold text-muted" dir="ltr">{dictionary.break}: {row.template.breakStartTime} - {row.template.breakEndTime}</p> : null}
           <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold">
             <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">{stateLabel}</span>
             <span className="rounded bg-surface-raised px-2 py-1 text-muted">{dictionary.openBefore}: {row.template.openBeforeMinutes ?? dictionary.unconfigured} {row.template.openBeforeMinutes === null ? "" : dictionary.minutes}</span>
-            <span className="rounded bg-surface-raised px-2 py-1 text-muted">{dictionary.closeAfter}: {row.template.closeAfterMinutes ?? dictionary.unconfigured} {row.template.closeAfterMinutes === null ? "" : dictionary.minutes}</span>
-            <span className="rounded bg-surface-raised px-2 py-1 text-muted">{dictionary.minimumWork}: {row.template.minimumWorkMinutes ?? dictionary.unconfigured} {row.template.minimumWorkMinutes === null ? "" : dictionary.minutes}</span>
+            <span className="rounded bg-surface-raised px-2 py-1 text-muted">{dictionary.endDelay}: {row.template.endBeforeMinutes ?? dictionary.endDelayNotConfigured} {row.template.endBeforeMinutes === null ? "" : dictionary.minutes}</span>
           </div>
         </div>
         <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">{dictionary.assignedCount.replace("{count}", String(row.drivers.length))}</span>
         {permissions.assign ? <button type="button" className={secondaryClass} onClick={() => onMembers(row.template, week)}>{dictionary.manageDrivers}</button> : null}
-        {permissions.manage ? <>
-          <button type="button" className={secondaryClass} onClick={() => onPolicy(row.template)}>{dictionary.operationalSettings}</button>
+        {permissions.settings ? <button type="button" className={secondaryClass} onClick={() => onPolicy(row.template)}>{dictionary.operationalSettings}</button> : null}
+        {(permissions.update || permissions.archive) ? <>
           <div className="relative">
             <button type="button" className={secondaryClass} onClick={() => setMenuOpen((open) => !open)} aria-label={dictionary.moreActions} aria-expanded={menuOpen} title={dictionary.moreActions}>...</button>
             {menuOpen ? <div className="absolute end-0 top-full z-20 mt-2 grid min-w-44 gap-1 rounded-lg border border-border bg-surface p-2 shadow-xl">
-              <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" onClick={() => { setMenuOpen(false); onEdit(row.template); }}>{dictionary.edit}</button>
-              {row.template.isPublished && row.template.isActive ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("unpublish", row.template); }}>{dictionary.unpublish}</button> : null}
-              {!row.template.isPublished && row.template.isActive ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("publish", row.template); }}>{dictionary.publish}</button> : null}
-              {row.template.isActive ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("disable", row.template); }}>{dictionary.disable}</button> : !row.template.archivedAt ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("enable", row.template); }}>{dictionary.enable}</button> : null}
-              <form action={archiveAction} onSubmit={(event) => { if (!window.confirm(`${dictionary.archiveConfirm}\n\n${dictionary.archiveImpact}`)) event.preventDefault(); }}>
+              {permissions.update ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" onClick={() => { setMenuOpen(false); onEdit(row.template); }}>{dictionary.edit}</button> : null}
+              {permissions.archive && row.template.isPublished && row.template.isActive ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("unpublish", row.template); }}>{dictionary.unpublish}</button> : null}
+              {permissions.archive && !row.template.isPublished && row.template.isActive ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("publish", row.template); }}>{dictionary.publish}</button> : null}
+              {permissions.archive ? (row.template.isActive ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("disable", row.template); }}>{dictionary.disable}</button> : !row.template.archivedAt ? <button type="button" className="rounded-md px-3 py-2 text-start text-sm font-bold text-navy hover:bg-surface-raised" disabled={lifecycleBusy} onClick={() => { setMenuOpen(false); runLifecycle("enable", row.template); }}>{dictionary.enable}</button> : null) : null}
+              {permissions.archive ? <form action={archiveAction} onSubmit={(event) => { if (!window.confirm(`${dictionary.archiveConfirm}\n\n${dictionary.archiveImpact}`)) event.preventDefault(); }}>
                 <input type="hidden" name="locale" value={locale} /><input type="hidden" name="organizationCode" value={organizationCode} /><input type="hidden" name="templateId" value={row.template.id} />
                 <button type="submit" className="w-full rounded-md px-3 py-2 text-start text-sm font-bold text-danger hover:bg-danger/10" disabled={archivePending || Boolean(row.template.archivedAt)}>{dictionary.archive}</button>
-              </form>
+              </form> : null}
             </div> : null}
           </div>
         </> : null}
       </div>
-      {expanded ? <div className="border-t border-border/70 px-4 pb-4">{row.drivers.length === 0 ? <p className="py-4 text-sm text-muted">{dictionary.noDrivers}</p> : <div className="divide-y divide-border/70">{row.drivers.map((driver: any) => <DriverLine key={driver.id} driver={driver} ids={ids} dictionary={dictionary} onMove={() => onMove(row.template.id, driver, week)} onOpen={() => onOpen(row.template, driver)} canOpen={current && row.template.isActive && row.template.isPublished && !row.template.archivedAt} canMove={permissions.assign} />)}</div>}</div> : null}
+      {expanded ? <div className="border-t border-border/70 px-4 pb-4">{row.drivers.length === 0 ? <p className="py-4 text-sm text-muted">{dictionary.noDrivers}</p> : <div className="divide-y divide-border/70">{row.drivers.map((driver: any) => <DriverLine key={driver.id} driver={driver} ids={ids} dictionary={dictionary} onMove={() => onMove(row.template.id, driver, week)} onOpen={() => onOpen(row.template, driver)} onCancel={() => onCancel(row.template, driver)} canOpen={permissions.openNow && current && driver.openNowEligible && !driver.manualOverrideActive && !driver.attendanceExists && row.template.isActive && row.template.isPublished && !row.template.archivedAt} canCancel={permissions.openNow && current && driver.openNowEligible && driver.manualOverrideActive && !driver.attendanceExists} canMove={permissions.assign} />)}</div>}</div> : null}
     </article>
   );
 }
 
-function DriverLine({ driver, ids, dictionary, onMove, onOpen, canMove, canOpen }: any) {
-  return <div className="flex flex-wrap items-center gap-3 py-3"><div className="min-w-[190px] flex-1"><p className="font-bold text-navy">{driver.fullName}</p><p className="text-xs text-muted">{driver.vehicleLabel ?? driver.mobileNumber ?? ""}</p></div><code className="text-xs font-bold text-muted" dir="ltr">{driver.keetaDriverId ?? "-"}</code>{canOpen ? <button type="button" className={secondaryClass} onClick={onOpen} title={dictionary.openNow} aria-label={dictionary.openNow}>▶</button> : null}{canMove ? <button type="button" className={secondaryClass} onClick={onMove}>{dictionary.moveDriver}</button> : null}{driver.keetaDriverId ? <CopyIdsButton ids={[driver.keetaDriverId]} dictionary={dictionary} /> : ids.length > 0 ? <CopyIdsButton ids={ids} dictionary={dictionary} /> : null}</div>;
+function DriverLine({ driver, ids, dictionary, onMove, onOpen, onCancel, canMove, canOpen, canCancel }: any) {
+  return <div className="flex flex-wrap items-center gap-3 py-3"><div className="min-w-[190px] flex-1"><p className="font-bold text-navy">{driver.fullName}</p><p className="text-xs text-muted">{driver.vehicleLabel ?? driver.mobileNumber ?? ""}</p></div><code className="text-xs font-bold text-muted" dir="ltr">{driver.keetaDriverId ?? "-"}</code>{canOpen ? <button type="button" className={secondaryClass} onClick={onOpen} title={dictionary.openNow} aria-label={dictionary.openNow}>▶</button> : canCancel ? <button type="button" className={secondaryClass} onClick={onCancel} title={dictionary.cancelOpenNow} aria-label={dictionary.cancelOpenNow}>Ⅱ</button> : null}{canMove ? <button type="button" className={secondaryClass} onClick={onMove}>{dictionary.moveDriver}</button> : null}{driver.keetaDriverId ? <CopyIdsButton ids={[driver.keetaDriverId]} dictionary={dictionary} /> : ids.length > 0 ? <CopyIdsButton ids={ids} dictionary={dictionary} /> : null}</div>;
 }
 
 function CopyIdsButton({ ids, dictionary }: { ids: string[]; dictionary: OrderPeriodManagementDictionary }) {
@@ -224,7 +320,17 @@ function VirtualUnassignedRow({ week, expanded, onToggle, dictionary }: any) {
 }
 
 function TemplateDialog({ locale, organizationCode, dictionary, form, action, pending, state, onClose }: any) {
-  return <Dialog title={form.mode === "create" ? dictionary.addTemplate : dictionary.editTemplate} onClose={onClose}><form action={action} className="space-y-4"><HiddenContext locale={locale} organizationCode={organizationCode} /><input type="hidden" name="templateId" value={form.template?.id ?? ""} /><label className="block text-sm font-bold text-navy">{dictionary.name}<input className={inputClass} name="name" required defaultValue={form.template?.name ?? ""} /></label><div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm font-bold text-navy">{dictionary.startTime}<input className={inputClass} type="time" name="startTime" required defaultValue={form.template?.startTime ?? ""} /></label><label className="block text-sm font-bold text-navy">{dictionary.endTime}<input className={inputClass} type="time" name="endTime" required defaultValue={form.template?.endTime ?? ""} /></label></div><label className="flex items-center gap-2 text-sm font-bold text-navy"><input type="checkbox" name="crossesMidnight" defaultChecked={form.template?.crossesMidnight ?? false} />{dictionary.crossesMidnight}</label><ActionMessage state={state} /><div className="flex justify-end gap-2"><button type="button" className={secondaryClass} onClick={onClose}>{dictionary.cancel}</button><button type="submit" className={buttonClass} disabled={pending}>{pending ? dictionary.saving : dictionary.save}</button></div></form></Dialog>;
+  const [startTime, setStartTime] = useState(form.template?.startTime ?? "");
+  const [endTime, setEndTime] = useState(form.template?.endTime ?? "");
+  const [crossesMidnight, setCrossesMidnight] = useState(form.template?.crossesMidnight ?? false);
+  const [hasBreak, setHasBreak] = useState(form.template?.hasBreak ?? false);
+  useEffect(() => {
+    const start = timeMinutes(startTime);
+    const end = timeMinutes(endTime);
+    if (start === null || end === null || start === end) return;
+    setCrossesMidnight(end < start);
+  }, [endTime, startTime]);
+  return <Dialog title={form.mode === "create" ? dictionary.addTemplate : dictionary.editTemplate} onClose={onClose}><form action={action} className="space-y-4"><HiddenContext locale={locale} organizationCode={organizationCode} /><input type="hidden" name="templateId" value={form.template?.id ?? ""} /><label className="block text-sm font-bold text-navy">{dictionary.name}<input className={inputClass} name="name" required defaultValue={form.template?.name ?? ""} /></label><div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm font-bold text-navy">{dictionary.startTime}<input className={inputClass} type="time" name="startTime" required value={startTime} onChange={(event) => setStartTime(event.target.value)} /></label><label className="block text-sm font-bold text-navy">{dictionary.endTime}<input className={inputClass} type="time" name="endTime" required value={endTime} onChange={(event) => setEndTime(event.target.value)} /></label></div><input type="hidden" name="crossesMidnight" value={crossesMidnight ? "on" : "off"} /><label className="flex items-center gap-2 text-sm font-bold text-navy"><input type="checkbox" checked={crossesMidnight} readOnly aria-readonly="true" tabIndex={-1} />{dictionary.crossesMidnight}</label><label className="flex items-center gap-2 text-sm font-bold text-navy"><input type="checkbox" name="hasBreak" checked={hasBreak} onChange={(event) => setHasBreak(event.target.checked)} />{dictionary.hasBreak}</label>{hasBreak ? <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm font-bold text-navy">{dictionary.breakStartTime}<input className={inputClass} type="time" name="breakStartTime" required defaultValue={form.template?.breakStartTime ?? ""} /></label><label className="block text-sm font-bold text-navy">{dictionary.breakEndTime}<input className={inputClass} type="time" name="breakEndTime" required defaultValue={form.template?.breakEndTime ?? ""} /></label></div> : null}<ActionMessage state={state} /><div className="flex justify-end gap-2"><button type="button" className={secondaryClass} onClick={onClose}>{dictionary.cancel}</button><button type="submit" className={buttonClass} disabled={pending}>{pending ? dictionary.saving : dictionary.save}</button></div></form></Dialog>;
 }
 
 function MembersDialog({ locale, organizationCode, dictionary, form, drivers, action, pending, state, onClose }: any) {
@@ -239,5 +345,6 @@ function MoveDialog({ locale, organizationCode, dictionary, form, templates, act
 }
 
 function HiddenContext({ locale, organizationCode }: { locale: string; organizationCode: string }) { return <><input type="hidden" name="locale" value={locale} /><input type="hidden" name="organizationCode" value={organizationCode} /></>; }
+function timeMinutes(value: string) { const match = /^(\d{2}):(\d{2})$/.exec(value); return match ? Number(match[1]) * 60 + Number(match[2]) : null; }
 function ActionMessage({ state }: { state: OrderPeriodActionResult }) { return state.status === "error" ? <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm font-bold text-danger">{state.message}</p> : null; }
 function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) { return <div className="fixed inset-0 z-70 grid place-items-center bg-navy/35 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-xl rounded-xl border border-border bg-surface p-5 shadow-2xl"><div className="mb-5 flex items-center justify-between gap-3"><h2 className="text-lg font-black text-navy">{title}</h2><button type="button" className={secondaryClass} onClick={onClose}>×</button></div>{children}</div></div>; }

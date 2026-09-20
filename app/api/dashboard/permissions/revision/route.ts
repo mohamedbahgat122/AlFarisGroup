@@ -5,7 +5,7 @@ import { getAuthenticatedAdmin } from "@/lib/auth/authorization";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const admin = await getAuthenticatedAdmin();
+  const admin = await getAuthenticatedAdmin({ resolveAvatar: false });
 
   if (admin.status !== "authorized") {
     return NextResponse.json({ status: "unauthorized" }, { status: 401 });

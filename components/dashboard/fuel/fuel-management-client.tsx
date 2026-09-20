@@ -75,7 +75,7 @@ export function FuelManagementClient({
             disabled={exporting}
             className="rounded-full border border-primary/20 bg-white px-3 py-1 text-primary transition hover:bg-primary-soft disabled:opacity-60"
           >
-            {exporting ? "جاري التصدير..." : "تصدير Excel"}
+            {exporting ? dictionary.exportingExcel : dictionary.exportExcel}
           </button>
         </div>
       </div>
@@ -93,20 +93,7 @@ export function FuelManagementClient({
             <table className="w-full min-w-[1600px] border-collapse text-start">
               <thead className="bg-background text-xs font-bold uppercase text-muted">
                 <tr>
-                  <Header>السائق المحلي</Header>
-                  <Header>سائق Kafaratplus</Header>
-                  <Header>رقم اللوحة</Header>
-                  <Header>المركبة</Header>
-                  <Header>الماركة / الموديل</Header>
-                  <Header>عدد العمليات اليوم</Header>
-                  <Header>إجمالي اللترات</Header>
-                  <Header>إجمالي التكلفة</Header>
-                  <Header>نوع الوقود</Header>
-                  <Header>آخر محطة</Header>
-                  <Header>آخر عداد</Header>
-                  <Header>الفرع</Header>
-                  <Header>Iqama / ID</Header>
-                  <Header>NFC</Header>
+                  <Header>{dictionary.table.localDriver}</Header><Header>{dictionary.table.externalDriver}</Header><Header>{dictionary.table.plate}</Header><Header>{dictionary.table.vehicle}</Header><Header>{dictionary.table.brandModel}</Header><Header>{dictionary.table.operations}</Header><Header>{dictionary.table.litres}</Header><Header>{dictionary.table.cost}</Header><Header>{dictionary.table.product}</Header><Header>{dictionary.table.provider}</Header><Header>{dictionary.table.odometer}</Header><Header>{dictionary.table.branch}</Header><Header>{dictionary.table.id}</Header><Header>{dictionary.table.nfc}</Header>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">

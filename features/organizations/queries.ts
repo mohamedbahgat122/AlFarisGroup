@@ -185,6 +185,7 @@ async function getSystemOwnerOrganizations(
           organizationHome: true,
           drivers: true,
           driverReports: true,
+          driverOrderReports: true,
           fleetCars: true,
           fleetMotorcycles: true,
           fuelManagement: true,
