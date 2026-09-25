@@ -145,6 +145,12 @@ type MaintenanceProviderOrganizationRecord = {
   is_active: boolean;
 };
 
+type MaintenanceCategoryRecord = {
+  request_id: string;
+  category: string;
+};
+type OilChangeCategoryRecord = MaintenanceCategoryRecord;
+
 type AppRequestsLocalDatabase = Database & {
   public: Database["public"] & {
     Tables: Database["public"]["Tables"] & {
@@ -162,6 +168,30 @@ type AppRequestsLocalDatabase = Database & {
       };
       maintenance_jobs: {
         Row: MaintenanceJobRecord;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      driver_app_maintenance_request_categories: {
+        Row: MaintenanceCategoryRecord;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      maintenance_job_categories: {
+        Row: { maintenance_job_id: string; category: string };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      driver_app_oil_change_request_categories: {
+        Row: OilChangeCategoryRecord;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      maintenance_job_oil_change_categories: {
+        Row: { maintenance_job_id: string; category: string };
         Insert: never;
         Update: never;
         Relationships: [];
@@ -625,25 +655,11 @@ export async function getAppRequestPage({
   const { data, error, count } = await query;
 
   if (error) {
-    await logAppRequestLoadDiagnostic(admin.supabase, {
-      stage: "request_query",
-      userId: admin.profile.id,
-      organizationId,
-      requestType,
-      table: "driver_app_requests",
-      returnedCount: 0,
-      error: {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      },
-    });
     return { status: "load_error", rows: [] };
   }
 
   const requests = (data ?? []) as RequestRecord[];
-  const [drivers, vehicles, reviewers, organizations, detailResult, maintenanceJobs] = await Promise.all([
+  const [drivers, vehicles, reviewers, organizations, detailResult, maintenanceJobs, maintenanceCategories, oilChangeCategories] = await Promise.all([
     loadDrivers(admin.supabase, requests.map((request) => request.driver_id)),
     loadVehicles(
       admin.supabase,
@@ -664,18 +680,19 @@ export async function getAppRequestPage({
       requestType,
       requests.map((request) => request.id),
     ),
+    loadMaintenanceRequestCategories(
+      admin.supabase as SupabaseClient<AppRequestsLocalDatabase>,
+      requestType,
+      requests.map((request) => request.id),
+    ),
+    loadOilChangeRequestCategories(
+      admin.supabase as SupabaseClient<AppRequestsLocalDatabase>,
+      requestType,
+      requests.map((request) => request.id),
+    ),
   ]);
 
   if (detailResult.error) {
-    await logAppRequestLoadDiagnostic(admin.supabase, {
-      stage: "detail_query",
-      userId: admin.profile.id,
-      organizationId,
-      requestType,
-      table: detailResult.table,
-      returnedCount: requests.length,
-      error: detailResult.error,
-    });
     return { status: "load_error", rows: [] };
   }
 
@@ -734,12 +751,70 @@ export async function getAppRequestPage({
           reviewedAt: request.reviewed_at,
           completedAt: request.completed_at,
           maintenanceJob: maintenanceJobs.get(request.id) ?? null,
+          maintenanceCategories: maintenanceCategories.get(request.id) ?? [],
+          oilChangeCategories:
+            oilChangeCategories.get(request.id) ??
+            (request.request_type === "oil_change" ? ["تغيير زيت"] : []),
           detail,
         };
       })
       .filter((row) => matchesTextFilters(row, filters))
       .sort(compareAppRequestRows),
   };
+}
+
+async function loadMaintenanceRequestCategories(
+  supabase: SupabaseClient<AppRequestsLocalDatabase>,
+  requestType: DriverAppRequestType,
+  requestIds: string[],
+) {
+  const categoriesByRequestId = new Map<string, string[]>();
+
+  if (requestType !== "maintenance" || requestIds.length === 0) {
+    return categoriesByRequestId;
+  }
+
+  const { data } = await supabase
+    .from("driver_app_maintenance_request_categories")
+    .select("request_id, category")
+    .in("request_id", Array.from(new Set(requestIds)));
+
+  for (const row of (data ?? []) as MaintenanceCategoryRecord[]) {
+    const categories = categoriesByRequestId.get(row.request_id) ?? [];
+    categories.push(row.category);
+    categoriesByRequestId.set(row.request_id, categories);
+  }
+
+  return categoriesByRequestId;
+}
+
+async function loadOilChangeRequestCategories(
+  supabase: SupabaseClient<AppRequestsLocalDatabase>,
+  requestType: DriverAppRequestType,
+  requestIds: string[],
+) {
+  const categoriesByRequestId = new Map<string, string[]>();
+  if (requestType !== "oil_change" || requestIds.length === 0) return categoriesByRequestId;
+
+  const { data } = await supabase
+    .from("driver_app_oil_change_request_categories")
+    .select("request_id, category")
+    .in("request_id", Array.from(new Set(requestIds)));
+  const order = new Map([
+    ["تغيير زيت", 1],
+    ["تغيير سيفون", 2],
+    ["تغيير فلتر مكينة", 3],
+    ["تغيير فلتر مكيف", 4],
+  ]);
+  for (const row of (data ?? []) as OilChangeCategoryRecord[]) {
+    const categories = categoriesByRequestId.get(row.request_id) ?? [];
+    categories.push(row.category);
+    categoriesByRequestId.set(row.request_id, categories);
+  }
+  for (const [requestId, categories] of categoriesByRequestId) {
+    categoriesByRequestId.set(requestId, categories.sort((a, b) => (order.get(a) ?? 99) - (order.get(b) ?? 99)));
+  }
+  return categoriesByRequestId;
 }
 
 async function loadMaintenanceJobsForRequests(
@@ -839,18 +914,6 @@ export async function getOdometerPage({
   const eligibleDriversResult = await loadEligibleOdometerDrivers(admin.supabase, organizationId, filters);
 
   if (eligibleDriversResult.error) {
-    logOdometerLoadDiagnostic({
-      organizationId,
-      selectedDate,
-      dateRange,
-      eligibleDriverCount: 0,
-      visibleDriverCount: 0,
-      matchedShiftCount: 0,
-      error: {
-        code: eligibleDriversResult.error.code,
-        message: eligibleDriversResult.error.message,
-      },
-    });
     return { status: "load_error", rows: [] };
   }
 
@@ -926,16 +989,6 @@ export async function getOdometerPage({
     .sort(compareOdometerRows)
     .slice((page - 1) * odometerPageSize, page * odometerPageSize);
   const summary = summarizeOdometerDailyRows(allRows);
-
-  logOdometerLoadDiagnostic({
-    organizationId,
-    selectedDate,
-    dateRange,
-    eligibleDriverCount: eligibleDrivers.length,
-    visibleDriverCount: visibleRows.length,
-    matchedShiftCount: allShifts.length,
-    error: null,
-  });
 
   return {
     status: "success",
@@ -1359,6 +1412,8 @@ async function loadLatestOilRequestsForDrivers(
       reviewedAt: request.reviewed_at,
       completedAt: request.completed_at,
       maintenanceJob: null,
+      maintenanceCategories: [],
+      oilChangeCategories: [],
       detail: details.details.get(request.id) ?? {},
     });
   }
@@ -2121,93 +2176,6 @@ function getRiyadhDayUtcRange(date: string) {
     startIso: start.toISOString(),
     endIso: end.toISOString(),
   };
-}
-
-function logOdometerLoadDiagnostic({
-  organizationId,
-  selectedDate,
-  dateRange,
-  eligibleDriverCount,
-  visibleDriverCount,
-  matchedShiftCount,
-  error,
-}: {
-  organizationId: string;
-  selectedDate: string | undefined;
-  dateRange: { startIso: string; endIso: string } | null;
-  eligibleDriverCount: number;
-  visibleDriverCount: number;
-  matchedShiftCount: number;
-  error: { code?: string; message: string } | null;
-}) {
-  if (process.env.NODE_ENV === "production") return;
-
-  console.info("[app-requests:odometer:load]", {
-    organizationIdSuffix: safeSuffix(organizationId),
-    selectedDate,
-    utcRange: dateRange,
-    eligibleDriverCount,
-    visibleDriverCount,
-    matchedShiftCount,
-    error,
-  });
-}
-
-async function logAppRequestLoadDiagnostic(
-  supabase: Parameters<typeof loadDrivers>[0],
-  {
-    stage,
-    userId,
-    organizationId,
-    requestType,
-    table,
-    returnedCount,
-    error,
-  }: {
-    stage: "request_query" | "detail_query";
-    userId: string;
-    organizationId: string;
-    requestType: DriverAppRequestType;
-    table: string;
-    returnedCount: number;
-    error: {
-      code?: string;
-      message: string;
-      details?: string | null;
-      hint?: string | null;
-    };
-  },
-) {
-  if (process.env.NODE_ENV === "production") return;
-
-  const permissionClient = supabase as SupabaseClient<AppRequestsLocalDatabase>;
-  const [{ data: canView }, { data: canReview }] = await Promise.all([
-    permissionClient.rpc("has_current_user_organization_permission", {
-      target_organization_id: organizationId,
-      target_permission_key: "app_requests.view",
-    }),
-    permissionClient.rpc("has_current_user_organization_permission", {
-      target_organization_id: organizationId,
-      target_permission_key: "app_requests.review",
-    }),
-  ]);
-
-  console.error("[app-requests:load]", {
-    stage,
-    table,
-    requestType,
-    organizationIdSuffix: safeSuffix(organizationId),
-    returnedCount,
-    permission: {
-      canView: Boolean(canView),
-      canReview: Boolean(canReview),
-    },
-    error,
-  });
-}
-
-function safeSuffix(value: string | null | undefined) {
-  return value ? value.slice(-8) : "";
 }
 
 function isDate(value: string | undefined): value is string {

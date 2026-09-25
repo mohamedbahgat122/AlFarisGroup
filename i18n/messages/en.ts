@@ -146,6 +146,10 @@ export const en = {
             title: "Maintenance request assigned",
             message: "A new maintenance request was assigned to the workshop.",
           },
+          generic: {
+            title: "Maintenance task assigned",
+            message: "A maintenance task was assigned.",
+          },
           oil_change: {
             title: "Oil change request assigned",
             message: "An oil change request was assigned to the workshop.",
@@ -155,6 +159,10 @@ export const en = {
           maintenance: {
             title: "Workshop started the job",
             message: "The workshop started work on its assigned maintenance request.",
+          },
+          generic: {
+            title: "Maintenance task started",
+            message: "A maintenance task was started.",
           },
           oil_change: {
             title: "Workshop started the oil change",
@@ -166,6 +174,10 @@ export const en = {
             title: "Maintenance completed",
             message: "The workshop completed work on the maintenance request.",
           },
+          generic: {
+            title: "Maintenance task completed",
+            message: "A maintenance task was completed.",
+          },
           oil_change: {
             title: "Oil change completed",
             message: "The workshop completed the oil change.",
@@ -175,6 +187,10 @@ export const en = {
           maintenance: {
             title: "Maintenance job cancelled",
             message: "The maintenance job assigned to the workshop was cancelled.",
+          },
+          generic: {
+            title: "Maintenance task cancelled",
+            message: "A maintenance task was cancelled.",
           },
           oil_change: {
             title: "Oil change job cancelled",

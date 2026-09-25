@@ -38,6 +38,8 @@ export type AppRequestRow = {
   reviewedAt: string | null;
   completedAt: string | null;
   maintenanceJob: MaintenanceJobExecution | null;
+  maintenanceCategories: string[];
+  oilChangeCategories: string[];
   detail: Record<string, string | number | null>;
 };
 

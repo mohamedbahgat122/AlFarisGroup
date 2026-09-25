@@ -1,0 +1,505 @@
+-- Normalized multi-category support for driver oil-change requests.
+-- The legacy text/detail columns remain projections for old readers.
+
+create table if not exists public.driver_app_oil_change_request_categories (
+  request_id uuid not null
+    references public.driver_app_requests(id)
+    on delete cascade,
+  category text not null,
+  constraint driver_app_oil_change_request_categories_pkey
+    primary key (request_id, category),
+  constraint driver_app_oil_change_request_categories_category_check
+    check (category in (
+      U&'\062A\063A\064A\064A\0631 \0632\064A\062A',
+      U&'\062A\063A\064A\064A\0631 \0633\064A\0641\0648\0646',
+      U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0646\0629',
+      U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0641'
+    ))
+);
+
+create index if not exists driver_app_oil_change_request_categories_category_idx
+  on public.driver_app_oil_change_request_categories(category);
+
+create table if not exists public.maintenance_job_oil_change_categories (
+  maintenance_job_id uuid not null
+    references public.maintenance_jobs(id)
+    on delete cascade,
+  category text not null,
+  constraint maintenance_job_oil_change_categories_pkey
+    primary key (maintenance_job_id, category),
+  constraint maintenance_job_oil_change_categories_category_check
+    check (category in (
+      U&'\062A\063A\064A\064A\0631 \0632\064A\062A',
+      U&'\062A\063A\064A\064A\0631 \0633\064A\0641\0648\0646',
+      U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0646\0629',
+      U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0641'
+    ))
+);
+
+create index if not exists maintenance_job_oil_change_categories_category_idx
+  on public.maintenance_job_oil_change_categories(category);
+
+alter table public.driver_app_oil_change_request_categories enable row level security;
+alter table public.maintenance_job_oil_change_categories enable row level security;
+
+revoke all on public.driver_app_oil_change_request_categories from public, anon, authenticated;
+revoke all on public.maintenance_job_oil_change_categories from public, anon, authenticated;
+grant select on public.driver_app_oil_change_request_categories to authenticated;
+grant select on public.maintenance_job_oil_change_categories to authenticated;
+grant select, insert, update, delete on public.driver_app_oil_change_request_categories to service_role;
+grant select, insert, update, delete on public.maintenance_job_oil_change_categories to service_role;
+
+drop policy if exists driver_app_oil_change_request_categories_select_with_request
+  on public.driver_app_oil_change_request_categories;
+create policy driver_app_oil_change_request_categories_select_with_request
+  on public.driver_app_oil_change_request_categories
+  for select to authenticated
+  using (exists (
+    select 1 from public.driver_app_requests r where r.id = request_id
+  ));
+
+drop policy if exists maintenance_job_oil_change_categories_select_with_job
+  on public.maintenance_job_oil_change_categories;
+create policy maintenance_job_oil_change_categories_select_with_job
+  on public.maintenance_job_oil_change_categories
+  for select to authenticated
+  using (exists (
+    select 1 from public.maintenance_jobs j where j.id = maintenance_job_id
+  ));
+
+create or replace function public.submit_driver_oil_change_request_normalized(
+  p_oil_change_categories text[],
+  p_current_odometer_reading bigint,
+  p_note text default null,
+  p_submission_id uuid default null,
+  p_require_submission_id boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_driver public.drivers%rowtype := public.get_authenticated_driver_for_request();
+  v_vehicle record;
+  v_latest_odometer bigint;
+  v_request public.driver_app_requests%rowtype;
+  v_categories text[];
+  v_category_count integer;
+  v_distinct_category_count integer;
+  v_note text := nullif(btrim(coalesce(p_note, '')), '');
+  v_created boolean := false;
+begin
+  if p_require_submission_id and p_submission_id is null then
+    raise exception 'APP_REQUEST_SUBMISSION_REQUIRED';
+  end if;
+  if p_oil_change_categories is null or cardinality(p_oil_change_categories) = 0 then
+    raise exception 'APP_REQUEST_CATEGORY_REQUIRED';
+  end if;
+  if exists (
+    select 1 from unnest(p_oil_change_categories) input(category)
+    where input.category is null or length(btrim(input.category)) = 0
+  ) then
+    raise exception 'APP_REQUEST_CATEGORY_REQUIRED';
+  end if;
+
+  select array_agg(allowed.category order by allowed.sort_order), count(*)::integer
+    into v_categories, v_category_count
+  from (
+    select distinct btrim(input.category) category
+    from unnest(p_oil_change_categories) input(category)
+  ) input
+  join (values
+    (U&'\062A\063A\064A\064A\0631 \0632\064A\062A'::text, 1),
+    (U&'\062A\063A\064A\064A\0631 \0633\064A\0641\0648\0646'::text, 2),
+    (U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0646\0629'::text, 3),
+    (U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0641'::text, 4)
+  ) allowed(category, sort_order) on allowed.category = input.category;
+
+  select count(distinct btrim(input.category))::integer
+    into v_distinct_category_count
+  from unnest(p_oil_change_categories) input(category);
+  if v_category_count is distinct from v_distinct_category_count or v_category_count = 0 then
+    raise exception 'APP_REQUEST_INVALID_CATEGORY';
+  end if;
+  if p_current_odometer_reading is null
+    or p_current_odometer_reading < 0
+    or p_current_odometer_reading > 2147483647 then
+    raise exception 'APP_REQUEST_INVALID_ODOMETER';
+  end if;
+
+  if p_submission_id is not null then
+    select * into v_request
+    from public.driver_app_requests
+    where driver_id = v_driver.id and client_submission_id = p_submission_id;
+    if found then
+      return jsonb_build_object('id', v_request.id, 'request_type', 'oil_change',
+        'status', v_request.status, 'submitted_at', v_request.submitted_at);
+    end if;
+  end if;
+
+  select * into v_vehicle from public.get_driver_current_vehicle(v_driver.id) limit 1;
+  if v_vehicle.vehicle_id is null then
+    raise exception 'APP_REQUEST_VEHICLE_REQUIRED';
+  end if;
+
+  select ds.end_odometer_reading into v_latest_odometer
+  from public.driver_shifts ds
+  where ds.driver_id = v_driver.id and ds.status = 'completed'
+    and ds.end_odometer_reading is not null
+  order by ds.ended_at desc nulls last, ds.created_at desc limit 1;
+  if v_latest_odometer is not null and p_current_odometer_reading < v_latest_odometer then
+    raise exception 'APP_REQUEST_ODOMETER_BELOW_LATEST';
+  end if;
+
+  begin
+    insert into public.driver_app_requests (
+      organization_id, driver_id, vehicle_id, vehicle_plate_snapshot,
+      request_type, submitted_note, client_submission_id
+    ) values (
+      v_driver.organization_id, v_driver.id, v_vehicle.vehicle_id, v_vehicle.plate_number,
+      'oil_change', v_note, p_submission_id
+    ) returning * into v_request;
+    v_created := true;
+  exception when unique_violation then
+    if p_submission_id is null then raise; end if;
+    select * into v_request from public.driver_app_requests
+    where driver_id = v_driver.id and client_submission_id = p_submission_id;
+  end;
+  if not found and v_request.id is null then raise exception 'APP_REQUEST_INSERT_FAILED'; end if;
+
+  if v_created then
+    insert into public.driver_app_oil_change_request_details (
+      request_id, current_odometer_reading, note
+    ) values (v_request.id, p_current_odometer_reading, v_note);
+    insert into public.driver_app_oil_change_request_categories (request_id, category)
+    select v_request.id, category from unnest(v_categories) normalized(category);
+    perform public.insert_driver_app_request_activity(
+      auth.uid(), v_driver.organization_id, v_driver.id, v_request.id,
+      'driver_app_request_submitted', 'oil_change', 'pending'
+    );
+  end if;
+  return jsonb_build_object('id', v_request.id, 'request_type', 'oil_change',
+    'status', v_request.status, 'submitted_at', v_request.submitted_at);
+end;
+$$;
+
+create or replace function public.submit_driver_oil_change_request(
+  p_oil_change_categories text[], p_current_odometer_reading bigint,
+  p_note text, p_submission_id uuid
+) returns jsonb language sql security definer set search_path = '' as $$
+  select public.submit_driver_oil_change_request_normalized(
+    p_oil_change_categories, p_current_odometer_reading, p_note, p_submission_id, true
+  );
+$$;
+
+create or replace function public.submit_driver_oil_change_request(
+  p_current_odometer_reading bigint,
+  p_note text default null::text,
+  p_submission_id uuid default null::uuid
+) returns jsonb language sql security definer set search_path = '' as $$
+  select public.submit_driver_oil_change_request_normalized(
+    array[U&'\062A\063A\064A\064A\0631 \0632\064A\062A'::text],
+    p_current_odometer_reading, p_note, p_submission_id, true
+  );
+$$;
+
+create or replace function public.submit_driver_oil_change_request(
+  p_current_odometer_reading bigint, p_note text default null
+) returns jsonb language sql security definer set search_path = '' as $$
+  select public.submit_driver_oil_change_request_normalized(
+    array[U&'\062A\063A\064A\064A\0631 \0632\064A\062A'::text],
+    p_current_odometer_reading, p_note, null, false
+  );
+$$;
+
+revoke all on function public.submit_driver_oil_change_request_normalized(text[], bigint, text, uuid, boolean)
+  from public, anon, authenticated;
+revoke all on function public.submit_driver_oil_change_request(text[], bigint, text, uuid)
+  from public, anon, authenticated;
+revoke all on function public.submit_driver_oil_change_request(bigint, text, uuid)
+  from public, anon, authenticated;
+revoke all on function public.submit_driver_oil_change_request(bigint, text)
+  from public, anon, authenticated;
+grant execute on function public.submit_driver_oil_change_request(text[], bigint, text, uuid) to authenticated;
+grant execute on function public.submit_driver_oil_change_request(bigint, text, uuid) to authenticated;
+grant execute on function public.submit_driver_oil_change_request(bigint, text) to authenticated;
+
+create or replace function public.approve_and_assign_maintenance_request(
+  p_request_id uuid, p_provider_id uuid, p_notes text default null
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor_id uuid := auth.uid(); v_now timestamptz := now();
+  v_request public.driver_app_requests%rowtype;
+  v_existing_job public.maintenance_jobs%rowtype; v_job public.maintenance_jobs%rowtype;
+  v_driver_name text; v_vehicle_type text;
+  v_maintenance_detail public.driver_app_maintenance_request_details%rowtype;
+  v_oil_detail public.driver_app_oil_change_request_details%rowtype;
+  v_categories text[]; v_oil_categories text[]; v_category_snapshot text;
+  v_notes text := nullif(btrim(coalesce(p_notes, '')), '');
+begin
+  if v_actor_id is null then raise exception 'MAINTENANCE_AUTH_REQUIRED' using errcode = '42501'; end if;
+  select * into v_request from public.driver_app_requests
+  where id = p_request_id and request_type in ('maintenance', 'oil_change') for update;
+  if not found then raise exception 'MAINTENANCE_REQUEST_NOT_FOUND' using errcode = 'P0002'; end if;
+  if not ((public.has_organization_permission(v_actor_id, v_request.organization_id, 'app_requests.review')
+    or public.has_organization_permission(v_actor_id, v_request.organization_id, 'app_requests.maintenance.review'))
+    and public.has_organization_permission(v_actor_id, v_request.organization_id, 'maintenance_jobs.assign'))
+  then raise exception 'MAINTENANCE_ASSIGN_FORBIDDEN' using errcode = '42501'; end if;
+  if v_request.vehicle_id is null then raise exception 'MAINTENANCE_REQUEST_VEHICLE_REQUIRED' using errcode = '23502'; end if;
+  if v_request.status not in ('pending', 'approved') then raise exception 'MAINTENANCE_REQUEST_INVALID_STATUS' using errcode = '22023'; end if;
+  if not exists (select 1 from public.maintenance_providers mp join public.maintenance_provider_organizations mpo
+    on mpo.provider_id = mp.id and mpo.organization_id = v_request.organization_id and mpo.is_active = true
+    where mp.id = p_provider_id and mp.is_active = true)
+  then raise exception 'MAINTENANCE_PROVIDER_NOT_AVAILABLE' using errcode = 'P0002'; end if;
+  select * into v_existing_job from public.maintenance_jobs where request_id = v_request.id for update;
+  if found then
+    if v_existing_job.provider_id = p_provider_id and v_request.status = 'approved' then
+      return jsonb_build_object('id', v_existing_job.id, 'request_id', v_existing_job.request_id,
+        'job_type', v_existing_job.job_type, 'status', v_existing_job.status, 'already_exists', true);
+    end if;
+    raise exception 'MAINTENANCE_JOB_ALREADY_EXISTS' using errcode = '23505';
+  end if;
+  if v_request.status = 'pending' then
+    update public.driver_app_requests set status = 'approved', reviewed_by = v_actor_id,
+      reviewed_at = v_now, review_note = v_notes, updated_at = v_now
+    where id = v_request.id and status = 'pending' returning * into v_request;
+    if not found then raise exception 'MAINTENANCE_REQUEST_CONCURRENT_UPDATE' using errcode = '40001'; end if;
+    perform public.insert_driver_app_request_activity(v_actor_id, v_request.organization_id,
+      v_request.driver_id, v_request.id, 'driver_app_request_approved', v_request.request_type, 'approved');
+  end if;
+  select d.full_name into v_driver_name from public.drivers d where d.id = v_request.driver_id;
+  select fv.vehicle_type into v_vehicle_type from public.fleet_vehicles fv where fv.id = v_request.vehicle_id;
+  if v_request.request_type = 'maintenance' then
+    select * into v_maintenance_detail from public.driver_app_maintenance_request_details where request_id = v_request.id;
+    select array_agg(c.category order by case c.category
+      when U&'\062A\063A\064A\064A\0631 \0643\0641\0631\0627\062A' then 1
+      when U&'\0635\064A\0627\0646\0629 \0643\0647\0631\0628\0627\0621' then 2
+      when U&'\0635\064A\0627\0646\0629 \0645\0643\064A\0641' then 3
+      when U&'\0635\064A\0627\0646\0629 \0639\0641\0634\0629' then 4
+      when U&'\0635\064A\0627\0646\0629 \0645\0643\064A\0646\0629' then 5 end) into v_categories
+    from public.driver_app_maintenance_request_categories c where c.request_id = v_request.id;
+    v_category_snapshot := coalesce(array_to_string(v_categories, U&'\060C '), v_maintenance_detail.maintenance_category);
+  else
+    select * into v_oil_detail from public.driver_app_oil_change_request_details where request_id = v_request.id;
+    select array_agg(c.category order by case c.category
+      when U&'\062A\063A\064A\064A\0631 \0632\064A\062A' then 1
+      when U&'\062A\063A\064A\064A\0631 \0633\064A\0641\0648\0646' then 2
+      when U&'\062A\063A\064A\064A\0631 \0641\0644\062A\0631 \0645\0643\064A\0646\0629' then 3
+      else 4 end) into v_oil_categories
+    from public.driver_app_oil_change_request_categories c where c.request_id = v_request.id;
+    if v_oil_categories is null then v_oil_categories := array[U&'\062A\063A\064A\064A\0631 \0632\064A\062A'::text]; end if;
+  end if;
+  insert into public.maintenance_jobs (
+    request_id, organization_id, provider_id, driver_id, vehicle_id, job_type, status,
+    assigned_at, assigned_by, notes, driver_name_snapshot, vehicle_plate_snapshot,
+    vehicle_type_snapshot, request_description_snapshot, maintenance_category_snapshot,
+    urgency_snapshot, requested_odometer_snapshot
+  ) values (v_request.id, v_request.organization_id, p_provider_id, v_request.driver_id,
+    v_request.vehicle_id, v_request.request_type, 'ready', v_now, v_actor_id, v_notes,
+    v_driver_name, v_request.vehicle_plate_snapshot, v_vehicle_type,
+    coalesce(v_maintenance_detail.problem_description, v_request.submitted_note),
+    v_category_snapshot, v_maintenance_detail.urgency, v_oil_detail.current_odometer_reading)
+  returning * into v_job;
+  if v_request.request_type = 'maintenance' then
+    insert into public.maintenance_job_categories (maintenance_job_id, category)
+    select v_job.id, c.category from public.driver_app_maintenance_request_categories c where c.request_id = v_request.id;
+  else
+    insert into public.maintenance_job_oil_change_categories (maintenance_job_id, category)
+    select v_job.id, category from unnest(v_oil_categories) normalized(category);
+  end if;
+  perform public.insert_maintenance_activity_log(v_actor_id, v_job.organization_id,
+    'maintenance_job_assigned', 'maintenance_job', v_job.id, null, to_jsonb(v_job),
+    jsonb_build_object('request_id', v_job.request_id, 'provider_id', v_job.provider_id));
+  return jsonb_build_object('id', v_job.id, 'request_id', v_job.request_id,
+    'job_type', v_job.job_type, 'status', v_job.status, 'already_exists', false);
+end;
+$$;
+
+revoke all on function public.approve_and_assign_maintenance_request(uuid, uuid, text)
+  from public, anon, authenticated;
+grant execute on function public.approve_and_assign_maintenance_request(uuid, uuid, text) to authenticated, service_role;
+
+-- The completion RPCs below retain the existing transaction and authorization paths.
+-- Category rows only decide whether this oil request creates an oil event.
+create or replace function public.complete_driver_oil_change_request(
+  p_request_id uuid, p_interval_km integer, p_review_note text default null
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor_id uuid := auth.uid(); v_request public.driver_app_requests%rowtype;
+  v_detail public.driver_app_oil_change_request_details%rowtype;
+  v_existing_event public.fleet_vehicle_oil_change_events%rowtype;
+  v_completed_at timestamptz := timezone('utc', now());
+  v_review_note text := nullif(btrim(coalesce(p_review_note, '')), '');
+  v_has_oil boolean;
+begin
+  if v_actor_id is null then raise exception 'APP_REQUEST_AUTH_REQUIRED' using errcode = '42501'; end if;
+  select exists (select 1 from public.driver_app_oil_change_request_categories c
+    where c.request_id = p_request_id and c.category = U&'\062A\063A\064A\064A\0631 \0632\064A\062A') into v_has_oil;
+  if not exists (select 1 from public.driver_app_oil_change_request_categories c where c.request_id = p_request_id) then v_has_oil := true; end if;
+  if v_has_oil and (p_interval_km is null or p_interval_km <= 0 or p_interval_km > 2147483647) then
+    raise exception 'APP_REQUEST_INVALID_OIL_INTERVAL' using errcode = '22023';
+  end if;
+  if not v_has_oil and p_interval_km is not null then raise exception 'APP_REQUEST_OIL_INTERVAL_NOT_ALLOWED' using errcode = '22023'; end if;
+  select * into v_request from public.driver_app_requests where id = p_request_id and request_type = 'oil_change' for update;
+  if not found then raise exception 'APP_REQUEST_NOT_FOUND' using errcode = 'P0002'; end if;
+  if not (public.can_manage_organization(v_request.organization_id)
+    or public.has_organization_permission(v_actor_id, v_request.organization_id, 'app_requests.review')
+    or public.has_organization_permission(v_actor_id, v_request.organization_id, 'app_requests.oil_change.review'))
+  then raise exception 'APP_REQUEST_REVIEW_FORBIDDEN' using errcode = '42501'; end if;
+  select * into v_detail from public.driver_app_oil_change_request_details where request_id = v_request.id for update;
+  if not found then raise exception 'APP_REQUEST_OIL_DETAIL_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_request.vehicle_id is null then raise exception 'APP_REQUEST_VEHICLE_REQUIRED' using errcode = '23502'; end if;
+  if v_request.status = 'completed' then
+    select * into v_existing_event from public.fleet_vehicle_oil_change_events where request_id = v_request.id;
+    if v_has_oil and not found then raise exception 'APP_REQUEST_COMPLETED_WITHOUT_OIL_EVENT' using errcode = '23514'; end if;
+    return jsonb_build_object('id', v_request.id, 'request_type', v_request.request_type,
+      'status', v_request.status, 'oil_event_id', case when found then v_existing_event.id else null end);
+  end if;
+  if v_request.status <> 'approved' then raise exception 'APP_REQUEST_INVALID_STATUS' using errcode = '22023'; end if;
+  if v_has_oil then
+    insert into public.fleet_vehicle_oil_change_events (
+      organization_id, vehicle_id, driver_id, request_id, odometer_reading,
+      interval_km, completed_at, note, created_by
+    ) values (v_request.organization_id, v_request.vehicle_id, v_request.driver_id, v_request.id,
+      v_detail.current_odometer_reading, p_interval_km, v_completed_at,
+      coalesce(v_review_note, v_detail.note), v_actor_id)
+    on conflict (request_id) where request_id is not null do nothing returning * into v_existing_event;
+    if not found then select * into v_existing_event from public.fleet_vehicle_oil_change_events where request_id = v_request.id; end if;
+  end if;
+  update public.driver_app_requests set status = 'completed', completed_by = v_actor_id,
+    completed_at = v_completed_at, updated_at = v_completed_at,
+    review_note = coalesce(v_review_note, review_note)
+  where id = v_request.id and status = 'approved' returning * into v_request;
+  if not found then raise exception 'APP_REQUEST_CONCURRENT_UPDATE' using errcode = '40001'; end if;
+  perform public.insert_driver_app_request_activity(v_actor_id, v_request.organization_id,
+    v_request.driver_id, v_request.id, 'driver_app_request_completed', 'oil_change', 'completed');
+  return jsonb_build_object('id', v_request.id, 'request_type', 'oil_change',
+    'status', v_request.status, 'oil_event_id', v_existing_event.id);
+end;
+$$;
+
+revoke all on function public.complete_driver_oil_change_request(uuid, integer, text) from public, anon, authenticated;
+grant execute on function public.complete_driver_oil_change_request(uuid, integer, text) to authenticated;
+
+create or replace function public.complete_maintenance_job(
+  p_job_id uuid,
+  p_completion_notes text,
+  p_oil_interval_km integer default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor_id uuid := auth.uid();
+  v_now timestamptz := now();
+  v_job public.maintenance_jobs%rowtype;
+  v_request public.driver_app_requests%rowtype;
+  v_oil_detail public.driver_app_oil_change_request_details%rowtype;
+  v_existing_event public.fleet_vehicle_oil_change_events%rowtype;
+  v_completion_notes text := nullif(btrim(coalesce(p_completion_notes, '')), '');
+  v_has_oil_category boolean := true;
+begin
+  if v_actor_id is null then raise exception 'MAINTENANCE_AUTH_REQUIRED' using errcode = '42501'; end if;
+  select * into v_job from public.maintenance_jobs where id = p_job_id for update;
+  if not found then raise exception 'MAINTENANCE_JOB_NOT_FOUND' using errcode = 'P0002'; end if;
+  if not public.maintenance_partner_has_provider_access(v_job.provider_id) then
+    raise exception 'MAINTENANCE_JOB_FORBIDDEN' using errcode = '42501';
+  end if;
+  select * into v_request from public.driver_app_requests where id = v_job.request_id for update;
+  if not found or v_request.organization_id <> v_job.organization_id
+    or v_request.driver_id <> v_job.driver_id
+    or v_request.vehicle_id is distinct from v_job.vehicle_id
+    or v_request.request_type <> v_job.job_type then
+    raise exception 'MAINTENANCE_REQUEST_INVALID_STATE' using errcode = '22023';
+  end if;
+  if not exists (select 1 from public.maintenance_provider_organizations mpo
+    join public.maintenance_providers mp on mp.id = mpo.provider_id and mp.is_active = true
+    where mpo.provider_id = v_job.provider_id and mpo.organization_id = v_job.organization_id and mpo.is_active = true)
+  then raise exception 'MAINTENANCE_PROVIDER_NOT_AVAILABLE' using errcode = '42501'; end if;
+
+  if v_job.job_type = 'oil_change' then
+    select exists (select 1 from public.maintenance_job_oil_change_categories c
+      where c.maintenance_job_id = v_job.id and c.category = U&'\062A\063A\064A\064A\0631 \0632\064A\062A') into v_has_oil_category;
+    if not exists (select 1 from public.maintenance_job_oil_change_categories c
+      where c.maintenance_job_id = v_job.id) then v_has_oil_category := true; end if;
+  end if;
+  if v_job.status = 'completed' then
+    if v_request.status <> 'completed' then raise exception 'MAINTENANCE_REQUEST_INVALID_STATE' using errcode = '22023'; end if;
+    if v_completion_notes is distinct from v_job.completion_notes then
+      raise exception 'MAINTENANCE_JOB_COMPLETION_PAYLOAD_CONFLICT' using errcode = '23505';
+    end if;
+    if v_job.job_type = 'oil_change' and v_has_oil_category then
+      select * into v_oil_detail from public.driver_app_oil_change_request_details where request_id = v_request.id for update;
+      if not found then raise exception 'APP_REQUEST_OIL_DETAIL_NOT_FOUND' using errcode = 'P0002'; end if;
+      select * into v_existing_event from public.fleet_vehicle_oil_change_events where request_id = v_request.id;
+      if not found then raise exception 'MAINTENANCE_JOB_COMPLETED_WITHOUT_OIL_EVENT' using errcode = '23514'; end if;
+      if p_oil_interval_km is null or p_oil_interval_km <> v_job.oil_interval_km then
+        raise exception 'MAINTENANCE_OIL_EVENT_CONFLICT' using errcode = '23505';
+      end if;
+      if v_existing_event.organization_id <> v_request.organization_id
+        or v_existing_event.vehicle_id <> v_request.vehicle_id
+        or v_existing_event.driver_id is distinct from v_request.driver_id
+        or v_existing_event.odometer_reading <> v_oil_detail.current_odometer_reading
+        or v_existing_event.interval_km is distinct from v_job.oil_interval_km
+        or v_existing_event.completed_at is distinct from v_job.completed_at
+        or v_existing_event.created_by is distinct from v_job.completed_by
+        or v_existing_event.note is distinct from coalesce(v_job.completion_notes, v_oil_detail.note) then
+        raise exception 'MAINTENANCE_OIL_EVENT_CONFLICT' using errcode = '23505';
+      end if;
+    elsif p_oil_interval_km is not null then
+      raise exception 'MAINTENANCE_OIL_INTERVAL_NOT_ALLOWED' using errcode = '22023';
+    end if;
+    return jsonb_build_object('id', v_job.id, 'request_id', v_job.request_id,
+      'job_type', v_job.job_type, 'status', v_job.status,
+      'oil_event_id', v_existing_event.id, 'already_completed', true);
+  end if;
+  if v_job.status <> 'in_progress' then raise exception 'MAINTENANCE_JOB_INVALID_STATUS' using errcode = '22023'; end if;
+  if v_job.invoice_file_path is null then raise exception 'MAINTENANCE_INVOICE_REQUIRED' using errcode = '23514'; end if;
+  if v_request.status <> 'approved' then raise exception 'MAINTENANCE_REQUEST_INVALID_STATE' using errcode = '22023'; end if;
+  if v_job.job_type = 'oil_change' and v_has_oil_category then
+    if p_oil_interval_km is null or p_oil_interval_km <= 0 or p_oil_interval_km > 2147483647 then
+      raise exception 'APP_REQUEST_INVALID_OIL_INTERVAL' using errcode = '22023';
+    end if;
+    select * into v_oil_detail from public.driver_app_oil_change_request_details where request_id = v_request.id for update;
+    if not found then raise exception 'APP_REQUEST_OIL_DETAIL_NOT_FOUND' using errcode = 'P0002'; end if;
+    insert into public.fleet_vehicle_oil_change_events (
+      organization_id, vehicle_id, driver_id, request_id, odometer_reading,
+      interval_km, completed_at, note, created_by
+    ) values (v_request.organization_id, v_request.vehicle_id, v_request.driver_id, v_request.id,
+      v_oil_detail.current_odometer_reading, p_oil_interval_km, v_now,
+      coalesce(v_completion_notes, v_oil_detail.note), v_actor_id)
+    on conflict (request_id) where request_id is not null do nothing returning * into v_existing_event;
+    if not found then select * into v_existing_event from public.fleet_vehicle_oil_change_events where request_id = v_request.id; end if;
+    if not found then raise exception 'MAINTENANCE_OIL_EVENT_CONFLICT' using errcode = '23505'; end if;
+  elsif v_job.job_type <> 'oil_change' and p_oil_interval_km is not null then
+    raise exception 'MAINTENANCE_OIL_INTERVAL_NOT_ALLOWED' using errcode = '22023';
+  elsif v_job.job_type = 'oil_change' and not v_has_oil_category and p_oil_interval_km is not null then
+    raise exception 'MAINTENANCE_OIL_INTERVAL_NOT_ALLOWED' using errcode = '22023';
+  end if;
+  update public.driver_app_requests set status = 'completed', completed_by = v_actor_id,
+    completed_at = v_now, updated_at = v_now, review_note = coalesce(v_completion_notes, review_note)
+  where id = v_request.id and status = 'approved' returning * into v_request;
+  if not found then raise exception 'MAINTENANCE_REQUEST_CONCURRENT_UPDATE' using errcode = '40001'; end if;
+  update public.maintenance_jobs set status = 'completed', completed_at = v_now,
+    completed_by = v_actor_id, completion_notes = v_completion_notes,
+    oil_interval_km = case when job_type = 'oil_change' and v_has_oil_category then p_oil_interval_km else oil_interval_km end,
+    updated_at = v_now
+  where id = v_job.id and status = 'in_progress' returning * into v_job;
+  if not found then raise exception 'MAINTENANCE_JOB_CONCURRENT_UPDATE' using errcode = '40001'; end if;
+  perform public.insert_driver_app_request_activity(v_actor_id, v_request.organization_id, v_request.driver_id,
+    v_request.id, 'driver_app_request_completed', v_request.request_type, 'completed');
+  perform public.insert_maintenance_activity_log(v_actor_id, v_job.organization_id,
+    'maintenance_job_completed', 'maintenance_job', v_job.id, null, to_jsonb(v_job),
+    jsonb_build_object('request_id', v_job.request_id, 'provider_id', v_job.provider_id, 'oil_event_id', v_existing_event.id));
+  return jsonb_build_object('id', v_job.id, 'request_id', v_job.request_id,
+    'job_type', v_job.job_type, 'status', v_job.status, 'oil_event_id', v_existing_event.id,
+    'already_completed', false);
+end;
+$$;
+
+revoke all on function public.complete_maintenance_job(uuid, text, integer) from public, anon, authenticated;
+grant execute on function public.complete_maintenance_job(uuid, text, integer) to service_role;
+notify pgrst, 'reload schema';

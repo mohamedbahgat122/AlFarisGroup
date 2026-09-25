@@ -6,6 +6,7 @@ import type { AccessibleOrganization } from "@/features/organizations/types";
 import { canViewRequestType } from "@/features/app-requests/authorization";
 import type { DriverAppRequestType } from "@/features/app-requests/types";
 import type { Database } from "@/types/database";
+import { parseNotificationMetadata } from "@/features/notifications/types";
 import type {
   AppNotification,
   DriverExpiryAlert,
@@ -40,6 +41,7 @@ type AppNotificationRow = Pick<
   | "type"
   | "title"
   | "message"
+  | "metadata"
   | "entity_type"
   | "entity_id"
   | "organization_id"
@@ -167,7 +169,7 @@ export async function getAppNotificationsForCurrentUser({
   const notificationsResult = await supabase
     .from("app_notifications")
     .select(
-      "id, type, title, message, entity_type, entity_id, organization_id, is_read, read_at, created_at",
+      "id, type, title, message, metadata, entity_type, entity_id, organization_id, is_read, read_at, created_at",
     )
     .in("organization_id", organizationIds)
     .eq("recipient_user_id", recipientUserId)
@@ -353,6 +355,7 @@ async function enrichAppNotifications(
       type: row.type,
       title: row.title,
       message: row.message,
+      metadata: parseNotificationMetadata(row.metadata),
       entityType: row.entity_type,
       entityId: row.entity_id,
       organizationId: row.organization_id,

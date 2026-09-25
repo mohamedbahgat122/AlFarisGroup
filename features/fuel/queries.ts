@@ -120,39 +120,6 @@ const kafaratplusOperationsPageSize = 1000;
 const kafaratplusMaxOperationsPages = 100;
 const kafaratplusPaginationConcurrency = 4;
 
-function createKafaratplusPerformanceDiagnostics(context: string) {
-  if (process.env.NODE_ENV === "production") {
-    return {
-      mark() {},
-      metric() {},
-    };
-  }
-
-  const startedAt = performance.now();
-  let previousAt = startedAt;
-
-  return {
-    mark(stage: string, metadata: Record<string, unknown> = {}) {
-      const now = performance.now();
-      console.info("[kafaratplus:fuel:timing]", {
-        context,
-        stage,
-        durationMs: Math.round(now - previousAt),
-        totalMs: Math.round(now - startedAt),
-        ...metadata,
-      });
-      previousAt = now;
-    },
-    metric(stage: string, metadata: Record<string, unknown>) {
-      console.info("[kafaratplus:fuel:timing]", {
-        context,
-        stage,
-        ...metadata,
-      });
-    },
-  };
-}
-
 function toKafaratplusStartOfDay(date: string) {
   return date.includes("T") || date.includes(" ")
     ? date
@@ -389,7 +356,6 @@ async function fetchAllKafaratplusOperationsUncached({
 > {
   const startedAt = performance.now();
   let requestCount = 0;
-  const firstStartedAt = performance.now();
   const first = await fetchKafaratplusOperationsPage({
     fromDate,
     toDate,
@@ -398,13 +364,6 @@ async function fetchAllKafaratplusOperationsUncached({
     page: 1,
   });
   requestCount += 1;
-  logKafaratplusPaginationTiming("first_kafaratplus_request", {
-    success: first.success,
-    durationMs: Math.round(performance.now() - firstStartedAt),
-    pageSize: kafaratplusOperationsPageSize,
-    records: first.success ? first.records.length : 0,
-    totalCount: first.success ? extractTotalCount(first.data) : null,
-  });
 
   if (!first.success) {
     return {
@@ -442,20 +401,12 @@ async function fetchAllKafaratplusOperationsUncached({
       { length: Math.max(totalPages - 1, 0) },
       (_, index) => index + 2,
     );
-    const remainingStartedAt = performance.now();
     const remaining = await fetchKafaratplusOperationPagesWithConcurrency({
       fromDate,
       toDate,
       pages: remainingPages,
     });
     requestCount += remaining.requestCount;
-    logKafaratplusPaginationTiming("remaining_pagination_fetch", {
-      success: remaining.success,
-      durationMs: Math.round(performance.now() - remainingStartedAt),
-      pages: remainingPages.length,
-      requests: remaining.requestCount,
-      concurrency: kafaratplusPaginationConcurrency,
-    });
 
     if (!remaining.success) {
       return {
@@ -476,7 +427,6 @@ async function fetchAllKafaratplusOperationsUncached({
   }
 
   for (let page = 2; page <= kafaratplusMaxOperationsPages; page += 1) {
-    const remainingStartedAt = performance.now();
     const result = await fetchKafaratplusOperationsPage({
       fromDate,
       toDate,
@@ -485,13 +435,6 @@ async function fetchAllKafaratplusOperationsUncached({
       page,
     });
     requestCount += 1;
-    logKafaratplusPaginationTiming("remaining_pagination_fetch", {
-      success: result.success,
-      durationMs: Math.round(performance.now() - remainingStartedAt),
-      pages: 1,
-      requests: 1,
-      concurrency: 1,
-    });
 
     if (!result.success) {
       return {
@@ -525,15 +468,6 @@ async function fetchAllKafaratplusOperationsUncached({
     requestCount,
     durationMs: Math.round(performance.now() - startedAt),
   };
-}
-
-function logKafaratplusPaginationTiming(stage: string, metadata: Record<string, unknown>) {
-  if (process.env.NODE_ENV === "production") return;
-  console.info("[kafaratplus:fuel:timing]", {
-    context: "pagination",
-    stage,
-    ...metadata,
-  });
 }
 
 async function fetchKafaratplusOperationsPage({
@@ -750,12 +684,7 @@ export async function getKafaratplusFuelManagementData({
   organizationId: string;
   fuelDate: string;
 }): Promise<KafaratplusFuelManagementResult> {
-  const perf = createKafaratplusPerformanceDiagnostics("management");
   const scope = await getLocalVehiclePlateScope(organizationId);
-  perf.mark("local_driver_actual_plate_query", {
-    success: scope.success,
-    localPlateCount: scope.success ? scope.localVehiclesByPlate.size : 0,
-  });
   if (!scope.success) {
     return integrationState("load_error", scope.diagnostics);
   }
@@ -773,26 +702,12 @@ export async function getKafaratplusFuelManagementData({
     toKafaratplusStartOfDay(fuelDate),
     toKafaratplusEndOfDay(fuelDate),
   );
-  perf.mark("kafaratplus_pagination_fetch", {
-    success: operations.success,
-    requestCount: operations.requestCount,
-    fetchDurationMs: operations.durationMs,
-    recordCount: operations.success ? operations.records.length : 0,
-    pageSize: kafaratplusOperationsPageSize,
-    concurrency: kafaratplusPaginationConcurrency,
-  });
   if (!operations.success) {
     return integrationState(operations.code, scope.diagnostics, operations.message);
   }
 
   const matched = matchAndClassifyOperations(operations.records, scope);
-  perf.mark("fuel_classification_and_local_plate_matching", {
-    fuelOperationCount: matched.fuelOperations.length,
-    excludedNonFuelCount: matched.nonFuelCount,
-    unverifiedCount: matched.unverifiedCount,
-  });
   const rows = createManagementRows(matched.fuelOperations, scope);
-  perf.mark("aggregation", { rowCount: rows.length });
   return {
     status: "success",
     source: "kafaratplus",
@@ -814,12 +729,7 @@ export async function getKafaratplusFuelReportData({
   page?: number;
   pageSize?: number;
 }): Promise<KafaratplusFuelReportResult> {
-  const perf = createKafaratplusPerformanceDiagnostics("report");
   const scope = await getLocalVehiclePlateScope(organizationId);
-  perf.mark("local_driver_actual_plate_query", {
-    success: scope.success,
-    localPlateCount: scope.success ? scope.localVehiclesByPlate.size : 0,
-  });
   if (!scope.success) {
     return integrationState("load_error", scope.diagnostics);
   }
@@ -848,24 +758,11 @@ export async function getKafaratplusFuelReportData({
     toKafaratplusStartOfDay(fromDate),
     toKafaratplusEndOfDay(toDate),
   );
-  perf.mark("kafaratplus_pagination_fetch", {
-    success: operations.success,
-    requestCount: operations.requestCount,
-    fetchDurationMs: operations.durationMs,
-    recordCount: operations.success ? operations.records.length : 0,
-    pageSize: kafaratplusOperationsPageSize,
-    concurrency: kafaratplusPaginationConcurrency,
-  });
   if (!operations.success) {
     return integrationState(operations.code, scope.diagnostics, operations.message);
   }
 
   const matched = matchAndClassifyOperations(operations.records, scope);
-  perf.mark("fuel_classification_and_local_plate_matching", {
-    fuelOperationCount: matched.fuelOperations.length,
-    excludedNonFuelCount: matched.nonFuelCount,
-    unverifiedCount: matched.unverifiedCount,
-  });
   const normalizedPageSize = Math.min(Math.max(pageSize, 1), 100);
   const mappedRows = matched.fuelOperations.map((record) =>
     mapKafaratplusOperation(record, scope),
@@ -876,13 +773,6 @@ export async function getKafaratplusFuelReportData({
   const start = (normalizedPage - 1) * normalizedPageSize;
   const vehicleSummaries = createVehicleSummaries(mappedRows, scope);
   const totals = calculateMatchedTotals(mappedRows);
-  perf.mark("aggregation", {
-    operationRows: totalRows,
-    vehicleSummaryCount: vehicleSummaries.length,
-    page: normalizedPage,
-    pageSize: normalizedPageSize,
-  });
-
   return {
     status: "success",
     source: "kafaratplus",

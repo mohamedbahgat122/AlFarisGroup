@@ -9,7 +9,6 @@ type LocalizedNotificationContent = {
 };
 
 const requestTypes = new Set(["leave", "maintenance", "meeting", "oil_change"]);
-const maintenanceJobTypes = new Set(["maintenance", "oil_change"]);
 
 export function getLocalizedNotificationContent({
   notification,
@@ -80,11 +79,11 @@ export function getLocalizedNotificationContent({
   }
 
   const maintenanceJobStatus = getMaintenanceJobStatus(notification.type);
-  const maintenanceJobType = getMaintenanceJobType(notification);
+  const maintenanceJobType = notification.metadata?.maintenanceJobType ?? notification.maintenanceJobType;
 
-  if (maintenanceJobStatus && maintenanceJobType) {
+  if (maintenanceJobStatus) {
     const localized = dictionary.localized[`maintenance_job_${maintenanceJobStatus}`][
-      maintenanceJobType
+      maintenanceJobType ?? "generic"
     ];
 
     return {
@@ -115,13 +114,4 @@ function getMaintenanceJobStatus(value: string) {
   if (value === "maintenance_job_completed") return "completed";
   if (value === "maintenance_job_cancelled") return "cancelled";
   return null;
-}
-
-function getMaintenanceJobType(
-  notification: AppNotification,
-): "maintenance" | "oil_change" | null {
-  const value = notification.maintenanceJobType ?? notification.requestType;
-  return value && maintenanceJobTypes.has(value)
-    ? (value as "maintenance" | "oil_change")
-    : null;
 }

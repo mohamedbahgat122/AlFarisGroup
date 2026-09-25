@@ -23,7 +23,7 @@ type AppRequestsActionDatabase = Database & {
       complete_driver_oil_change_request: {
         Args: {
           p_request_id: string;
-          p_interval_km: number;
+          p_interval_km: number | null;
           p_review_note?: string | null;
         };
         Returns: Json;
@@ -230,10 +230,6 @@ export async function reviewDriverAppRequestAction(
     }
 
     if (request.request_type === "oil_change") {
-      if (oilIntervalKm === null) {
-        return { status: "validation_error", code: "invalid_oil_interval" };
-      }
-
       const oilMutationClient =
         admin.supabase as SupabaseClient<AppRequestsActionDatabase>;
       const { error } = await oilMutationClient.rpc(

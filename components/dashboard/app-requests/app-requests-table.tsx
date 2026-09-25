@@ -114,6 +114,7 @@ export function AppRequestsTable({
               {requestType === "oil_change" && (
                 <>
                   <Header className="min-w-[130px] whitespace-nowrap">{dictionary.columns.odometerReading}</Header>
+                  <Header className="min-w-[220px] whitespace-nowrap">{dictionary.columns.category}</Header>
                   <Header className="min-w-[160px] whitespace-nowrap">{dictionary.columns.scheduledAt}</Header>
                 </>
               )}
@@ -1076,7 +1077,8 @@ function ReviewDialog({
               />
             ) : null}
             {request.requestType === "oil_change" &&
-            request.status === "approved" ? (
+            request.status === "approved" &&
+            request.oilChangeCategories.includes("تغيير زيت") ? (
               <label className="block space-y-2">
                 <span className="block text-sm font-bold text-navy">
                   {dictionary.columns.oilIntervalKm}
@@ -1224,11 +1226,28 @@ function renderRequestCells(
   }
 
   if (requestType === "maintenance") {
+    const categories = row.maintenanceCategories.length > 0
+      ? row.maintenanceCategories.join("، ")
+      : row.detail.maintenance_category;
+
     return (
       <>
-        <Cell className="whitespace-normal break-words leading-5">{row.detail.maintenance_category ?? dictionary.notAvailable}</Cell>
+        <Cell className="whitespace-normal break-words leading-5">{categories ?? dictionary.notAvailable}</Cell>
         <Cell nowrap>{dictionary.urgency[asUrgency(row.detail.urgency)]}</Cell>
         <Cell className="max-w-[240px] whitespace-normal break-words leading-5">{row.detail.problem_description ?? dictionary.notAvailable}</Cell>
+      </>
+    );
+  }
+
+  if (requestType === "oil_change") {
+    const categories = row.oilChangeCategories.length > 0
+      ? row.oilChangeCategories.join("، ")
+      : "تغيير زيت";
+    return (
+      <>
+        <Cell className="whitespace-normal break-words leading-5">{row.detail.current_odometer_reading ?? dictionary.notAvailable}</Cell>
+        <Cell className="whitespace-normal break-words leading-5">{categories}</Cell>
+        <Cell>{row.detail.scheduled_at ?? dictionary.notAvailable}</Cell>
       </>
     );
   }
@@ -1244,12 +1263,7 @@ function renderRequestCells(
     );
   }
 
-  return (
-    <>
-      <Cell>{row.detail.current_odometer_reading ?? dictionary.notAvailable}</Cell>
-      <Cell>{row.detail.scheduled_at ?? dictionary.notAvailable}</Cell>
-    </>
-  );
+  return <></>;
 }
 
 function Header({
